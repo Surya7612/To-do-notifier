@@ -8,8 +8,9 @@ Built with Electron + Vite + React. Data stays on your Mac (`~/Library/Applicati
 
 - Todos with lead-time and overdue reminder nags (tray + notifications)
 - Always-on Goku pet (corner / patrol / body-double modes)
-- Voice companion: **“Hey Goku”** → commands + short chat (OpenAI Whisper + Ollama)
-- Tutor dictation → notes / quiz / flashcards
+- Voice conversation on demand: **⌘G** to talk, **Esc** to stop (OpenAI STT + Ollama)
+- Tutor **Dictate** button → notes / quiz / flashcards
+- Optional always-on “Hey Goku” wake (off by default — Settings)
 - Pomodoro focus timer with optional ambient sound
 - Settings → **Readiness** check (mic, OpenAI, ElevenLabs, Ollama, notifications)
 
@@ -18,7 +19,7 @@ Built with Electron + Vite + React. Data stays on your Mac (`~/Library/Applicati
 - macOS (Apple Silicon builds are the primary target)
 - Node.js 18+
 - [Ollama](https://ollama.com) + a model, e.g. `ollama pull llama3.2`
-- OpenAI API key (for listening / Whisper)
+- OpenAI API key (for listening / speech-to-text)
 - Optional: ElevenLabs API key + a **My Voices** voice ID (library voices need a paid ElevenLabs plan)
 
 ## Install (normal Mac app)
@@ -43,14 +44,17 @@ npm run dist
 2. Open **Settings → Voice** and paste your **OpenAI** key.
 3. For Goku speech without ElevenLabs: enable **Allow system voice if ElevenLabs fails** (or skip ElevenLabs entirely).
 4. Click **Run full check** and fix any red items.
-5. Click **Arm voice**, then say **“Hey Goku”**.
+5. Press **⌘G** (or tray → **Talk**) to start conversation; **Esc** to stop.
 
 ## Voice modes
 
-| Mode | How to enter | What it does |
-|------|----------------|--------------|
-| Companion | “Hey Goku” | Commands + short chat using open todos & notes. Mic pauses while Goku speaks. |
-| Dictation | Tutor tab → **Dictate**, or say “dictate” / “tutor mode” | Speech → transcript only. Say “stop”. |
+| Mode | How to enter | How to exit | What it does |
+|------|----------------|-------------|--------------|
+| Conversation | **⌘G**, tray **Talk**, or header **⌘G Talk** | **Esc**, or say “stop listening” | Commands + short chat using open todos & notes. Mic is off until you start. |
+| Dictation | Tutor tab → **Dictate** button only | **Esc**, or click Dictate again / say “stop dictating” | Speech → transcript only (notes / quiz). |
+| Wake word (optional) | Settings → enable **Always listen for “Hey Goku”** | Turn the setting off | Mic stays armed for “Hey Goku”. Default is **off**. |
+
+Mic pauses while Goku speaks (half-duplex). Keyboard noise is ignored while typing in text fields.
 
 ## Soft-block
 
@@ -84,7 +88,7 @@ Useful scripts:
 ## Privacy notes
 
 - Todos / notes / settings are local JSON only.
-- With voice on, mic audio is sent to **OpenAI Whisper**.
+- With voice on, mic audio is sent to **OpenAI** speech-to-text.
 - If ElevenLabs is configured, spoken replies are synthesized via their API.
 - Never commit API keys. Keys live in Settings (stored in local `app-data.json`).
 
