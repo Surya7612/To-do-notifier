@@ -1,0 +1,60 @@
+.panel-root {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  color: #f6ebe0;
+  background: rgba(20, 14, 10, 0.96);
+  border: 1px solid rgba(255, 180, 120, 0.3);
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  overflow: auto;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.45rem;
+  font-size: 0.9rem;
+}
+
+.panel-head button {
+  border: 0;
+  background: #ff6a3d;
+  color: #1a0f0a;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.panel-root ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.panel-root li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+
+.panel-root em {
+  color: #c4a992;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.panel-empty {
+  margin: 0;
+  color: #c4a992;
+  font-size: 0.8rem;
+}

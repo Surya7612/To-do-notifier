@@ -1,0 +1,57 @@
+# Dependencies & builds
+node_modules/
+dist/
+dist-electron/
+release/
+*.tsbuildinfo
+
+# Env / secrets — never commit keys
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+credentials*.json
+**/app-data.json
+
+# OS / editor
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs & caches
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.cache/
+.parcel-cache/
+.turbo/
+
+# Python / local tooling (sprite experiments, etc.)
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+
+# Electron / packaging leftovers
+*.asar
+*.dmg
+*.zip
+*.blockmap
+builder-effective-config.yaml
+builder-debug.yml
+
+# Old / unused asset dumps
+public/ort/
+sprites/
+native/bin/
+
+# Optional local notes
+TODO.local.md
