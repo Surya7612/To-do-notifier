@@ -49,6 +49,10 @@ process.on("uncaughtException", (err) => {
   }
 });
 
+process.on("unhandledRejection", (err) => {
+  console.error("unhandledRejection", err);
+});
+
 /** Shared mutable state for the windows / pet / tray runtimes. */
 const ctx = {
   mainWindow: null,
@@ -63,6 +67,8 @@ const ctx = {
   petHoverHideTimer: null,
   petFlightTimer: null,
   petIdleTimer: null,
+  petDashTimer: null,
+  petTeleportTimers: [],
   petFacing: 1,
   /** @type {'left' | 'right'} */
   petSide: "right",
@@ -83,6 +89,13 @@ const ctx = {
   isQuitting: false,
   /** Double-click pet freezes movement / random idle dashes */
   petPaused: false,
+  /** User is actively dragging the pet window */
+  petDragging: false,
+  /** After a drag, stay put until a mode restart / intentional move command */
+  petUserPinned: false,
+  /** Screen-space grab offset while dragging */
+  petDragOffsetX: 0,
+  petDragOffsetY: 0,
 };
 
 const { loadData, saveData, DEFAULT_SETTINGS } = createDataStore({ app });
@@ -160,7 +173,7 @@ if (!gotLock) {
 } else {
   app.on("second-instance", () => {
     windows.createMainWindow({ show: true });
-    if (ctx.mainWindow) {
+    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
       if (ctx.mainWindow.isMinimized()) ctx.mainWindow.restore();
       ctx.mainWindow.show();
       ctx.mainWindow.focus();

@@ -1,4 +1,11 @@
 const path = require("path");
+const {
+  isLive,
+  safeSend,
+  safeGetBounds,
+  safeSetBounds,
+  safeCall,
+} = require("./lib/safeWindow.cjs");
 
 const PANEL_SIZE = { width: 250, height: 220 };
 
@@ -37,17 +44,17 @@ function createWindowFactory({
   }
 
   function broadcast(channel, payload) {
-    ctx.mainWindow?.webContents.send(channel, payload);
-    ctx.petWindow?.webContents.send(channel, payload);
-    ctx.panelWindow?.webContents.send(channel, payload);
+    safeSend(ctx.mainWindow, channel, payload);
+    safeSend(ctx.petWindow, channel, payload);
+    safeSend(ctx.panelWindow, channel, payload);
   }
 
   function createMainWindow(opts = {}) {
     const showWhenReady = opts.show !== false;
-    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+    if (isLive(ctx.mainWindow)) {
       if (showWhenReady) {
-        ctx.mainWindow.show();
-        ctx.mainWindow.focus();
+        safeCall(ctx.mainWindow, "show");
+        safeCall(ctx.mainWindow, "focus");
       }
       return;
     }
@@ -74,7 +81,7 @@ function createWindowFactory({
     }
 
     ctx.mainWindow.once("ready-to-show", () => {
-      if (showWhenReady) ctx.mainWindow?.show();
+      if (showWhenReady) safeCall(ctx.mainWindow, "show");
     });
 
     // Close = hide to tray when always-on companion is enabled
@@ -83,7 +90,7 @@ function createWindowFactory({
       const alwaysOn = loadData().settings.alwaysOnCompanion !== false;
       if (alwaysOn && process.platform === "darwin") {
         e.preventDefault();
-        ctx.mainWindow?.hide();
+        safeCall(ctx.mainWindow, "hide");
       }
     });
 
@@ -105,9 +112,9 @@ function createWindowFactory({
         silent: false,
       });
       n.on("click", () => {
-        if (!ctx.mainWindow) createMainWindow({ show: true });
-        ctx.mainWindow?.show();
-        ctx.mainWindow?.focus();
+        if (!isLive(ctx.mainWindow)) createMainWindow({ show: true });
+        safeCall(ctx.mainWindow, "show");
+        safeCall(ctx.mainWindow, "focus");
       });
       n.show();
       return true;
@@ -118,8 +125,9 @@ function createWindowFactory({
   }
 
   function positionPanelNearPet() {
-    if (!ctx.petWindow || !ctx.panelWindow) return;
-    const petBounds = ctx.petWindow.getBounds();
+    if (!isLive(ctx.petWindow) || !isLive(ctx.panelWindow)) return;
+    const petBounds = safeGetBounds(ctx.petWindow);
+    if (!petBounds) return;
     const wa = workArea();
     const gap = 8;
     let x = petBounds.x + petBounds.width - PANEL_SIZE.width;
@@ -132,7 +140,7 @@ function createWindowFactory({
       x = wa.x + wa.width - PANEL_SIZE.width - 8;
     }
     if (y < wa.y + 8) y = wa.y + 8;
-    ctx.panelWindow.setBounds({
+    safeSetBounds(ctx.panelWindow, {
       x: Math.round(x),
       y: Math.round(y),
       width: PANEL_SIZE.width,
@@ -141,7 +149,7 @@ function createWindowFactory({
   }
 
   function createPanelWindow() {
-    if (ctx.panelWindow && !ctx.panelWindow.isDestroyed()) return;
+    if (isLive(ctx.panelWindow)) return;
     ctx.panelWindow = new BrowserWindow({
       width: PANEL_SIZE.width,
       height: PANEL_SIZE.height,
@@ -176,15 +184,14 @@ function createWindowFactory({
   }
 
   function showPanel() {
-    if (!ctx.panelWindow) createPanelWindow();
-    if (!ctx.panelWindow) return;
+    if (!isLive(ctx.panelWindow)) createPanelWindow();
+    if (!isLive(ctx.panelWindow)) return;
     positionPanelNearPet();
-    ctx.panelWindow.showInactive();
+    safeCall(ctx.panelWindow, "showInactive");
   }
 
   function hidePanel() {
-    if (!ctx.panelWindow || ctx.panelWindow.isDestroyed()) return;
-    ctx.panelWindow.hide();
+    safeCall(ctx.panelWindow, "hide");
   }
 
   function createPetWindow() {
@@ -203,8 +210,10 @@ function createWindowFactory({
       alwaysOnTop: true,
       skipTaskbar: true,
       hasShadow: false,
-      focusable: true,
+      // Non-focusable + panel keeps Goku on every Space (not stuck to the app's desktop)
+      focusable: false,
       show: false,
+      ...(process.platform === "darwin" ? { type: "panel" } : {}),
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),
         contextIsolation: true,
@@ -213,8 +222,16 @@ function createWindowFactory({
       },
     });
 
-    ctx.petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    ctx.petWindow.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
     ctx.petWindow.setAlwaysOnTop(true, "screen-saver");
+    try {
+      ctx.petWindow.setFullScreenable(false);
+    } catch {
+      /* ignore */
+    }
 
     if (isDev) {
       ctx.petWindow.loadURL(resolveHtml("pet"));
@@ -225,7 +242,8 @@ function createWindowFactory({
     ctx.petWindow.once("ready-to-show", () => {
       const data = loadData();
       if (data.settings.petVisible) {
-        ctx.petWindow?.showInactive();
+        safeCall(ctx.petWindow, "showInactive");
+        pet.pinPetAcrossDesktops?.();
         pet.startPetFlight();
         setTimeout(() => broadcast("pet:action", "land"), 200);
       }

@@ -6,6 +6,15 @@ export interface TodoApi {
   showMain: () => Promise<void>;
   setPetVisible: (visible: boolean) => Promise<AppData>;
   setPetHover: (hovering: boolean) => Promise<void>;
+  petDragStart: (payload: {
+    screenX: number;
+    screenY: number;
+  }) => Promise<{ ok: boolean }>;
+  petDragMove: (payload: {
+    screenX: number;
+    screenY: number;
+  }) => Promise<{ ok: boolean }>;
+  petDragEnd: () => Promise<{ ok: boolean; pinned?: boolean }>;
   setPetTutoring: (listening: boolean) => Promise<void>;
   petWake: () => Promise<void>;
   petSpeak: (text: string) => Promise<{ ok: boolean }>;

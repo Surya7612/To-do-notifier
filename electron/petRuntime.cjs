@@ -1,7 +1,17 @@
 const { pickLine } = require("./lib/random.cjs");
+const { screen } = require("electron");
+const {
+  isLive,
+  safeSend,
+  safeGetBounds,
+  safeSetBounds,
+  safeCall,
+} = require("./lib/safeWindow.cjs");
 
 const PET_COMPACT = { width: 96, height: 118 };
 const PET_SPEAK = { width: 248, height: 220 };
+/** Bob interval — keep light to avoid native setBounds thrash on panel windows. */
+const PET_BOB_MS = 200;
 
 /**
  * Placement, movement modes, speech bubble sizing and voice commands for the
@@ -15,19 +25,98 @@ function createPetRuntime({ ctx, loadData, windows }) {
   }
 
   function clampPetBounds(x, y, width, height) {
-    const wa = workArea();
-    const margin = 6;
+    // Use full display bounds (not workArea) so Goku can sit in true corners,
+    // including next to the Dock / menu bar — workArea was pushing him inward.
+    const cx = Math.round(x + width / 2);
+    const cy = Math.round(y + height / 2);
+    const display = screen.getDisplayNearestPoint({ x: cx, y: cy });
+    const area = display.bounds;
     let nx = x;
     let ny = y;
-    if (nx + width > wa.x + wa.width - margin) {
-      nx = wa.x + wa.width - width - margin;
-    }
-    if (nx < wa.x + margin) nx = wa.x + margin;
-    if (ny + height > wa.y + wa.height - margin) {
-      ny = wa.y + wa.height - height - margin;
-    }
-    if (ny < wa.y + margin) ny = wa.y + margin;
+    if (nx + width > area.x + area.width) nx = area.x + area.width - width;
+    if (nx < area.x) nx = area.x;
+    if (ny + height > area.y + area.height) ny = area.y + area.height - height;
+    if (ny < area.y) ny = area.y;
     return { x: Math.round(nx), y: Math.round(ny), width, height };
+  }
+
+  function pinPetAcrossDesktops() {
+    const win = ctx.petWindow;
+    if (!isLive(win)) return;
+    if (process.platform !== "darwin") return;
+    try {
+      win.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true,
+      });
+      win.setAlwaysOnTop(true, "screen-saver");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function movementLocked() {
+    return (
+      ctx.petDragging ||
+      ctx.petUserPinned ||
+      ctx.petPaused ||
+      ctx.petHover ||
+      ctx.petTutoring ||
+      ctx.petCommandBusy
+    );
+  }
+
+  function beginPetDrag(screenX, screenY) {
+    if (!isLive(ctx.petWindow)) {
+      return { ok: false };
+    }
+    const b = safeGetBounds(ctx.petWindow);
+    if (!b) return { ok: false };
+    ctx.petDragging = true;
+    ctx.petUserPinned = true;
+    ctx.petDragOffsetX = Number(screenX) - b.x;
+    ctx.petDragOffsetY = Number(screenY) - b.y;
+    hidePanel();
+    setFlightPhase("wait");
+    pinPetAcrossDesktops();
+    return { ok: true };
+  }
+
+  function movePetDrag(screenX, screenY) {
+    if (!ctx.petDragging || !isLive(ctx.petWindow)) {
+      return { ok: false };
+    }
+    const size = petSize();
+    const x = Number(screenX) - ctx.petDragOffsetX;
+    const y = Number(screenY) - ctx.petDragOffsetY;
+    const bounds = clampPetBounds(x, y, size.width, size.height);
+    if (!safeSetBounds(ctx.petWindow, bounds)) return { ok: false };
+    ctx.petLaneY = bounds.y;
+    return { ok: true };
+  }
+
+  function endPetDrag() {
+    ctx.petDragging = false;
+    if (!isLive(ctx.petWindow)) {
+      return { ok: true, pinned: ctx.petUserPinned };
+    }
+    const b = safeGetBounds(ctx.petWindow);
+    if (!b) return { ok: true, pinned: ctx.petUserPinned };
+    ctx.petLaneY = b.y;
+    const area = screen.getDisplayNearestPoint({
+      x: b.x + b.width / 2,
+      y: b.y + b.height / 2,
+    }).bounds;
+    const mid = area.x + area.width / 2;
+    ctx.petSide = b.x + b.width / 2 < mid ? "left" : "right";
+    setFacing(ctx.petSide === "left" ? 1 : -1);
+    pinPetAcrossDesktops();
+    return { ok: true, pinned: true };
+  }
+
+  function clearPetPin() {
+    ctx.petUserPinned = false;
+    ctx.petDragging = false;
   }
 
   function edgeX(side) {
@@ -61,42 +150,45 @@ function createPetRuntime({ ctx, loadData, windows }) {
   function setFacing(next) {
     if (next === ctx.petFacing) return;
     ctx.petFacing = next;
-    ctx.petWindow?.webContents.send("pet:facing", ctx.petFacing);
+    safeSend(ctx.petWindow, "pet:facing", ctx.petFacing);
   }
 
   function setFlightPhase(phase) {
     ctx.petPhase = phase;
-    ctx.petWindow?.webContents.send("pet:flight-phase", phase);
+    safeSend(ctx.petWindow, "pet:flight-phase", phase);
   }
 
   function placePetAtSide(side, y = ctx.petLaneY) {
-    if (!ctx.petWindow) return;
+    if (!isLive(ctx.petWindow)) return;
     const bounds = clampPetBounds(
       edgeX(side),
       y,
       petSize().width,
       petSize().height
     );
-    ctx.petWindow.setBounds(bounds);
+    safeSetBounds(ctx.petWindow, bounds);
     ctx.petSide = side;
     setFacing(side === "left" ? 1 : -1);
   }
 
   function placePetCorner(side = cornerSide()) {
+    clearPetPin();
     ctx.petLaneY = topBandY();
     placePetAtSide(side, ctx.petLaneY);
     setFlightPhase("wait");
   }
 
   function placePetPerch(mode) {
-    if (!ctx.petWindow) return;
+    if (!isLive(ctx.petWindow)) return;
+    clearPetPin();
     const wa = workArea();
     const y =
       mode === "perchBottom"
         ? wa.y + wa.height - petSize().height - 18
         : wa.y + 10;
     const x = wa.x + Math.max(20, wa.width / 2 - petSize().width / 2);
-    ctx.petWindow.setBounds(
+    safeSetBounds(
+      ctx.petWindow,
       clampPetBounds(x, y, petSize().width, petSize().height)
     );
     setFlightPhase("wait");
@@ -119,7 +211,7 @@ function createPetRuntime({ ctx, loadData, windows }) {
     const wait = 50_000 + Math.random() * 100_000;
     ctx.petIdleTimer = setTimeout(() => {
       ctx.petIdleTimer = null;
-      if (!ctx.petWindow || ctx.petWindow.isDestroyed()) return;
+      if (!isLive(ctx.petWindow)) return;
       if (
         ctx.petHover ||
         ctx.petTutoring ||
@@ -148,8 +240,24 @@ function createPetRuntime({ ctx, loadData, windows }) {
     }, wait);
   }
 
+  function clearDashTimer() {
+    if (ctx.petDashTimer) {
+      clearInterval(ctx.petDashTimer);
+      ctx.petDashTimer = null;
+    }
+  }
+
+  function clearTeleportTimers() {
+    if (ctx.petTeleportTimers?.length) {
+      for (const t of ctx.petTeleportTimers) clearTimeout(t);
+    }
+    ctx.petTeleportTimers = [];
+  }
+
   function runTopDash(toSide) {
-    if (!ctx.petWindow || ctx.petCommandBusy || ctx.petPaused) return;
+    if (!isLive(ctx.petWindow) || ctx.petCommandBusy || ctx.petPaused) return;
+    clearPetPin();
+    clearDashTimer();
     const targetSide = toSide || (ctx.petSide === "left" ? "right" : "left");
     ctx.petCommandBusy = true;
     ctx.petLaneY = topBandY();
@@ -160,9 +268,9 @@ function createPetRuntime({ ctx, loadData, windows }) {
     ctx.petPhase = "dash";
     broadcast("pet:action", "run");
 
-    const tick = setInterval(() => {
-      if (!ctx.petWindow || ctx.petWindow.isDestroyed()) {
-        clearInterval(tick);
+    ctx.petDashTimer = setInterval(() => {
+      if (!isLive(ctx.petWindow)) {
+        clearDashTimer();
         ctx.petCommandBusy = false;
         return;
       }
@@ -172,14 +280,14 @@ function createPetRuntime({ ctx, loadData, windows }) {
       const arrived =
         (dir > 0 && ctx.petDashX >= ctx.petDashTarget) ||
         (dir < 0 && ctx.petDashX <= ctx.petDashTarget);
-      ctx.petWindow.setBounds({
+      safeSetBounds(ctx.petWindow, {
         x: Math.round(arrived ? ctx.petDashTarget : ctx.petDashX),
         y: Math.round(ctx.petLaneY),
         width: petSize().width,
         height: petSize().height,
       });
       if (arrived) {
-        clearInterval(tick);
+        clearDashTimer();
         ctx.petSide = targetSide;
         placePetAtSide(ctx.petSide, ctx.petLaneY);
         setFlightPhase("wait");
@@ -191,22 +299,26 @@ function createPetRuntime({ ctx, loadData, windows }) {
   }
 
   function doTeleport() {
-    if (!ctx.petWindow || ctx.petCommandBusy || ctx.petPaused) return;
+    if (!isLive(ctx.petWindow) || ctx.petCommandBusy || ctx.petPaused) return;
+    clearPetPin();
+    clearTeleportTimers();
     ctx.petCommandBusy = true;
     broadcast("pet:action", "teleport");
     const nextSide = ctx.petSide === "left" ? "right" : "left";
-    setTimeout(() => {
+    const t1 = setTimeout(() => {
       ctx.petLaneY = topBandY();
       placePetAtSide(nextSide, ctx.petLaneY);
-      setTimeout(() => {
+      const t2 = setTimeout(() => {
         ctx.petCommandBusy = false;
         broadcast("pet:action", "idle");
       }, 400);
+      ctx.petTeleportTimers.push(t2);
     }, 700);
+    ctx.petTeleportTimers.push(t1);
   }
 
   function setPetSpeakMode(on, line) {
-    if (!ctx.petWindow || ctx.petWindow.isDestroyed()) return;
+    if (!isLive(ctx.petWindow)) return;
     ctx.petSpeakMode = Boolean(on);
     if (ctx.petSpeakTimer) {
       clearTimeout(ctx.petSpeakTimer);
@@ -222,7 +334,7 @@ function createPetRuntime({ ctx, loadData, windows }) {
         ? wa.x + margin
         : wa.x + wa.width - size.width - margin;
     const y = Math.max(wa.y + 10, topBandY() - (on ? 72 : 0));
-    ctx.petWindow.setBounds(clampPetBounds(x, y, size.width, size.height));
+    safeSetBounds(ctx.petWindow, clampPetBounds(x, y, size.width, size.height));
     if (line) {
       broadcast("pet:speak", line);
       broadcast("voice:speaking", true);
@@ -259,14 +371,15 @@ function createPetRuntime({ ctx, loadData, windows }) {
   }
 
   function handlePetWake() {
-    if (!ctx.petWindow) return;
+    if (!isLive(ctx.petWindow)) return;
+    clearPetPin();
     createMainWindow({ show: false });
     placePetCorner(cornerSide());
     broadcast("pet:wake", true);
     broadcast("pet:action", "land");
     broadcast("wake:arm", true);
     setTimeout(() => {
-      if (!ctx.petWindow || ctx.petWindow.isDestroyed()) return;
+      if (!isLive(ctx.petWindow)) return;
       broadcast("pet:action", "listen");
     }, 1600);
     speakPet(
@@ -293,9 +406,9 @@ function createPetRuntime({ ctx, loadData, windows }) {
       return;
     }
     if (c === "open") {
-      if (!ctx.mainWindow) createMainWindow();
-      ctx.mainWindow?.show();
-      ctx.mainWindow?.focus();
+      if (!isLive(ctx.mainWindow)) createMainWindow();
+      safeCall(ctx.mainWindow, "show");
+      safeCall(ctx.mainWindow, "focus");
       broadcast("pet:action", "listen");
       speakPet(pickLine(["Opening up!", "Here you go!", "App's ready."]));
       return;
@@ -370,106 +483,125 @@ function createPetRuntime({ ctx, loadData, windows }) {
     clearBodyDoubleTimer();
     clearPetIdleTimer();
     const mode = companionMode();
+    const stayPinned = ctx.petUserPinned;
 
     if (mode === "corner") {
-      placePetCorner(cornerSide());
+      if (!stayPinned) placePetCorner(cornerSide());
+      else setFlightPhase("wait");
       scheduleNaturalIdle();
       ctx.petFlightTimer = setInterval(() => {
-        if (!ctx.petWindow || ctx.petWindow.isDestroyed()) return;
-        if (
-          ctx.petHover ||
-          ctx.petTutoring ||
-          ctx.petCommandBusy ||
-          ctx.petPhase === "dash"
-        )
+        if (!isLive(ctx.petWindow)) {
+          stopPetFlight();
           return;
-        if (ctx.petPaused) return;
+        }
+        if (movementLocked() || ctx.petPhase === "dash") return;
         if (companionMode() !== "corner") {
           stopPetFlight();
           startPetFlight();
           return;
         }
-        const b = ctx.petWindow.getBounds();
+        if (ctx.petUserPinned) return;
+        const b = safeGetBounds(ctx.petWindow);
+        if (!b) return;
         const bob = Math.sin(Date.now() / 900) * 1.4;
-        ctx.petWindow.setBounds({
+        safeSetBounds(ctx.petWindow, {
           x: b.x,
           y: Math.round(topBandY() + bob),
           width: petSize().width,
           height: petSize().height,
         });
-      }, 50);
+      }, PET_BOB_MS);
       return;
     }
 
     if (mode === "perchTop" || mode === "perchBottom") {
-      placePetPerch(mode);
+      if (!stayPinned) placePetPerch(mode);
+      else setFlightPhase("wait");
       scheduleNaturalIdle();
       ctx.petFlightTimer = setInterval(() => {
-        if (!ctx.petWindow || ctx.petWindow.isDestroyed()) return;
-        if (ctx.petHover || ctx.petTutoring) return;
+        if (!isLive(ctx.petWindow)) {
+          stopPetFlight();
+          return;
+        }
+        if (movementLocked()) return;
         if (companionMode() !== mode) {
           stopPetFlight();
           startPetFlight();
           return;
         }
-        const b = ctx.petWindow.getBounds();
+        if (ctx.petUserPinned) return;
+        const b = safeGetBounds(ctx.petWindow);
+        if (!b) return;
         const bob = Math.sin(Date.now() / 700) * 1.5;
         const baseY =
           mode === "perchBottom"
             ? workArea().y + workArea().height - petSize().height - 18
             : workArea().y + 10;
-        ctx.petWindow.setBounds({
+        safeSetBounds(ctx.petWindow, {
           x: b.x,
           y: Math.round(baseY + bob),
           width: petSize().width,
           height: petSize().height,
         });
-      }, 50);
+      }, PET_BOB_MS);
       return;
     }
 
     if (mode === "bodyDouble") {
-      const wa = workArea();
-      ctx.petLaneY = wa.y + Math.min(wa.height * 0.55, wa.height - 120);
-      placePetAtSide("right", ctx.petLaneY);
+      if (!stayPinned) {
+        const wa = workArea();
+        ctx.petLaneY = wa.y + Math.min(wa.height * 0.55, wa.height - 120);
+        placePetAtSide("right", ctx.petLaneY);
+      }
       setFlightPhase("wait");
       startBodyDoubleNudges();
       ctx.petFlightTimer = setInterval(() => {
-        if (!ctx.petWindow || ctx.petWindow.isDestroyed()) return;
-        if (ctx.petHover || ctx.petTutoring) return;
+        if (!isLive(ctx.petWindow)) {
+          stopPetFlight();
+          return;
+        }
+        if (movementLocked()) return;
         if (companionMode() !== "bodyDouble") {
           stopPetFlight();
           startPetFlight();
           return;
         }
-        const b = ctx.petWindow.getBounds();
+        if (ctx.petUserPinned) return;
+        const b = safeGetBounds(ctx.petWindow);
+        if (!b) return;
         const bob = Math.sin(Date.now() / 500) * 1.2;
-        ctx.petWindow.setBounds({
+        safeSetBounds(ctx.petWindow, {
           x: b.x,
           y: Math.round(ctx.petLaneY + bob),
           width: petSize().width,
           height: petSize().height,
         });
-      }, 50);
+      }, PET_BOB_MS);
       return;
     }
 
     // patrol (optional legacy): stay → horizontal dash in top band only
-    ctx.petLaneY = topBandY();
-    placePetAtSide(ctx.petSide, ctx.petLaneY);
+    if (!stayPinned) {
+      ctx.petLaneY = topBandY();
+      placePetAtSide(ctx.petSide, ctx.petLaneY);
+    }
     ctx.petPhase = "wait";
     ctx.petPhaseUntil = Date.now() + 5000 + Math.random() * 4000;
     setFlightPhase("wait");
     scheduleNaturalIdle();
 
     ctx.petFlightTimer = setInterval(() => {
-      if (!ctx.petWindow || ctx.petWindow.isDestroyed()) return;
-      if (ctx.petHover || ctx.petTutoring || ctx.petCommandBusy) return;
+      if (!isLive(ctx.petWindow)) {
+        stopPetFlight();
+        return;
+      }
+      if (movementLocked()) return;
       if (companionMode() !== "patrol") {
         stopPetFlight();
         startPetFlight();
         return;
       }
+      if (ctx.petUserPinned) return;
 
       const now = Date.now();
       const leftX = edgeX("left");
@@ -477,9 +609,10 @@ function createPetRuntime({ ctx, loadData, windows }) {
       ctx.petLaneY = topBandY();
 
       if (ctx.petPhase === "wait") {
-        const b = ctx.petWindow.getBounds();
+        const b = safeGetBounds(ctx.petWindow);
+        if (!b) return;
         const bob = Math.sin(now / 700) * 1.2;
-        ctx.petWindow.setBounds({
+        safeSetBounds(ctx.petWindow, {
           x: b.x,
           y: Math.round(ctx.petLaneY + bob),
           width: petSize().width,
@@ -510,13 +643,13 @@ function createPetRuntime({ ctx, loadData, windows }) {
         setFlightPhase("wait");
         return;
       }
-      ctx.petWindow.setBounds({
+      safeSetBounds(ctx.petWindow, {
         x: Math.round(ctx.petDashX),
         y: Math.round(ctx.petLaneY),
         width: petSize().width,
         height: petSize().height,
       });
-    }, 32);
+    }, 48);
   }
 
   function stopPetFlight() {
@@ -524,22 +657,27 @@ function createPetRuntime({ ctx, loadData, windows }) {
       clearInterval(ctx.petFlightTimer);
       ctx.petFlightTimer = null;
     }
+    clearDashTimer();
+    clearTeleportTimers();
+    ctx.petCommandBusy = false;
     clearBodyDoubleTimer();
     clearPetIdleTimer();
   }
 
   function applyPetVisibility(visible) {
-    if (!ctx.petWindow) return;
+    if (!isLive(ctx.petWindow)) return;
     if (visible) {
-      ctx.petWindow.showInactive();
+      safeCall(ctx.petWindow, "showInactive");
       stopPetFlight();
+      // Fresh show: allow default placement again
+      clearPetPin();
       startPetFlight();
     } else {
       stopPetFlight();
       hidePanel();
       ctx.petHover = false;
       ctx.petHoverDepth = 0;
-      ctx.petWindow.hide();
+      safeCall(ctx.petWindow, "hide");
     }
   }
 
@@ -570,6 +708,11 @@ function createPetRuntime({ ctx, loadData, windows }) {
     startPetFlight,
     stopPetFlight,
     applyPetVisibility,
+    beginPetDrag,
+    movePetDrag,
+    endPetDrag,
+    clearPetPin,
+    pinPetAcrossDesktops,
   };
 }
 

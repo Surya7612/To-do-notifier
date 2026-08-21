@@ -194,6 +194,12 @@ export function PetApp() {
   const burstTimer = useRef<number | null>(null);
   const tutoringRef = useRef(false);
   const clickTimer = useRef<number | null>(null);
+  const dragRef = useRef<{
+    active: boolean;
+    moved: boolean;
+    startX: number;
+    startY: number;
+  } | null>(null);
   const settingsRef = useRef(data.settings);
   const speakGen = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -464,8 +470,14 @@ export function PetApp() {
   return (
     <div
       className={`pet-root ${paused ? "paused" : ""} ${bubble ? "speaking" : ""}`}
-      onMouseEnter={() => void window.todoApi.setPetHover(true)}
-      onMouseLeave={() => void window.todoApi.setPetHover(false)}
+      onMouseEnter={() => {
+        if (dragRef.current?.active) return;
+        void window.todoApi.setPetHover(true);
+      }}
+      onMouseLeave={() => {
+        if (dragRef.current?.active) return;
+        void window.todoApi.setPetHover(false);
+      }}
     >
       {bubble ? (
         <div className="pet-bubble" role="status">
@@ -475,8 +487,57 @@ export function PetApp() {
       <button
         type="button"
         className={`goku-stage action-${displayAction}`}
-        onClick={() => {
-          // Distinguish single vs double click
+        title="Drag to move · click to open · double-click to pause"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          dragRef.current = {
+            active: false,
+            moved: false,
+            startX: e.screenX,
+            startY: e.screenY,
+          };
+        }}
+        onPointerMove={(e) => {
+          const drag = dragRef.current;
+          if (!drag) return;
+          const dx = e.screenX - drag.startX;
+          const dy = e.screenY - drag.startY;
+          if (!drag.active) {
+            if (Math.hypot(dx, dy) < 5) return;
+            drag.active = true;
+            drag.moved = true;
+            if (clickTimer.current) {
+              window.clearTimeout(clickTimer.current);
+              clickTimer.current = null;
+            }
+            void window.todoApi.setPetHover(false);
+            void window.todoApi.petDragStart({
+              screenX: e.screenX,
+              screenY: e.screenY,
+            });
+            e.currentTarget.classList.add("dragging");
+            return;
+          }
+          void window.todoApi.petDragMove({
+            screenX: e.screenX,
+            screenY: e.screenY,
+          });
+        }}
+        onPointerUp={(e) => {
+          const drag = dragRef.current;
+          dragRef.current = null;
+          e.currentTarget.classList.remove("dragging");
+          try {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+          if (drag?.active) {
+            void window.todoApi.petDragEnd();
+            return;
+          }
+          // Click (no drag): single opens app, double pauses
           if (clickTimer.current) {
             window.clearTimeout(clickTimer.current);
             clickTimer.current = null;
@@ -488,6 +549,16 @@ export function PetApp() {
             void window.todoApi.armWake();
             void window.todoApi.showMain();
           }, 280);
+        }}
+        onPointerCancel={(e) => {
+          const drag = dragRef.current;
+          dragRef.current = null;
+          e.currentTarget.classList.remove("dragging");
+          if (drag?.active) void window.todoApi.petDragEnd();
+        }}
+        onClick={(e) => {
+          // Handled in pointer up — prevent default button click noise
+          e.preventDefault();
         }}
       >
         {showCloud && <span className="nimbus" aria-hidden />}

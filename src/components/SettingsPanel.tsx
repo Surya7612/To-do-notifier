@@ -124,8 +124,8 @@ export function SettingsPanel({
         <strong>Voice</strong>
         <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
           <strong>⌘G</strong> starts conversation · <strong>Esc</strong> stops
-          it · Tutor <strong>Dictate</strong> button for notes. Mic stays off
-          until you ask (unless wake word is enabled below).
+          it · Tutor <strong>Rubber Duck</strong> listens and asks questions. Mic
+          stays off until you ask (unless wake word is enabled below).
         </p>
         <div className="field">
           <label htmlFor="openai">OpenAI API key (listening)</label>

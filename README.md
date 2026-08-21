@@ -7,9 +7,10 @@ Built with Electron + Vite + React. Data stays on your Mac (`~/Library/Applicati
 ## Features
 
 - Todos with lead-time and overdue reminder nags (tray + notifications)
-- Always-on Goku pet (corner / patrol / body-double modes)
+- Always-on Goku pet (drag anywhere on screen; corner / patrol / body-double modes)
 - Voice conversation on demand: **⌘G** to talk, **Esc** to stop (OpenAI STT + Ollama)
-- Tutor **Dictate** button → notes / quiz / flashcards
+- Tutor **Rubber Duck** focus mode: dimmed stage + Goku listens, then asks clarifying questions
+- Tutor tools for notes / flashcards from what you explained
 - Optional always-on “Hey Goku” wake (off by default — Settings)
 - Pomodoro focus timer with optional ambient sound
 - Settings → **Readiness** check (mic, OpenAI, ElevenLabs, Ollama, notifications)
@@ -51,7 +52,7 @@ npm run dist
 | Mode | How to enter | How to exit | What it does |
 |------|----------------|-------------|--------------|
 | Conversation | **⌘G**, tray **Talk**, or header **⌘G Talk** | **Esc**, or say “stop listening” | Commands + short chat using open todos & notes. Mic is off until you start. |
-| Dictation | Tutor tab → **Dictate** button only | **Esc**, or click Dictate again / say “stop dictating” | Speech → transcript only (notes / quiz). |
+| Dictation / Rubber Duck | Tutor tab → **Start listening** (or **Dictate** tools) | Esc / Stop | Explain out loud; say **ask me** or tap **Ask Goku** for a clarifying question. |
 | Wake word (optional) | Settings → enable **Always listen for “Hey Goku”** | Turn the setting off | Mic stays armed for “Hey Goku”. Default is **off**. |
 
 Mic pauses while Goku speaks (half-duplex). Keyboard noise is ignored while typing in text fields.

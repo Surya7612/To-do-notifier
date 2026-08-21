@@ -10,8 +10,12 @@ function createDataStore({ app }) {
   const dataPath = () => path.join(app.getPath("userData"), "app-data.json");
 
   function saveData(data) {
-    fs.mkdirSync(path.dirname(dataPath()), { recursive: true });
-    fs.writeFileSync(dataPath(), JSON.stringify(data, null, 2), "utf8");
+    try {
+      fs.mkdirSync(path.dirname(dataPath()), { recursive: true });
+      fs.writeFileSync(dataPath(), JSON.stringify(data, null, 2), "utf8");
+    } catch (err) {
+      console.error("[saveData]", err);
+    }
   }
 
   function loadData() {

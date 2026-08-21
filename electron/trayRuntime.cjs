@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const { safeCall } = require("./lib/safeWindow.cjs");
 
 /**
  * Menu-bar tray icon, its live status menu and the focus-timer title.
@@ -97,8 +98,8 @@ function createTrayRuntime({
         label: "Open App",
         click: () => {
           createMainWindow({ show: true });
-          ctx.mainWindow?.show();
-          ctx.mainWindow?.focus();
+          safeCall(ctx.mainWindow, "show");
+          safeCall(ctx.mainWindow, "focus");
         },
       },
       {
@@ -157,8 +158,8 @@ function createTrayRuntime({
           ctx.voiceTrayLabel = "Voice: starting…";
           rebuildTrayMenu();
           createMainWindow({ show: true });
-          ctx.mainWindow?.show();
-          ctx.mainWindow?.focus();
+          safeCall(ctx.mainWindow, "show");
+          safeCall(ctx.mainWindow, "focus");
 
           const fire = () => {
             broadcast("voice:start-conversation", true);
@@ -231,8 +232,8 @@ function createTrayRuntime({
     rebuildTrayMenu();
     ctx.tray.on("click", () => {
       if (!ctx.mainWindow) createMainWindow();
-      ctx.mainWindow?.show();
-      ctx.mainWindow?.focus();
+      safeCall(ctx.mainWindow, "show");
+      safeCall(ctx.mainWindow, "focus");
     });
   }
 

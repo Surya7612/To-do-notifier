@@ -1,4 +1,5 @@
 const { transcribeAudio } = require("./lib/sttService.cjs");
+const { safeCall } = require("./lib/safeWindow.cjs");
 
 const {
   asksAboutOpenWork,
@@ -46,6 +47,10 @@ function registerIpc(deps) {
     companionMode,
     clearBodyDoubleTimer,
     startBodyDoubleNudges,
+    beginPetDrag,
+    movePetDrag,
+    endPetDrag,
+    clearPetPin,
   } = pet;
   const { updateTrayTimer, rebuildTrayMenu, openMicrophoneSettings } = tray;
   const { synthesizeElevenLabs } = tts;
@@ -69,6 +74,7 @@ function registerIpc(deps) {
     applyPetVisibility(merged.settings.petVisible);
     applySystemSettings(merged.settings);
     if (modeChanged && merged.settings.petVisible) {
+      clearPetPin();
       stopPetFlight();
       startPetFlight();
     }
@@ -95,8 +101,8 @@ function registerIpc(deps) {
 
   ipcMain.handle("app:show-main", () => {
     createMainWindow({ show: true });
-    ctx.mainWindow?.show();
-    ctx.mainWindow?.focus();
+    safeCall(ctx.mainWindow, "show");
+    safeCall(ctx.mainWindow, "focus");
   });
 
   ipcMain.handle("pet:set-visible", (_e, visible) => {
@@ -109,6 +115,7 @@ function registerIpc(deps) {
   });
 
   ipcMain.handle("pet:hover", (_e, hovering) => {
+    if (ctx.petDragging) return;
     if (ctx.petHoverHideTimer) {
       clearTimeout(ctx.petHoverHideTimer);
       ctx.petHoverHideTimer = null;
@@ -128,6 +135,19 @@ function registerIpc(deps) {
         }
       }, 180);
     }
+  });
+
+  ipcMain.handle("pet:drag-start", (_e, payload) => {
+    hidePanel();
+    return beginPetDrag(payload?.screenX, payload?.screenY);
+  });
+
+  ipcMain.handle("pet:drag-move", (_e, payload) => {
+    return movePetDrag(payload?.screenX, payload?.screenY);
+  });
+
+  ipcMain.handle("pet:drag-end", () => {
+    return endPetDrag();
   });
 
   ipcMain.handle("pet:tutoring", (_e, listening) => {

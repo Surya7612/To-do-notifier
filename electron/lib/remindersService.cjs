@@ -32,6 +32,14 @@ function createRemindersService({
   }
 
   function checkReminders() {
+    try {
+      checkRemindersUnsafe();
+    } catch (err) {
+      console.error("[checkReminders]", err);
+    }
+  }
+
+  function checkRemindersUnsafe() {
     const data = loadData();
     if (inQuietHoursLocal(data.settings)) return;
 

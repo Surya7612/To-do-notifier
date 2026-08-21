@@ -389,3 +389,222 @@ button {
     opacity: 0;
   }
 }
+
+/* Rubber duck — entry card + fullscreen focus */
+.duck-entry {
+  position: relative;
+  overflow: hidden;
+  min-height: 220px;
+  padding: 0;
+}
+
+.duck-entry-art {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 35%;
+  filter: brightness(0.55) saturate(1.05);
+  transform: scale(1.08);
+}
+
+.duck-entry-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(8, 10, 8, 0.92) 0%,
+    rgba(8, 10, 8, 0.55) 48%,
+    rgba(8, 10, 8, 0.25) 100%
+  );
+}
+
+.duck-entry-copy {
+  position: relative;
+  z-index: 1;
+  padding: 1.15rem 1.2rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 26rem;
+}
+
+.duck-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  background: #050705;
+}
+
+.duck-bg {
+  position: absolute;
+  inset: -6%;
+  background-size: cover;
+  background-position: center 38%;
+  background-repeat: no-repeat;
+  animation: duck-alive 14s ease-in-out infinite alternate;
+  will-change: transform, filter;
+}
+
+.duck-fullscreen.live .duck-bg {
+  animation-duration: 9s;
+  filter: brightness(1.06) saturate(1.08);
+}
+
+.duck-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 48% 52% at 50% 42%,
+      transparent 0%,
+      rgba(0, 0, 0, 0.28) 52%,
+      rgba(0, 0, 0, 0.72) 100%
+    ),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.35) 0%, transparent 28%, transparent 55%, rgba(0, 0, 0, 0.82) 100%);
+}
+
+.duck-glow {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: min(70vw, 520px);
+  height: min(70vw, 520px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    rgba(255, 200, 90, 0.22) 0%,
+    rgba(255, 150, 40, 0.06) 45%,
+    transparent 70%
+  );
+  animation: duck-breathe 4.5s ease-in-out infinite;
+}
+
+.duck-fullscreen.live .duck-glow {
+  animation-duration: 2.6s;
+  background: radial-gradient(
+    circle,
+    rgba(255, 210, 110, 0.32) 0%,
+    rgba(255, 160, 50, 0.1) 45%,
+    transparent 72%
+  );
+}
+
+@keyframes duck-alive {
+  from {
+    transform: scale(1) translate(0, 0);
+    filter: brightness(0.9) saturate(1);
+  }
+  to {
+    transform: scale(1.07) translate(-1.2%, 1.4%);
+    filter: brightness(1.05) saturate(1.08);
+  }
+}
+
+@keyframes duck-breathe {
+  0%,
+  100% {
+    opacity: 0.7;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.05);
+  }
+}
+
+.duck-back {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 3;
+  backdrop-filter: blur(8px);
+  background: rgba(20, 18, 14, 0.55) !important;
+}
+
+.duck-hud {
+  position: relative;
+  z-index: 2;
+  padding: 1.1rem 1.25rem 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(6, 8, 6, 0.45) 12%,
+    rgba(6, 8, 6, 0.9) 100%
+  );
+}
+
+.duck-title {
+  font-size: 1.15rem;
+  letter-spacing: 0.01em;
+}
+
+.duck-sub {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  max-width: 32rem;
+}
+
+.duck-sub em {
+  font-style: normal;
+  color: #ffc86a;
+  font-weight: 600;
+}
+
+.duck-socratic {
+  color: #f0e6d4;
+  font-size: 0.9rem;
+}
+
+.duck-actions {
+  flex-wrap: wrap;
+}
+
+.duck-live {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.duck-question {
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  background: rgba(255, 236, 190, 0.12);
+  border: 1px solid rgba(255, 200, 100, 0.3);
+  backdrop-filter: blur(6px);
+}
+
+.duck-q-label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #ffc86a;
+  margin-bottom: 0.25rem;
+  font-weight: 700;
+}
+
+.duck-question p {
+  margin: 0;
+  color: #f6efdf;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.duck-fullscreen .field label {
+  color: #dcc9ae;
+}
+
+.duck-fullscreen .field input {
+  background: rgba(18, 16, 12, 0.65);
+  border-color: rgba(255, 220, 170, 0.18);
+}
