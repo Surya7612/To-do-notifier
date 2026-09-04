@@ -8,11 +8,16 @@ function createTtsService({ loadData, clampText }) {
     const key =
       String(settings.elevenLabsApiKey || "").trim() ||
       String(process.env.ELEVENLABS_API_KEY || "").trim();
-    const voiceId =
-      String(settings.elevenLabsVoiceId || "").trim() ||
-      "zYcjlYFOd3taleS0gkk3";
+    const voiceId = String(settings.elevenLabsVoiceId || "").trim();
     if (!key) {
       return { ok: false, detail: "No ElevenLabs API key in Settings", hasKey: false };
+    }
+    if (!voiceId) {
+      return {
+        ok: false,
+        detail: "No ElevenLabs voice ID in Settings (use a My Voices ID)",
+        hasKey: true,
+      };
     }
     const line = clampText(text, 400);
     if (!line) return { ok: false, detail: "Empty text", hasKey: true };

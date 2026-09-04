@@ -30,7 +30,7 @@ const DEFAULT_SETTINGS = {
   /** auto | gpt-4o-mini-transcribe | whisper-1 */
   openaiTranscribeModel: "auto",
   elevenLabsApiKey: "",
-  elevenLabsVoiceId: "zYcjlYFOd3taleS0gkk3",
+  elevenLabsVoiceId: "",
   allowSystemVoiceFallback: true,
   gokuVoiceURI: "",
   gokuVoiceRate: 1.02,

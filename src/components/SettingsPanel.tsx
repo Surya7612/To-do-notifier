@@ -171,7 +171,8 @@ export function SettingsPanel({
           <label htmlFor="eleven-voice">ElevenLabs voice ID</label>
           <input
             id="eleven-voice"
-            value={s.elevenLabsVoiceId || "zYcjlYFOd3taleS0gkk3"}
+            placeholder="Voice ID from ElevenLabs → My Voices"
+            value={s.elevenLabsVoiceId || ""}
             onChange={(e) =>
               void patch({ elevenLabsVoiceId: e.target.value.trim() })
             }

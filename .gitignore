@@ -15,6 +15,9 @@ release/
 credentials*.json
 **/app-data.json
 
+# Local-only companion art overrides (optional)
+src/assets/local/
+
 # OS / editor
 .DS_Store
 .AppleDouble

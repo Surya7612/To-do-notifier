@@ -137,7 +137,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   openaiApiKey: "",
   openaiTranscribeModel: "auto",
   elevenLabsApiKey: "",
-  elevenLabsVoiceId: "zYcjlYFOd3taleS0gkk3",
+  elevenLabsVoiceId: "",
   allowSystemVoiceFallback: true,
   gokuVoiceURI: "",
   gokuVoiceRate: 1.02,

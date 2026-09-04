@@ -3,8 +3,9 @@
   "version": "1.4.2",
   "private": true,
   "description": "macOS productivity companion with voice chat and local AI tutoring",
+  "license": "MIT",
   "main": "electron/main.cjs",
-  "author": "Surya",
+  "author": "Surya Nediyadeth",
   "scripts": {
     "patch:electron-mic": "node scripts/patch-electron-mic.cjs",
     "predev": "npm run patch:electron-mic",
@@ -26,7 +27,7 @@
   "build": {
     "appId": "com.surya.todonotifier",
     "productName": "To-Do Notifier",
-    "copyright": "Private use",
+    "copyright": "Copyright © 2026 Surya Nediyadeth",
     "afterPack": "./scripts/after-pack-sign.cjs",
     "directories": {
       "output": "release",
@@ -57,7 +58,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "To-Do Notifier uses the microphone for Hey Goku wake phrases and tutor dictation. Speech is sent to OpenAI Whisper while voice is on."
+        "NSMicrophoneUsageDescription": "To-Do Notifier uses the microphone for voice conversation and tutor dictation. Speech is sent to OpenAI for transcription while voice features are on."
       }
     }
   },

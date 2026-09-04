@@ -6,6 +6,8 @@ Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode —
 
 [![CI](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml)
 
+> `"private": true` in `package.json` means the package is **not published to npm**. The app source is public under MIT (see [License](#license)).
+
 ---
 
 ## Screenshots
@@ -14,9 +16,7 @@ Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode —
 | --- | --- |
 | ![Todos](docs/screenshots/todos.png) | ![Focus](docs/screenshots/focus.png) |
 
-| Tutor entry | Rubber Duck (voice tutoring) |
-| --- | --- |
-| ![Tutor](docs/screenshots/tutor.jpg) | ![Rubber Duck](docs/screenshots/rubber-duck.jpg) |
+![Rubber Duck voice tutoring](docs/screenshots/rubber-duck.jpg)
 
 ---
 
@@ -26,7 +26,7 @@ Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode —
 | --- | --- |
 | **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications |
 | **Focus** | Pomodoro timer with optional ambient sound |
-| **Companion** | Always-on Goku pet (drag anywhere; corner / perch / body-double modes) |
+| **Companion** | Always-on desktop pet (drag anywhere; corner / perch / body-double modes) |
 | **Voice** | **⌘G** talk / **Esc** stop — commands + short chat over open work |
 | **Tutor** | Rubber Duck mode: explain out loud; optional Socrates probing questions |
 | **Study** | Notes + flashcards generated from what you said or typed |
@@ -78,6 +78,8 @@ flowchart TB
 
 **Tutor path (Rubber Duck):** dictate transcript → “ask me” / Ask Goku → Ollama question or tip → speak.
 
+Main-process code is CommonJS (`.cjs`) for straightforward Electron packaging; the UI is TypeScript + React.
+
 ---
 
 ## Stack
@@ -86,7 +88,7 @@ flowchart TB
 - **UI:** React 19 + Vite + TypeScript
 - **Local AI:** Ollama HTTP API
 - **Speech:** OpenAI transcription; ElevenLabs or macOS system voice
-- **Storage:** local `app-data.json` under Application Support
+- **Storage:** local `app-data.json` under Application Support (not in git)
 - **Quality:** ESLint, Vitest, `npm run check` (typecheck + lint + test + build)
 
 ---
@@ -96,8 +98,8 @@ flowchart TB
 - macOS (Apple Silicon primary)
 - Node.js 18+
 - [Ollama](https://ollama.com) + a model (`ollama pull llama3.2`)
-- OpenAI API key (listening / STT)
-- Optional: ElevenLabs voice ID
+- OpenAI API key (listening / STT) — set in **Settings**, not in the repo
+- Optional: ElevenLabs API key + **My Voices** voice ID
 
 ---
 
@@ -113,7 +115,7 @@ DMG: `npm run dist` → open `release/*.dmg`.
 ### First launch
 
 1. Allow **Microphone** and **Notifications**.
-2. **Settings → Voice** → paste OpenAI key.
+2. **Settings → Voice** → paste OpenAI key (and ElevenLabs if you use it).
 3. Run **Readiness** check; fix any red items.
 4. **⌘G** to talk, **Esc** to stop.
 
@@ -125,7 +127,7 @@ DMG: `npm run dist` → open `release/*.dmg`.
 | --- | --- | --- | --- |
 | Conversation | ⌘G / tray Talk | Esc | Commands + short chat |
 | Rubber Duck | Tutor → Start listening | Esc / Stop | Explain; say **ask me** for a probe/tip |
-| Wake word | Settings (off by default) | Disable setting | Optional always-armed “Hey Goku” |
+| Wake word | Settings (off by default) | Disable setting | Optional always-armed wake phrase |
 
 ---
 
@@ -148,13 +150,14 @@ npm run check
 
 ## Privacy
 
-- Todos, notes, and settings stay in local JSON.
+- Todos, notes, and settings stay in local JSON under Application Support.
 - With voice on, mic audio goes to **OpenAI** for STT.
 - Spoken replies may use **ElevenLabs** if configured.
-- API keys live in Settings (`app-data.json`) — never commit them.
+- API keys belong in Settings (or optional `.env` locally) — never commit them. See `.env.example`.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+- **Source code:** [MIT](LICENSE)
+- **Companion artwork:** not under MIT — third-party / fan demo art only. See [docs/ASSETS.md](docs/ASSETS.md).
