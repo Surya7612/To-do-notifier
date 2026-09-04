@@ -1,97 +1,159 @@
 # To-Do Notifier
 
-Private **macOS** menu-bar companion: floating Goku pet, deadline reminders, Pomodoro, notes, flashcards, and local **Ollama** tutoring.
+**macOS productivity companion with voice chat and local AI tutoring.**
 
-Built with Electron + Vite + React. Data stays on your Mac (`~/Library/Application Support/todo-notifier/`).
+Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode — with a floating companion pet, tray reminders, and on-demand voice (OpenAI STT + local Ollama).
 
-## Features
+[![CI](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml)
 
-- Todos with lead-time and overdue reminder nags (tray + notifications)
-- Always-on Goku pet (drag anywhere on screen; corner / patrol / body-double modes)
-- Voice conversation on demand: **⌘G** to talk, **Esc** to stop (OpenAI STT + Ollama)
-- Tutor **Rubber Duck** focus mode: dimmed stage + Goku listens, then asks clarifying questions
-- Tutor tools for notes / flashcards from what you explained
-- Optional always-on “Hey Goku” wake (off by default — Settings)
-- Pomodoro focus timer with optional ambient sound
-- Settings → **Readiness** check (mic, OpenAI, ElevenLabs, Ollama, notifications)
+---
+
+## Screenshots
+
+| Todos & reminders | Focus (Pomodoro) |
+| --- | --- |
+| ![Todos](docs/screenshots/todos.png) | ![Focus](docs/screenshots/focus.png) |
+
+| Tutor entry | Rubber Duck (voice tutoring) |
+| --- | --- |
+| ![Tutor](docs/screenshots/tutor.jpg) | ![Rubber Duck](docs/screenshots/rubber-duck.jpg) |
+
+---
+
+## What it does
+
+| Area | Behavior |
+| --- | --- |
+| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications |
+| **Focus** | Pomodoro timer with optional ambient sound |
+| **Companion** | Always-on Goku pet (drag anywhere; corner / perch / body-double modes) |
+| **Voice** | **⌘G** talk / **Esc** stop — commands + short chat over open work |
+| **Tutor** | Rubber Duck mode: explain out loud; optional Socrates probing questions |
+| **Study** | Notes + flashcards generated from what you said or typed |
+| **Local AI** | Ollama for tutoring / companion replies; data stored on-disk |
+
+---
+
+## Architecture
+
+High-level process layout. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and IPC.
+
+```mermaid
+flowchart TB
+  subgraph UI["Renderer processes"]
+    Main["Main window<br/>React · Todos / Focus / Tutor / …"]
+    Pet["Pet window<br/>sprite + speech bubble"]
+    Panel["Hover panel"]
+  end
+
+  subgraph Electron["Main process"]
+    Tray["Tray · notifications · hotkeys"]
+    IPC["IPC handlers"]
+    PetRT["Pet runtime<br/>placement · motion"]
+    Remind["Reminders sweep"]
+    Data["JSON data store<br/>userData"]
+  end
+
+  subgraph External["Optional / local services"]
+    STT["OpenAI STT"]
+    TTS["ElevenLabs or system voice"]
+    Ollama["Ollama · local LLM"]
+  end
+
+  Main <-->|preload IPC| IPC
+  Pet <-->|preload IPC| IPC
+  Panel <-->|preload IPC| IPC
+  Tray --> IPC
+  IPC --> Data
+  IPC --> PetRT
+  Remind --> Data
+  Remind --> Tray
+  IPC --> STT
+  IPC --> TTS
+  IPC --> Ollama
+  PetRT --> Pet
+```
+
+**Voice path (conversation):** mic → OpenAI transcription → intent / companion chat (Ollama) → TTS → pet bubble + half-duplex mic pause.
+
+**Tutor path (Rubber Duck):** dictate transcript → “ask me” / Ask Goku → Ollama question or tip → speak.
+
+---
+
+## Stack
+
+- **Desktop:** Electron 34 (main / tray / pet windows)
+- **UI:** React 19 + Vite + TypeScript
+- **Local AI:** Ollama HTTP API
+- **Speech:** OpenAI transcription; ElevenLabs or macOS system voice
+- **Storage:** local `app-data.json` under Application Support
+- **Quality:** ESLint, Vitest, `npm run check` (typecheck + lint + test + build)
+
+---
 
 ## Requirements
 
-- macOS (Apple Silicon builds are the primary target)
+- macOS (Apple Silicon primary)
 - Node.js 18+
-- [Ollama](https://ollama.com) + a model, e.g. `ollama pull llama3.2`
-- OpenAI API key (for listening / speech-to-text)
-- Optional: ElevenLabs API key + a **My Voices** voice ID (library voices need a paid ElevenLabs plan)
+- [Ollama](https://ollama.com) + a model (`ollama pull llama3.2`)
+- OpenAI API key (listening / STT)
+- Optional: ElevenLabs voice ID
 
-## Install (normal Mac app)
+---
+
+## Install
 
 ```bash
 npm install
-npm run install:app
+npm run install:app   # packs, ad-hoc signs, installs to /Applications
 ```
 
-That packs `To-Do Notifier.app`, ad-hoc signs it, copies it to `/Applications`, and opens it.
-
-Or build a DMG:
-
-```bash
-npm run dist
-# then open release/*.dmg and drag the app into Applications
-```
+DMG: `npm run dist` → open `release/*.dmg`.
 
 ### First launch
 
-1. Allow **Microphone** and **Notifications** when prompted (or System Settings → Privacy).
-2. Open **Settings → Voice** and paste your **OpenAI** key.
-3. For Goku speech without ElevenLabs: enable **Allow system voice if ElevenLabs fails** (or skip ElevenLabs entirely).
-4. Click **Run full check** and fix any red items.
-5. Press **⌘G** (or tray → **Talk**) to start conversation; **Esc** to stop.
+1. Allow **Microphone** and **Notifications**.
+2. **Settings → Voice** → paste OpenAI key.
+3. Run **Readiness** check; fix any red items.
+4. **⌘G** to talk, **Esc** to stop.
+
+---
 
 ## Voice modes
 
-| Mode | How to enter | How to exit | What it does |
-|------|----------------|-------------|--------------|
-| Conversation | **⌘G**, tray **Talk**, or header **⌘G Talk** | **Esc**, or say “stop listening” | Commands + short chat using open todos & notes. Mic is off until you start. |
-| Dictation / Rubber Duck | Tutor tab → **Start listening** (or **Dictate** tools) | Esc / Stop | Explain out loud; say **ask me** or tap **Ask Goku** for a clarifying question. |
-| Wake word (optional) | Settings → enable **Always listen for “Hey Goku”** | Turn the setting off | Mic stays armed for “Hey Goku”. Default is **off**. |
+| Mode | Enter | Exit | Role |
+| --- | --- | --- | --- |
+| Conversation | ⌘G / tray Talk | Esc | Commands + short chat |
+| Rubber Duck | Tutor → Start listening | Esc / Stop | Explain; say **ask me** for a probe/tip |
+| Wake word | Settings (off by default) | Disable setting | Optional always-armed “Hey Goku” |
 
-Mic pauses while Goku speaks (half-duplex). Keyboard noise is ignored while typing in text fields.
-
-## Soft-block
-
-“Pause upcoming reminders during focus” only suppresses **reminder nags**. It does **not** block other apps or websites.
+---
 
 ## Development
 
 ```bash
 npm install
 env -u ELECTRON_RUN_AS_NODE npm run dev
+npm run check
 ```
-
-Quality gates:
-
-```bash
-npm run check   # typecheck + lint + tests + build
-```
-
-Useful scripts:
 
 | Script | Purpose |
-|--------|---------|
-| `npm run dev` | Vite + Electron hot reload |
-| `npm test` | Unit tests (Vitest) |
-| `npm run lint` | ESLint on `src/` |
-| `npm run typecheck` | TypeScript |
-| `npm run pack` | Unpackaged `.app` under `release/` |
-| `npm run dist` | DMG + zip |
-| `npm run install:app` | Pack, install to `/Applications`, open |
+| --- | --- |
+| `npm run dev` | Vite + Electron |
+| `npm test` | Vitest |
+| `npm run pack` / `dist` | Unpackaged `.app` / DMG |
+| `npm run install:app` | Install to `/Applications` |
 
-## Privacy notes
+---
 
-- Todos / notes / settings are local JSON only.
-- With voice on, mic audio is sent to **OpenAI** speech-to-text.
-- If ElevenLabs is configured, spoken replies are synthesized via their API.
-- Never commit API keys. Keys live in Settings (stored in local `app-data.json`).
+## Privacy
+
+- Todos, notes, and settings stay in local JSON.
+- With voice on, mic audio goes to **OpenAI** for STT.
+- Spoken replies may use **ElevenLabs** if configured.
+- API keys live in Settings (`app-data.json`) — never commit them.
+
+---
 
 ## License
 

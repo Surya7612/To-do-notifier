@@ -2,7 +2,7 @@
   "name": "todo-notifier",
   "version": "1.4.2",
   "private": true,
-  "description": "Mac menu-bar todo companion with Goku pet, Pomodoro, and local Ollama tutoring",
+  "description": "macOS productivity companion with voice chat and local AI tutoring",
   "main": "electron/main.cjs",
   "author": "Surya",
   "scripts": {
