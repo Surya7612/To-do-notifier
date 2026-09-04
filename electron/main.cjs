@@ -34,7 +34,7 @@ const { createTrayRuntime } = require("./trayRuntime.cjs");
 const { registerIpc } = require("./registerIpc.cjs");
 const { createVoiceHotkeys } = require("./lib/voiceHotkeys.cjs");
 
-// Cursor / some shells set this and break Electron GUI launches
+// Some shells set this and break Electron GUI launches
 delete process.env.ELECTRON_RUN_AS_NODE;
 
 process.on("uncaughtException", (err) => {
