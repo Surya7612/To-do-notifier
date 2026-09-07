@@ -43,7 +43,7 @@ struct LibraryView: View {
             ContentUnavailableView(
                 "No saved context yet",
                 systemImage: "bookmark",
-                description: Text("Press \(GlobalHotkey.defaultDisplayName), type why a screen matters, then ⌘S.")
+                description: Text("Press \(AppSettings.hotkey.displayName), type why a screen matters, then ⌘S.")
             )
         } else if filtered.isEmpty {
             ContentUnavailableView.search(text: search)

@@ -6,6 +6,7 @@ enum AppSettings {
         static let ollamaEndpoint = "ollamaEndpoint"
         static let model = "model"
         static let sendsImage = "sendsImage"
+        static let hotkeyID = "hotkeyID"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -16,7 +17,12 @@ enum AppSettings {
             Key.ollamaEndpoint: defaultEndpoint,
             Key.model: defaultModel,
             Key.sendsImage: false,
+            Key.hotkeyID: HotkeyChoice.fallback.id,
         ])
+    }
+
+    static var hotkey: HotkeyChoice {
+        HotkeyChoice.named(UserDefaults.standard.string(forKey: Key.hotkeyID))
     }
 
     static var endpoint: URL {

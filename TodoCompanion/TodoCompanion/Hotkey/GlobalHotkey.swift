@@ -7,21 +7,25 @@ import Carbon.HIToolbox
 final class GlobalHotkey {
     static let shared = GlobalHotkey()
 
-    /// ⌥⌘Space
-    nonisolated static let defaultKeyCode = UInt32(kVK_Space)
-    nonisolated static let defaultModifiers = UInt32(optionKey | cmdKey)
-    nonisolated static let defaultDisplayName = "⌥⌘Space"
+    /// True when the OS refused the combo outright. Note this stays false for
+    /// system-reserved combos, which register "successfully" but never fire.
+    private(set) var didFailToRegister = false
+    private(set) var current: HotkeyChoice = .fallback
 
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
+    private var storedAction: (() -> Void)?
 
     private init() {}
 
-    func register(keyCode: UInt32 = defaultKeyCode,
-                  modifiers: UInt32 = defaultModifiers,
-                  action: @escaping () -> Void) {
-        unregister()
-        hotkeyAction = action
+    /// Registers `choice`. Pass `action` on first call; later calls reuse it so
+    /// changing the shortcut in Settings does not need the callback again.
+    func activate(_ choice: HotkeyChoice, action: (() -> Void)? = nil) {
+        if let action { storedAction = action }
+
+        releaseRegistration()
+        current = choice
+        hotkeyAction = storedAction
 
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                  eventKind: UInt32(kEventHotKeyPressed))
@@ -29,15 +33,28 @@ final class GlobalHotkey {
 
         let id = EventHotKeyID(signature: hotkeySignature, id: hotkeyIdentifier)
         var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(keyCode, modifiers, id, GetApplicationEventTarget(), 0, &ref)
+        let status = RegisterEventHotKey(choice.keyCode,
+                                         choice.modifiers,
+                                         id,
+                                         GetApplicationEventTarget(),
+                                         0,
+                                         &ref)
         if status == noErr {
             hotKeyRef = ref
+            didFailToRegister = false
         } else {
-            NSLog("[GlobalHotkey] registration failed: \(status)")
+            didFailToRegister = true
+            NSLog("[GlobalHotkey] \(choice.displayName) rejected with status \(status)")
         }
     }
 
     func unregister() {
+        releaseRegistration()
+        storedAction = nil
+        hotkeyAction = nil
+    }
+
+    private func releaseRegistration() {
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
@@ -46,7 +63,6 @@ final class GlobalHotkey {
             RemoveEventHandler(eventHandler)
             self.eventHandler = nil
         }
-        hotkeyAction = nil
     }
 }
 

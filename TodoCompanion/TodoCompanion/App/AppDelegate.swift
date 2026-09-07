@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.registerDefaults()
         NSApp.setActivationPolicy(.accessory)
 
-        GlobalHotkey.shared.register { [weak self] in
+        GlobalHotkey.shared.activate(AppSettings.hotkey) { [weak self] in
             self?.companion.toggle()
         }
     }

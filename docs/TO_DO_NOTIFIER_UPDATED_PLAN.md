@@ -649,7 +649,7 @@ Build:
 - [x] Transparent background (`.ultraThinMaterial` over a clear window)
 - [x] Drag / position (`isMovableByWindowBackground`)
 - [x] Cursor-relative placement (clamped to the visible frame of the cursor's screen)
-- [x] Global hotkey (⌥⌘Space via Carbon `RegisterEventHotKey` — no Accessibility permission)
+- [x] Global hotkey (⌃⌥Space via Carbon `RegisterEventHotKey` — no Accessibility permission)
 - [x] ScreenCaptureKit screenshot (display under the cursor)
 - [x] Exclude own companion window (`SCContentFilter(excludingApplications:)` by bundle ID)
 - [x] AI request (streaming Ollama `/api/generate`)
@@ -664,7 +664,7 @@ for when a vision model is pulled.
 Still open from this phase:
 
 - [ ] Visual "listening"/streaming animation beyond the status dot
-- [ ] Configurable hotkey (currently fixed at ⌥⌘Space)
+- [x] Configurable hotkey (a picker of non-reserved combos in Settings)
 - [ ] Multi-monitor: capture the display under the cursor is done; capturing *all*
       displays for one question is not
 

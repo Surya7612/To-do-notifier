@@ -10,7 +10,7 @@ screen along with the reason it mattered (Phase 4).
 ## Asking
 
 ```text
-⌥⌘Space
+⌃⌥Space
    ↓
 Companion panel appears beside the cursor
    ↓
@@ -30,7 +30,7 @@ your *reason* for keeping the screen, alongside the screenshot, the OCR text, an
 the app and window it came from. Any `#tags` in your sentence become topics.
 
 ```text
-⌥⌘Space → "check this when I redo retrieval #engram" → ⌘S
+⌃⌥Space → "check this when I redo retrieval #engram" → ⌘S
 ```
 
 Later, **Saved Context** in the menu bar searches across your reasons, the model's
@@ -64,6 +64,15 @@ On first use macOS asks for **Screen Recording** permission. Grant it in System
 Settings → Privacy & Security → Screen Recording, then relaunch. The global
 hotkey deliberately uses Carbon's `RegisterEventHotKey`, so no Accessibility
 permission is needed.
+
+The shortcut defaults to `⌃⌥Space` and can be changed in Settings. The options
+are restricted to combos macOS does not reserve: a reserved combo such as
+`⌘Space` or `⌥⌘Space` is consumed by the system before the app sees it, and
+`RegisterEventHotKey` *still returns success*, so the shortcut silently does
+nothing rather than reporting an error.
+
+Run only one copy at a time. Carbon hot keys are exclusive, so a second instance
+fails to claim the shortcut and the first one to launch keeps it.
 
 ## Layout
 
