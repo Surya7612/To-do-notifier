@@ -4,6 +4,8 @@ struct CompanionView: View {
     @Bindable var viewModel: CompanionViewModel
     let onClose: () -> Void
     let onRetry: () -> Void
+    let onSelectRegion: () -> Void
+    let onClearRegion: () -> Void
 
     @FocusState private var questionFocused: Bool
 
@@ -14,6 +16,7 @@ struct CompanionView: View {
                 permissionNotice
             } else {
                 askField
+                actionRow
                 if !viewModel.related.isEmpty {
                     relatedStrip
                 }
@@ -93,6 +96,62 @@ struct CompanionView: View {
 
     private var isFieldEmpty: Bool {
         viewModel.question.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Region selection and the two questions worth a shortcut, plus a standing
+    /// statement of where answers come from.
+    private var actionRow: some View {
+        HStack(spacing: DS.Spacing.hair) {
+            Button {
+                onSelectRegion()
+            } label: {
+                Label(viewModel.hasRegion ? "Region" : "Select region",
+                      systemImage: viewModel.hasRegion ? "crop" : "rectangle.dashed")
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Drag out part of the screen to ask about (⌘R)")
+
+            if viewModel.hasRegion {
+                Button {
+                    onClearRegion()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Back to the whole screen")
+            }
+
+            ForEach(CompanionViewModel.Preset.allCases) { preset in
+                Button {
+                    viewModel.ask(preset)
+                } label: {
+                    Label(preset.rawValue, systemImage: preset.glyph)
+                }
+                .disabled(!viewModel.hasCapture || viewModel.isBusy)
+            }
+
+            Spacer(minLength: DS.Spacing.hair)
+
+            destinationBadge
+        }
+        .controlSize(.small)
+        .labelStyle(.titleAndIcon)
+        .font(.caption)
+    }
+
+    /// Says plainly whether asking will send the screen off this Mac. A
+    /// question that leaves the device must never look like one that does not.
+    private var destinationBadge: some View {
+        Label(
+            viewModel.answersLeaveTheMachine ? viewModel.brainLabel : "On this Mac",
+            systemImage: viewModel.answersLeaveTheMachine ? "cloud" : "lock.laptopcomputer"
+        )
+        .font(.caption2)
+        .foregroundStyle(viewModel.answersLeaveTheMachine ? DS.Status.busy : Color.secondary)
+        .help(viewModel.answersLeaveTheMachine
+              ? "Your question and the captured screen go to \(viewModel.brainLabel). Saved summaries stay local."
+              : "Nothing leaves this Mac.")
     }
 
     private var permissionNotice: some View {

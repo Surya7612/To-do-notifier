@@ -61,6 +61,21 @@ final class CompanionPanelController {
         }
     }
 
+    /// Steps the panel aside for region selection without tearing down its
+    /// state, and suspends the outside-click monitor that would otherwise treat
+    /// the drag as a dismissal.
+    private func setPanelHidden(_ hidden: Bool) {
+        guard let panel else { return }
+        if hidden {
+            stopWatchingForOutsideClick()
+            panel.orderOut(nil)
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            watchForOutsideClick()
+        }
+    }
+
     private func stopWatchingForOutsideClick() {
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
         outsideClickMonitor = nil
@@ -88,6 +103,16 @@ final class CompanionPanelController {
                 onClose: { [weak self] in self?.hide() },
                 onRetry: { [weak self] in
                     self?.viewModel.retryCapture(frontmostApp: self?.previousApp)
+                },
+                onSelectRegion: { [weak self] in
+                    self?.viewModel.selectRegion { hidden in
+                        // Clicking into the selection overlay is a click outside
+                        // the panel, so the dismiss monitor has to stand down.
+                        self?.setPanelHidden(hidden)
+                    }
+                },
+                onClearRegion: { [weak self] in
+                    self?.viewModel.clearRegion(frontmostApp: self?.previousApp)
                 }
             )
         )

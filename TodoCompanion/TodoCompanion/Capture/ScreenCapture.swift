@@ -20,6 +20,10 @@ struct ScreenObservation {
     let appName: String?
     let windowTitle: String?
 
+    /// True once the user has narrowed this to a region they chose. The model
+    /// is told, so it answers about the selection rather than the whole screen.
+    var isCropped = false
+
     /// The focused display. This is the one stored with a saved context; a
     /// second monitor's pixels are rarely what the user meant to keep.
     var image: CGImage { primary.image }
@@ -47,6 +51,40 @@ struct ScreenObservation {
         case let (app?, _): app
         default: "Screen"
         }
+    }
+
+    /// Narrows to a region the user dragged out, given in global screen
+    /// coordinates on `screen`.
+    ///
+    /// Other displays are dropped: once someone has pointed at a specific
+    /// rectangle, text from a different monitor is noise rather than context.
+    func cropped(to selection: CGRect, on screen: NSScreen) -> ScreenObservation? {
+        let frame = screen.frame
+        guard frame.width > 0, frame.height > 0 else { return nil }
+
+        // The capture is the whole display at backing scale; derive the factor
+        // from the image itself rather than trusting a stored scale.
+        let scale = CGFloat(primary.image.width) / frame.width
+
+        // AppKit's origin is bottom-left, CoreGraphics images are top-left.
+        let pixels = CGRect(
+            x: (selection.minX - frame.minX) * scale,
+            y: (frame.maxY - selection.maxY) * scale,
+            width: selection.width * scale,
+            height: selection.height * scale
+        ).integral
+
+        let bounds = CGRect(x: 0, y: 0, width: primary.image.width, height: primary.image.height)
+        let clamped = pixels.intersection(bounds)
+        guard !clamped.isNull, clamped.width >= 8, clamped.height >= 8,
+              let cut = primary.image.cropping(to: clamped)
+        else { return nil }
+
+        var narrowed = self
+        narrowed.primary = CapturedDisplay(image: cut, index: primary.index)
+        narrowed.others = []
+        narrowed.isCropped = true
+        return narrowed
     }
 }
 

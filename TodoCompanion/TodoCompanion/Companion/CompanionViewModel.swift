@@ -22,6 +22,7 @@ final class CompanionViewModel {
     var onListeningEnded: (() -> Void)?
 
     private let dictation = SpeechDictation()
+    private let regionSelector = RegionSelector()
 
     /// Mirrored as stored properties rather than read through to
     /// `SpeechDictation`: that type isn't `@Observable`, so computed
@@ -41,6 +42,19 @@ final class CompanionViewModel {
 
     /// Things saved earlier that look relevant to the screen in front of the user.
     var related: [RetrievalMatch] = []
+
+    /// Open tasks from the Electron app, when the user has linked it.
+    private var linkedWork = LinkedWork()
+
+    /// True once the user has narrowed the capture to a region they dragged.
+    var hasRegion: Bool { observation?.isCropped ?? false }
+
+    /// Whether the active brain sends the screen off this machine. Surfaced in
+    /// the panel: a question that leaves the device should never look identical
+    /// to one that does not.
+    var answersLeaveTheMachine: Bool { makeBrain().leavesTheMachine }
+
+    var brainLabel: String { makeBrain().label }
 
     private let modelContext: ModelContext
     private var observation: ScreenObservation?
@@ -92,6 +106,7 @@ final class CompanionViewModel {
                 observation = fresh
                 contextLabel = fresh.contextLabel
                 related = ContextRetriever.related(to: fresh, among: recentContexts())
+                linkedWork = TodoBridge.load()
                 if phase == .reading { phase = .idle }
             } catch ScreenCaptureError.permissionDenied {
                 guard !Task.isCancelled else { return }
@@ -112,6 +127,76 @@ final class CompanionViewModel {
     /// Retries after the user grants permission, so they don't have to guess
     /// whether it took effect.
     func retryCapture(frontmostApp: NSRunningApplication?) {
+        captureScreen(frontmostApp: frontmostApp)
+    }
+
+    /// Ready-made questions for the two things worth asking about a region.
+    /// Typing "explain this" every time is friction on the most common action.
+    enum Preset: String, CaseIterable, Identifiable {
+        case explain = "Explain this"
+        case nextStep = "What's the next step?"
+
+        var id: String { rawValue }
+
+        var glyph: String {
+            switch self {
+            case .explain: "text.book.closed"
+            case .nextStep: "arrow.turn.down.right"
+            }
+        }
+
+        var question: String {
+            switch self {
+            case .explain:
+                "Explain what this is, in plain language. Define any jargon."
+            case .nextStep:
+                "Based on this, what is the single next thing I should do? Be specific."
+            }
+        }
+    }
+
+    func ask(_ preset: Preset) {
+        question = preset.question
+        submit()
+    }
+
+    /// Narrows the capture to a rectangle the user drags out.
+    ///
+    /// The panel hides during selection so it is not in the way. It does not
+    /// need to hide for correctness — the screenshot was taken before the panel
+    /// appeared and excludes this app's windows regardless.
+    func selectRegion(hidingPanel: @escaping (Bool) -> Void) {
+        guard let current = observation else {
+            phase = .failed("Nothing captured yet.")
+            return
+        }
+
+        let mouse = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+                ?? NSScreen.main
+        else { return }
+
+        Task {
+            hidingPanel(true)
+            let selection = await regionSelector.selectRegion(on: screen)
+            hidingPanel(false)
+
+            guard let selection else { return }
+            guard let narrowed = current.cropped(to: selection, on: screen) else {
+                phase = .failed("That selection was too small to read.")
+                return
+            }
+
+            var updated = narrowed
+            updated.primary.recognizedText = await Self.readText(in: narrowed.primary.image)
+            observation = updated
+            contextLabel = "Selected region of \(updated.contextLabel)"
+            if phase == .failed("") || phase == .idle { phase = .idle }
+        }
+    }
+
+    /// Returns to the whole screen after a region was selected.
+    func clearRegion(frontmostApp: NSRunningApplication?) {
         captureScreen(frontmostApp: frontmostApp)
     }
 
@@ -169,16 +254,16 @@ final class CompanionViewModel {
         phase = .thinking
 
         let brain = makeBrain()
-        let includeImage = AppSettings.sendsImage
-        let snapshot = observation
-        let memories = ContextRetriever.promptLines(for: related)
+        let context = AskContext(
+            observation: observation,
+            memories: ContextRetriever.promptLines(for: related),
+            tasks: taskLines(),
+            includeImage: AppSettings.sendsImage
+        )
 
         answerTask = Task {
             do {
-                let stream = brain.answerStream(question: prompt,
-                                                observation: snapshot,
-                                                memories: memories,
-                                                includeImage: includeImage)
+                let stream = brain.answerStream(question: prompt, context: context)
                 for try await chunk in stream {
                     if Task.isCancelled { return }
                     answer += chunk
@@ -231,7 +316,7 @@ final class CompanionViewModel {
 
     /// Fills in the model's own description in the background so saving stays instant.
     private func addSummary(to record: SavedContext) {
-        let brain = makeBrain()
+        let brain = localBrain()
         let intent = record.intent
         let screenText = record.recognizedText
 
@@ -259,8 +344,37 @@ final class CompanionViewModel {
         contextLabel = "Nothing captured yet"
     }
 
-    private func makeBrain() -> OllamaBrain {
+    /// Falls back to the local model when OpenAI is selected without a key,
+    /// so a missing secret degrades to a worse answer rather than an error.
+    private func makeBrain() -> any Brain {
+        if AppSettings.provider == .openAI, let key = AppSettings.openAIKey {
+            return OpenAIBrain(apiKey: key, model: AppSettings.openAIModel)
+        }
+        return localBrain()
+    }
+
+    /// Background work is always local. See the note on `Brain`.
+    private func localBrain() -> OllamaBrain {
         OllamaBrain(endpoint: AppSettings.endpoint, model: AppSettings.model)
+    }
+
+    /// A compact view of what the user still has to do, so questions like
+    /// "what should I work on" have something real to answer from.
+    private func taskLines() -> [String] {
+        let open = linkedWork.openTodos.sorted { lhs, rhs in
+            switch (lhs.dueAt, rhs.dueAt) {
+            case let (left?, right?): return left < right
+            case (nil, _?): return false
+            case (_?, nil): return true
+            default: return false
+            }
+        }
+
+        return open.prefix(12).map { todo in
+            guard let due = todo.dueAt else { return "- \(todo.title)" }
+            let when = due.formatted(.relative(presentation: .named))
+            return todo.isOverdue ? "- \(todo.title) (overdue, was due \(when))" : "- \(todo.title) (due \(when))"
+        }
     }
 
     /// Scoring runs in memory, so cap the candidate set rather than growing
