@@ -4,7 +4,12 @@ import SwiftUI
 
 @MainActor
 final class CompanionPanelController {
-    static let size = NSSize(width: 420, height: 400)
+    static let width: CGFloat = 420
+    static let maxAnswerHeight: CGFloat = 320
+
+    /// Only the starting height. The panel resizes to whatever the content
+    /// actually needs once SwiftUI has laid it out.
+    private static let initialSize = NSSize(width: width, height: 180)
 
     let viewModel: CompanionViewModel
     private var panel: CompanionPanel?
@@ -35,7 +40,7 @@ final class CompanionPanelController {
         }
 
         let panel = existingPanel()
-        panel.setFrame(NSRect(origin: originNearCursor(), size: Self.size), display: false)
+        panel.setFrameTopLeftPoint(topLeftNearCursor(for: panel.frame.size))
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
@@ -54,9 +59,10 @@ final class CompanionPanelController {
     private func existingPanel() -> CompanionPanel {
         if let panel { return panel }
 
-        let panel = CompanionPanel(contentRect: NSRect(origin: .zero, size: Self.size))
+        let panel = CompanionPanel(contentRect: NSRect(origin: .zero, size: Self.initialSize))
         panel.onDismiss = { [weak self] in self?.hide() }
-        panel.contentView = NSHostingView(
+
+        let hosting = NSHostingController(
             rootView: CompanionView(
                 viewModel: viewModel,
                 onClose: { [weak self] in self?.hide() },
@@ -65,24 +71,32 @@ final class CompanionPanelController {
                 }
             )
         )
+        // Lets the answer drive the window height rather than a fixed guess.
+        hosting.sizingOptions = .preferredContentSize
+        panel.contentViewController = hosting
+
         self.panel = panel
         return panel
     }
 
-    private func originNearCursor() -> NSPoint {
+    /// Returns the top-left corner, because that is the edge the panel keeps
+    /// fixed as it grows downward with the answer.
+    private func topLeftNearCursor(for size: NSSize) -> NSPoint {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         let bounds = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
         let gap: CGFloat = 18
         var x = mouse.x + gap
-        var y = mouse.y - Self.size.height - gap
+        if x + size.width > bounds.maxX { x = mouse.x - size.width - gap }
+        x = min(max(x, bounds.minX + 8), bounds.maxX - size.width - 8)
 
-        if x + Self.size.width > bounds.maxX { x = mouse.x - Self.size.width - gap }
-        if y < bounds.minY { y = mouse.y + gap }
+        // Hang below the cursor, but flip above it near the bottom of the screen
+        // so a tall answer still has somewhere to grow.
+        var top = mouse.y - gap
+        if top - size.height < bounds.minY { top = mouse.y + gap + size.height }
+        top = min(max(top, bounds.minY + size.height + 8), bounds.maxY - 8)
 
-        x = min(max(x, bounds.minX + 8), bounds.maxX - Self.size.width - 8)
-        y = min(max(y, bounds.minY + 8), bounds.maxY - Self.size.height - 8)
-        return NSPoint(x: x, y: y)
+        return NSPoint(x: x, y: top)
     }
 }

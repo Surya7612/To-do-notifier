@@ -22,7 +22,7 @@ struct CompanionView: View {
             answerArea
         }
         .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(width: CompanionPanelController.width, alignment: .topLeading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -100,7 +100,7 @@ struct CompanionView: View {
             Text("macOS won't let me read the screen yet.")
                 .font(.callout.weight(.medium))
 
-            Text("If TodoCompanion already looks enabled in the list, remove it with the “−” button and add it back. This build is ad-hoc signed, so its permission is tied to the exact binary and a rebuild invalidates it.")
+            Text("If TodoCompanion already looks enabled in the list, remove it with the “−” button and add it back, then relaunch. macOS caches the old answer until the entry is re-added.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -142,6 +142,9 @@ struct CompanionView: View {
         }
     }
 
+    /// Grows with the answer instead of reserving a fixed block: a two-line
+    /// reply under half a panel of empty material reads as a rendering fault.
+    /// Long answers scroll rather than pushing the panel off the screen.
     @ViewBuilder
     private var answerArea: some View {
         ScrollView {
@@ -158,7 +161,7 @@ struct CompanionView: View {
             }
         }
         .scrollIndicators(.never)
-        .frame(maxHeight: .infinity)
+        .frame(maxHeight: CompanionPanelController.maxAnswerHeight)
     }
 
     private var placeholder: String {
