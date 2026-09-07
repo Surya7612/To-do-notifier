@@ -44,24 +44,39 @@ final class CaptureIndicator {
     private var shownAt: Date?
     private var mode: Mode = .capturing
     private var pendingHide: Task<Void, Never>?
+    private var tracking: Task<Void, Never>?
 
     func show(_ mode: Mode = .capturing, at point: NSPoint? = nil) {
         pendingHide?.cancel()
         pendingHide = nil
         self.mode = mode
 
-        let center = point ?? NSEvent.mouseLocation
         let window = existingWindow()
         (window.contentView as? NSHostingView<CaptureRingView>)?.rootView = CaptureRingView(mode: mode)
-        window.setFrame(
-            NSRect(x: center.x - Self.diameter / 2,
-                   y: center.y - Self.diameter / 2,
-                   width: Self.diameter,
-                   height: Self.diameter),
-            display: false
-        )
+        center(window, on: point ?? NSEvent.mouseLocation)
         window.orderFrontRegardless()
         shownAt = Date()
+
+        // A ring pinned to where the cursor *was* reads as a stray artifact.
+        // Following it keeps the feedback attached to the user's attention,
+        // which matters most while listening, since that can run for a while.
+        if point == nil { startTracking(window) }
+    }
+
+    private func startTracking(_ window: NSWindow) {
+        tracking?.cancel()
+        tracking = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.center(window, on: NSEvent.mouseLocation)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    private func center(_ window: NSWindow, on point: NSPoint) {
+        window.setFrameOrigin(
+            NSPoint(x: point.x - Self.diameter / 2, y: point.y - Self.diameter / 2)
+        )
     }
 
     func hide() {
@@ -82,6 +97,8 @@ final class CaptureIndicator {
     }
 
     private func dismiss() {
+        tracking?.cancel()
+        tracking = nil
         window?.orderOut(nil)
         shownAt = nil
         pendingHide = nil

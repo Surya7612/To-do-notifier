@@ -13,71 +13,115 @@ final class SpeechDictation {
     enum Failure: LocalizedError {
         case micDenied
         case speechDenied
-        case unavailable
+        case recognizerUnavailable
+        case noInputDevice
+        case engineFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .micDenied:
                 "Microphone access is off. Enable it in System Settings → Privacy & Security → Microphone."
             case .speechDenied:
-                "Speech recognition is off. Enable it in System Settings → Privacy & Security → Speech Recognition."
-            case .unavailable:
-                "Dictation isn't available right now."
+                "Speech Recognition is off. Enable it in System Settings → Privacy & Security → Speech Recognition."
+            case .recognizerUnavailable:
+                "Speech recognition isn't available for this language right now."
+            case .noInputDevice:
+                "No microphone input available. Check Sound settings for an input device."
+            case let .engineFailed(detail):
+                "Couldn't start the microphone: \(detail)"
             }
         }
     }
 
-    private let engine = AVAudioEngine()
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    /// Rebuilt per session on purpose. An engine created before the microphone
+    /// permission existed caches an input node with a zero-channel format and
+    /// never recovers, which silently produces no audio at all.
+    private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    private var recognizer: SFSpeechRecognizer?
 
     private(set) var isListening = false
-    /// False means Apple's servers are doing the transcription; the UI says so.
+    /// False means Apple's servers are transcribing; the UI says so.
     private(set) var isOnDevice = true
 
-    func start(onTranscript: @escaping (String) -> Void) async throws {
+    /// Named in the UI because the system default input is often not the one the
+    /// user assumes — AirPods sitting in their case are still the default input,
+    /// and they record perfect silence without producing any error.
+    private(set) var inputDeviceName = ""
+
+    private let level = LevelMeter()
+    private var silenceWatchdog: Task<Void, Never>?
+
+    func start(onTranscript: @escaping (String) -> Void,
+               onEnd: @escaping () -> Void,
+               onSilence: @escaping (String) -> Void) async throws {
         guard !isListening else { return }
-        guard let recognizer, recognizer.isAvailable else { throw Failure.unavailable }
 
         guard await Self.authorizeSpeech() else { throw Failure.speechDenied }
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure.micDenied }
 
+        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+            ?? SFSpeechRecognizer()
+        guard let recognizer, recognizer.isAvailable else { throw Failure.recognizerUnavailable }
+        self.recognizer = recognizer
+
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-            isOnDevice = true
-        } else {
-            isOnDevice = false
-        }
+        isOnDevice = recognizer.supportsOnDeviceRecognition
+        request.requiresOnDeviceRecognition = isOnDevice
         self.request = request
 
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0 else { throw Failure.unavailable }
+        let engine = AVAudioEngine()
+        self.engine = engine
 
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        let input = engine.inputNode
+        let format = input.inputFormat(forBus: 0)
+        guard format.channelCount > 0, format.sampleRate > 0 else {
+            NSLog("[Dictation] unusable input format: \(format)")
+            cleanUp()
+            throw Failure.noInputDevice
+        }
+
+        inputDeviceName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "unknown input"
+        level.reset()
+
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level] buffer, _ in
             request.append(buffer)
+            level.record(buffer)
         }
 
         engine.prepare()
         do {
             try engine.start()
         } catch {
-            input.removeTap(onBus: 0)
-            throw Failure.unavailable
+            NSLog("[Dictation] engine start failed: \(error.localizedDescription)")
+            cleanUp()
+            throw Failure.engineFailed(error.localizedDescription)
         }
 
         isListening = true
+
+        let device = inputDeviceName
+        silenceWatchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self, self.isListening, self.level.isSilent else { return }
+            NSLog("[Dictation] no audio from \(device) after 3s")
+            onSilence(device)
+        }
+
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self else { return }
-            if let text = result?.bestTranscription.formattedString {
+            if let text = result?.bestTranscription.formattedString, !text.isEmpty {
                 Task { @MainActor in onTranscript(text) }
             }
+            if let error {
+                NSLog("[Dictation] recognition error: \(error.localizedDescription)")
+            }
             if error != nil || result?.isFinal == true {
-                Task { @MainActor in self.stop() }
+                Task { @MainActor in
+                    self?.stop()
+                    onEnd()
+                }
             }
         }
     }
@@ -85,14 +129,48 @@ final class SpeechDictation {
     func stop() {
         guard isListening else { return }
         isListening = false
-
-        engine.inputNode.removeTap(onBus: 0)
-        if engine.isRunning { engine.stop() }
-
         request?.endAudio()
         task?.cancel()
+        cleanUp()
+    }
+
+    private func cleanUp() {
+        silenceWatchdog?.cancel()
+        silenceWatchdog = nil
+        if let engine {
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning { engine.stop() }
+        }
+        engine = nil
         request = nil
         task = nil
+    }
+
+    /// Tracks whether any non-silent audio arrived. Written from the audio
+    /// render thread and read from the main actor, so access is locked.
+    private final class LevelMeter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var peak: Float = 0
+
+        var isSilent: Bool {
+            lock.withLock { peak < 0.0015 }
+        }
+
+        func reset() {
+            lock.withLock { peak = 0 }
+        }
+
+        func record(_ buffer: AVAudioPCMBuffer) {
+            guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return }
+            var frameMax: Float = 0
+            for channel in 0..<Int(buffer.format.channelCount) {
+                let samples = channels[channel]
+                for frame in 0..<Int(buffer.frameLength) {
+                    frameMax = max(frameMax, abs(samples[frame]))
+                }
+            }
+            lock.withLock { peak = max(peak, frameMax) }
+        }
     }
 
     private static func authorizeSpeech() async -> Bool {

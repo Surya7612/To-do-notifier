@@ -23,8 +23,14 @@ final class CompanionViewModel {
 
     private let dictation = SpeechDictation()
 
-    var isListening: Bool { dictation.isListening }
-    var dictationIsOnDevice: Bool { dictation.isOnDevice }
+    /// Mirrored as stored properties rather than read through to
+    /// `SpeechDictation`: that type isn't `@Observable`, so computed
+    /// pass-throughs would never redraw the UI when listening started.
+    var isListening = false
+    var dictationIsOnDevice = true
+    var inputDeviceName = ""
+    /// Surfaced when the chosen input is producing no audio at all.
+    var dictationHint = ""
 
     var phase: Phase = .idle
     var question: String = ""
@@ -48,9 +54,11 @@ final class CompanionViewModel {
 
     var statusText: String {
         if isListening {
-            return dictation.isOnDevice
-                ? "Listening… (on-device)"
-                : "Listening… (Apple servers — on-device unavailable)"
+            if !dictationHint.isEmpty { return dictationHint }
+            let mic = inputDeviceName.isEmpty ? "mic" : inputDeviceName
+            return dictationIsOnDevice
+                ? "Listening via \(mic) (on-device)"
+                : "Listening via \(mic) (Apple servers)"
         }
         switch phase {
         case .idle: return contextLabel
@@ -102,24 +110,41 @@ final class CompanionViewModel {
     /// Dictates into the same field used for typing, so speech and text are the
     /// same input rather than two separate flows.
     func toggleDictation() {
-        if dictation.isListening {
+        if isListening {
             dictation.stop()
-            onListeningEnded?()
+            endListening()
             return
         }
 
         Task {
+            onListeningBegan?()
             do {
-                onListeningBegan?()
-                try await dictation.start { [weak self] text in
-                    self?.question = text
-                }
-                if !dictation.isListening { onListeningEnded?() }
+                try await dictation.start(
+                    onTranscript: { [weak self] text in
+                        self?.question = text
+                        self?.dictationHint = ""
+                    },
+                    onEnd: { [weak self] in self?.endListening() },
+                    onSilence: { [weak self] device in
+                        self?.dictationHint =
+                            "No sound from “\(device)”. Pick a different mic in System Settings → Sound → Input."
+                    }
+                )
+                isListening = dictation.isListening
+                dictationIsOnDevice = dictation.isOnDevice
+                inputDeviceName = dictation.inputDeviceName
+                if !isListening { endListening() }
             } catch {
-                onListeningEnded?()
+                endListening()
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    private func endListening() {
+        isListening = false
+        dictationHint = ""
+        onListeningEnded?()
     }
 
     func openScreenRecordingSettings() {
@@ -214,9 +239,9 @@ final class CompanionViewModel {
     func reset() {
         captureTask?.cancel()
         answerTask?.cancel()
-        if dictation.isListening {
+        if isListening {
             dictation.stop()
-            onListeningEnded?()
+            endListening()
         }
         question = ""
         answer = ""
