@@ -9,13 +9,14 @@ Two applications share this repository.
 
 **`TodoCompanion/`** is the active work: a native macOS menu bar companion that answers questions about
 what is currently on screen and remembers things you explicitly ask it to remember. Summoning it with a
-global hotkey captures the display, runs OCR, and asks a local Ollama model. Saving with `⌘S` stores the
-screenshot alongside *your own stated reason* for keeping it, so it can be resurfaced later when related
-material is on screen.
+global hotkey captures every display, runs OCR, and asks a model. `⌘R` narrows the question to a region
+you drag out. Saving with `⌘S` stores the screenshot alongside *your own stated reason* for keeping it,
+so it can be resurfaced later when related material is on screen.
 
 **Everything else** (`electron/`, `src/`, `*.html`) is the original Electron + Vite + React to-do and
 reminder app. It still runs and is not deprecated, but new feature work is happening in the native app.
-The long-term plan is for the companion to read the Electron app's data, not to replace it.
+The companion reads its `app-data.json` read-only through `TodoBridge`, so open tasks and notes become
+context for answers. It never writes to it.
 
 The governing design document is `docs/TO_DO_NOTIFIER_UPDATED_PLAN.md`. Read it before proposing
 architecture; it records what was deliberately rejected and why.
@@ -28,6 +29,13 @@ exception. `SavedContext.intent` holds the user's own words and is never overwri
 explains itself — every resurfaced item carries a human-readable reason like `same window` or `#tag`.
 If a change would blur that line, it is the wrong change.
 
+The second rule concerns what leaves the machine. **A cloud model may answer a question the user
+explicitly asked. It may never do background work.** Summaries are generated unprompted across
+everything the user keeps, so that body of material stays local — and a small local model compresses
+OCR text into a sentence perfectly well, so there is no quality argument for exporting it either. This
+is enforced structurally rather than by convention: `summarize` is not on the `Brain` protocol, it
+exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it that way.
+
 ## Architecture — native companion
 
 - **App type**: menu bar only, no dock icon (`LSUIElement`)
@@ -38,9 +46,12 @@ If a change would blur that line, it is the wrong change.
 - **Capture**: ScreenCaptureKit, excluding this app's own windows so the panel never appears in its
   own screenshot
 - **OCR**: Vision `VNRecognizeTextRequest`, on device
-- **AI**: local Ollama over HTTP. No cloud model, no API keys, no proxy
+- **AI**: local Ollama by default; OpenAI as an opt-in for questions only. The key lives in the
+  Keychain, never in `UserDefaults`. The panel always states which one will answer
 - **Speech**: `AVAudioEngine` + `SFSpeechRecognizer` with `requiresOnDeviceRecognition` when supported
 - **Persistence**: SwiftData, with screenshots in `.externalStorage`
+- **Cross-app**: the Electron store is reached through a security-scoped bookmark from a user-chosen
+  file, which is what keeps the sandbox intact
 
 ### Key architecture decisions
 
@@ -76,20 +87,26 @@ from the screenshot along with the panel.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~62 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~21 | Lifecycle. Registers the global hotkey and owns the panel controller. |
-| `App/SettingsView.swift` | ~50 | Ollama endpoint/model and hotkey picker, backed by `@AppStorage`. |
-| `Companion/CompanionPanelController.swift` | ~102 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
+| `App/SettingsView.swift` | ~131 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `Companion/CompanionPanelController.swift` | ~147 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~185 | Panel UI: status header, ask field, dictation and save buttons, related-context strip, answer area. |
-| `Companion/CompanionViewModel.swift` | ~267 | Orchestrates capture → OCR → retrieval → Ollama → save. Owns phase state and dictation. |
-| `Capture/ScreenCapture.swift` | ~119 | ScreenCaptureKit capture and permission preflight. Excludes own windows. |
+| `Companion/CompanionView.swift` | ~244 | Panel UI: status header, ask field, dictation and save buttons, related-context strip, answer area. |
+| `Companion/CompanionViewModel.swift` | ~389 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, and presets. |
+| `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
-| `Capture/CaptureIndicator.swift` | ~154 | Cursor-tracking ring shown while capturing (blue) or listening (pink). |
-| `Brain/OllamaBrain.swift` | ~131 | Streaming Ollama client. Builds the grounded prompt and generates saved-context summaries. |
-| `Voice/SpeechDictation.swift` | ~192 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
+| `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
+| `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
+| `Brain/Brain.swift` | ~112 | `Brain` protocol, `AskContext`, and the shared prompt text. |
+| `Brain/OllamaBrain.swift` | ~84 | Streaming Ollama client. Also the only place summaries are generated. |
+| `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
+| `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
 | `Store/SavedContext.swift` | ~96 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextRetriever.swift` | ~102 | Explainable relevance scoring against the current screen. |
-| `Support/AppSettings.swift` | ~42 | `UserDefaults` keys and defaults. |
+| `Store/TodoBridge.swift` | ~153 | Read-only bridge to the Electron app's `app-data.json` via a security-scoped bookmark. |
+| `Support/AppSettings.swift` | ~76 | `UserDefaults` keys, defaults, and the provider choice. |
+| `Support/DesignSystem.swift` | ~49 | Spacing, radius, alpha, and status colour tokens. |
+| `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
 | `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |
 | `Hotkey/HotkeyChoice.swift` | ~45 | The vetted list of non-reserved shortcuts. |
@@ -146,8 +163,10 @@ Keep argument names the same as the variables they came from rather than abbrevi
 
 ### Do not
 
-- Do not add cloud transcription, hosted LLMs, or analytics. Local-first is a product constraint,
-  not a default that can be traded for accuracy
+- Do not add cloud **transcription** or analytics. Voice and usage data stay on the machine
+- Do not route background or automatic work to a cloud model. Foreground questions only, and only
+  when the user has opted in. This rule replaced a blanket ban on hosted models once local vision
+  proved too weak to explain what is on screen; the ban on *unprompted* export did not change
 - Do not require Accessibility permission
 - Do not add continuous or background screen capture. Capture is always explicit and user-initiated
 - Do not present model inference as though the user wrote it

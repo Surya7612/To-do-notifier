@@ -80,6 +80,46 @@ permission" loop in Phase 4. Once `DEVELOPMENT_TEAM` was set, TCC keys on the
 stable signing identity instead of a per-build hash, and terminal builds became
 safe. Our `AGENTS.md` says so explicitly so the rule is not cargo-culted.
 
+#### Third pass — a cloud model, region selection, and the bridge
+
+Two of the three rejections above were revisited once the local model's ceiling
+became obvious in practice. Asked what was on screen, it described an editor
+displaying a screenshot as "a To-Do-Notifier application" — a plausible sentence
+about the wrong thing. Remembering survives that. Explaining a concept does not.
+
+**A cloud provider, scoped by a rule rather than a preference.** OpenAI is now
+selectable, and §12 already allowed for it: "local-first by *default*", "minimal
+cloud data", "API keys in Keychain". The rule that keeps it honest is narrower
+than a toggle:
+
+> A cloud model may answer a question the user explicitly asked.
+> It may never do background work.
+
+Summaries are generated unprompted, across everything the user ever keeps, and
+that accumulated picture of a working life is precisely what should not be
+exported — while compressing OCR into one sentence is something a small local
+model does perfectly well, so there is no quality argument either. This is
+enforced by the type system, not by discipline: `summarize` is absent from the
+`Brain` protocol and exists only on `OllamaBrain`, so no cloud provider can be
+attached to it. Ollama remains the default, the key lives in the Keychain, and
+the panel carries a standing badge naming who will answer.
+
+**Region selection, which is not the rejected pointing feature.** Clicky has the
+*model* point at UI elements. This has the *user* point, which needs no
+coordinate mapping, no animation, and no multi-monitor arithmetic. It also costs
+nothing at capture time: the screenshot is already in memory from the summon, so
+selecting a region is a crop rather than a second capture, which cannot flicker
+and cannot race a screen that changed in between. Two presets — *Explain this*
+and *What's the next step?* — cover the questions worth a shortcut.
+
+**Phase 3 finally exists.** Until now the two apps in this repository had never
+exchanged a byte, despite the whole premise being one personal context system.
+`TodoBridge` reads the Electron app's `app-data.json` and feeds open tasks into
+the prompt, so "what should I work on" has something real to answer from. The
+companion is sandboxed and cannot reach `~/Library/Application Support` on its
+own; rather than switching the sandbox off, the user points at the file once and
+a security-scoped bookmark carries the grant forward. Read-only, always.
+
 #### Distribution reality
 
 The full Clicky release pipeline — Developer ID export, Apple notarization,
