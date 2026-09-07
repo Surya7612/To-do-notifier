@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 final class CompanionPanelController {
-    static let size = NSSize(width: 420, height: 320)
+    static let size = NSSize(width: 420, height: 400)
 
     let viewModel: CompanionViewModel
     private var panel: CompanionPanel?

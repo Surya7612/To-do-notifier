@@ -36,6 +36,17 @@ the app and window it came from. Any `#tags` in your sentence become topics.
 Later, **Saved Context** in the menu bar searches across your reasons, the model's
 summaries, topics, app names, and the text that was on screen.
 
+## Resurfacing
+
+You don't have to go looking. Each time you summon the companion, it scores what
+you've kept against the screen in front of you and shows the top few under
+"You kept this before" — each with the reason it surfaced, such as "same window"
+or "#engram" or "mentions retrieval". Those matches are also handed to the model,
+labelled as your words, so you can ask "what was I doing here last time?"
+
+This happens **only when you summon it**. Nothing polls in the background and no
+capture occurs that you didn't ask for.
+
 Your own words and the model's interpretation are stored as separate fields and
 always labelled differently in the UI. The model never gets to author your intent.
 

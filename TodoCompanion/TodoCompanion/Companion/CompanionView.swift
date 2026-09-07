@@ -10,6 +10,9 @@ struct CompanionView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             askField
+            if !viewModel.related.isEmpty {
+                relatedStrip
+            }
             Divider().opacity(0.35)
             answerArea
         }
@@ -75,6 +78,31 @@ struct CompanionView: View {
 
     private var isFieldEmpty: Bool {
         viewModel.question.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Surfaced only on an explicit summon — never from background polling.
+    private var relatedStrip: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("You kept this before", systemImage: "clock.arrow.circlepath")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+
+            ForEach(viewModel.related) { match in
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(match.context.intent)
+                        .font(.caption)
+                        .lineLimit(2)
+                    Text("\(match.reason) · \(match.context.createdAt.formatted(.relative(presentation: .named)))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 7))
+            }
+        }
     }
 
     @ViewBuilder

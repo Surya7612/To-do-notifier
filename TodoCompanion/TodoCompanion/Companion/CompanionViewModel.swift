@@ -19,6 +19,9 @@ final class CompanionViewModel {
     var answer: String = ""
     var contextLabel: String = "Nothing captured yet"
 
+    /// Things saved earlier that look relevant to the screen in front of the user.
+    var related: [RetrievalMatch] = []
+
     private let modelContext: ModelContext
     private var observation: ScreenObservation?
     private var captureTask: Task<Void, Never>?
@@ -57,6 +60,7 @@ final class CompanionViewModel {
                 guard !Task.isCancelled else { return }
                 observation = fresh
                 contextLabel = fresh.contextLabel
+                related = ContextRetriever.related(to: fresh, among: recentContexts())
                 if phase == .reading { phase = .idle }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -76,11 +80,13 @@ final class CompanionViewModel {
         let brain = makeBrain()
         let includeImage = AppSettings.sendsImage
         let snapshot = observation
+        let memories = ContextRetriever.promptLines(for: related)
 
         answerTask = Task {
             do {
                 let stream = brain.answerStream(question: prompt,
                                                 observation: snapshot,
+                                                memories: memories,
                                                 includeImage: includeImage)
                 for try await chunk in stream {
                     if Task.isCancelled { return }
@@ -153,11 +159,22 @@ final class CompanionViewModel {
         question = ""
         answer = ""
         observation = nil
+        related = []
         phase = .idle
         contextLabel = "Nothing captured yet"
     }
 
     private func makeBrain() -> OllamaBrain {
         OllamaBrain(endpoint: AppSettings.endpoint, model: AppSettings.model)
+    }
+
+    /// Scoring runs in memory, so cap the candidate set rather than growing
+    /// the work forever as the store fills up.
+    private func recentContexts() -> [SavedContext] {
+        var descriptor = FetchDescriptor<SavedContext>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 300
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 }

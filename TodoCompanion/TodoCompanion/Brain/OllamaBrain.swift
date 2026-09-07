@@ -21,12 +21,16 @@ struct OllamaBrain {
     let model: String
 
     private static let system = """
-    You are a concise desktop companion. You are shown what is currently on the user's screen \
-    plus their question. Answer directly in at most four sentences. If the screen does not \
-    contain the answer, say so instead of guessing.
+    You are a concise desktop companion. You are shown what is currently on the user's screen, \
+    any notes the user saved earlier that look related, and their question. Answer directly in \
+    at most four sentences. The user's own saved notes outrank your reading of the screen — if \
+    they conflict, trust the note and say so. If you do not know, say that instead of guessing.
     """
 
-    func answerStream(question: String, observation: ScreenObservation?, includeImage: Bool)
+    func answerStream(question: String,
+                      observation: ScreenObservation?,
+                      memories: [String] = [],
+                      includeImage: Bool)
         -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -36,6 +40,7 @@ struct OllamaBrain {
                         "system": Self.system,
                         "prompt": Self.prompt(question: question,
                                               observation: observation,
+                                              memories: memories,
                                               includeImage: includeImage),
                         "stream": true,
                     ]
@@ -78,6 +83,7 @@ struct OllamaBrain {
 
     private static func prompt(question: String,
                                observation: ScreenObservation?,
+                               memories: [String],
                                includeImage: Bool) -> String {
         var parts: [String] = []
         if let observation {
@@ -85,6 +91,10 @@ struct OllamaBrain {
             if !includeImage, !observation.recognizedText.isEmpty {
                 parts.append("Text visible on screen:\n\(observation.recognizedText)")
             }
+        }
+        if !memories.isEmpty {
+            parts.append("The user saved these earlier, in their own words:\n"
+                         + memories.joined(separator: "\n"))
         }
         parts.append("Question: \(question)")
         return parts.joined(separator: "\n\n")

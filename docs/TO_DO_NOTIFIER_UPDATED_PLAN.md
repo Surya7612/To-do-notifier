@@ -757,22 +757,48 @@ plan's own rule about not adding them before structured retrieval works.
 Add:
 
 - [ ] Semantic search
-- [ ] Project-aware retrieval
-- [ ] Time-based retrieval
-- [ ] Provenance
-- [ ] Related context
-- [ ] "Why did I save this?"
-- [ ] "Show me everything related to X"
+- [ ] Project-aware retrieval (needs the project-assignment UI first)
+- [x] Time-based retrieval (recency weighting, deliberately weak)
+- [x] Provenance (app and window stored and shown on every match)
+- [x] Related context (scored against the current screen on each summon)
+- [x] "Why did I save this?" (the intent field, surfaced verbatim)
+- [x] "Show me everything related to X" (text search in the library)
 
 Embeddings can be added here.
 
 Do not add them before basic structured retrieval works.
+
+**Structured retrieval now works.** `ContextRetriever` scores saved items against
+the current screen using signals the user can reason about:
+
+| Signal | Weight |
+|--------|--------|
+| A `#topic` literally visible on screen | 3.0 each |
+| Same window title | 2.5 |
+| Same application | 2.0 |
+| Words shared between the saved reason and the screen | up to 3.0 |
+| Recency | up to 1.0, decaying over 30 days |
+
+Anything under 2.0 is dropped. Every match carries a human-readable reason
+("same window", "#engram", "mentions retrieval") which is shown in the panel —
+resurfacing without an explanation is indistinguishable from the app guessing.
+
+That explainability is the reason to keep this stage non-semantic for now.
+Embeddings would improve recall but cannot tell you *why* something came back.
+
+Known rough edge to tune with real use: "same app" alone clears the threshold, so
+once there are many saves from one editor the top three may be dominated by it.
 
 ---
 
 ## Phase 6 — Selective Resurfacing
 
 The companion should become proactive **carefully**.
+
+Started, in the least intrusive form available: matches surface **only on an
+explicit summon**. There is no background polling, no timer, and no capture the
+user did not ask for. The "continuous screenshots + an LLM call every few
+seconds" pattern this section warns against is still avoided entirely.
 
 Potential cheap signals:
 
