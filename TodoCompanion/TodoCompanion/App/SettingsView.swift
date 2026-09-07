@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var keyIsStored = false
     @State private var isLinked = TodoBridge.isLinked
     @State private var linkedSummary = ""
+    @State private var canImportKey = false
 
     var body: some View {
         Form {
@@ -80,6 +81,21 @@ struct SettingsView: View {
                 Text("Kept in the login Keychain, not in preferences.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                // Offered rather than taken. The key was given to the other app
+                // for transcription, and it sits in plaintext there; importing
+                // copies it somewhere safer and makes the reuse deliberate.
+                if !keyIsStored, canImportKey {
+                    Button("Import the key from To-Do Notifier") {
+                        guard let found = TodoBridge.importableOpenAIKey() else { return }
+                        Keychain.set(found, for: OpenAIBrain.keychainAccount)
+                        keyIsStored = AppSettings.openAIKey != nil
+                        canImportKey = false
+                    }
+                    Text("Your to-do app already has one saved. This copies it into the Keychain; the original stays where it is.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Your to-do app") {
@@ -96,6 +112,7 @@ struct SettingsView: View {
                             isLinked = true
                             refreshLinkedSummary()
                         }
+                        canImportKey = !keyIsStored && TodoBridge.importableOpenAIKey() != nil
                     }
                 }
 
@@ -118,6 +135,7 @@ struct SettingsView: View {
         .onAppear {
             keyIsStored = AppSettings.openAIKey != nil
             refreshLinkedSummary()
+            canImportKey = !keyIsStored && TodoBridge.importableOpenAIKey() != nil
         }
     }
 

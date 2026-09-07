@@ -114,6 +114,36 @@ enum TodoBridge {
         return parse(data)
     }
 
+    /// Reads the OpenAI key the Electron app stores in the same file.
+    ///
+    /// Deliberately not part of `LinkedWork`: that struct feeds the prompt, and
+    /// a secret must never be one careless `joined()` away from being sent to a
+    /// model. It is also never read implicitly — the settings screen offers an
+    /// explicit import, because the user handed that key to another app for
+    /// transcription and reusing it here is their call, not ours.
+    static func importableOpenAIKey() -> String? {
+        guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
+
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: bookmark,
+                                 options: .withSecurityScope,
+                                 relativeTo: nil,
+                                 bookmarkDataIsStale: &stale),
+              url.startAccessingSecurityScopedResource()
+        else { return nil }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let settings = root["settings"] as? [String: Any],
+              let key = (settings["openaiApiKey"] as? String)?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              !key.isEmpty
+        else { return nil }
+
+        return key
+    }
+
     static func parse(_ data: Data) -> LinkedWork {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return LinkedWork()
