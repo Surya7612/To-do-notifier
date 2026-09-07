@@ -3,15 +3,20 @@ import SwiftUI
 struct CompanionView: View {
     @Bindable var viewModel: CompanionViewModel
     let onClose: () -> Void
+    let onRetry: () -> Void
 
     @FocusState private var questionFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            askField
-            if !viewModel.related.isEmpty {
-                relatedStrip
+            if viewModel.phase == .needsPermission {
+                permissionNotice
+            } else {
+                askField
+                if !viewModel.related.isEmpty {
+                    relatedStrip
+                }
             }
             Divider().opacity(0.35)
             answerArea
@@ -80,6 +85,28 @@ struct CompanionView: View {
         viewModel.question.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    private var permissionNotice: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("macOS won't let me read the screen yet.")
+                .font(.callout.weight(.medium))
+
+            Text("If TodoCompanion already looks enabled in the list, remove it with the “−” button and add it back. This build is ad-hoc signed, so its permission is tied to the exact binary and a rebuild invalidates it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button("Open System Settings", action: viewModel.openScreenRecordingSettings)
+                Button("Try again") { onRetry() }
+            }
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     /// Surfaced only on an explicit summon — never from background polling.
     private var relatedStrip: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -138,7 +165,7 @@ struct CompanionView: View {
         case .idle: .green
         case .reading, .thinking, .answering: .orange
         case .saved: .blue
-        case .failed: .red
+        case .needsPermission, .failed: .red
         }
     }
 }

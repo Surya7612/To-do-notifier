@@ -10,8 +10,12 @@ final class CompanionPanelController {
     private var panel: CompanionPanel?
     private weak var previousApp: NSRunningApplication?
 
+    private let indicator = CaptureIndicator()
+
     init(modelContext: ModelContext) {
         self.viewModel = CompanionViewModel(modelContext: modelContext)
+        viewModel.onCaptureBegan = { [weak self] in self?.indicator.show() }
+        viewModel.onCaptureEnded = { [weak self] in self?.indicator.hide() }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -51,7 +55,13 @@ final class CompanionPanelController {
         let panel = CompanionPanel(contentRect: NSRect(origin: .zero, size: Self.size))
         panel.onDismiss = { [weak self] in self?.hide() }
         panel.contentView = NSHostingView(
-            rootView: CompanionView(viewModel: viewModel, onClose: { [weak self] in self?.hide() })
+            rootView: CompanionView(
+                viewModel: viewModel,
+                onClose: { [weak self] in self?.hide() },
+                onRetry: { [weak self] in
+                    self?.viewModel.retryCapture(frontmostApp: self?.previousApp)
+                }
+            )
         )
         self.panel = panel
         return panel

@@ -11,8 +11,13 @@ final class CompanionViewModel {
         case thinking
         case answering
         case saved(String)
+        case needsPermission
         case failed(String)
     }
+
+    /// Set by the panel controller so the cursor ring tracks capture exactly.
+    var onCaptureBegan: (() -> Void)?
+    var onCaptureEnded: (() -> Void)?
 
     var phase: Phase = .idle
     var question: String = ""
@@ -41,6 +46,7 @@ final class CompanionViewModel {
         case .thinking: "Thinking…"
         case .answering: "Answering…"
         case let .saved(message): message
+        case .needsPermission: "Screen Recording permission needed"
         case let .failed(message): message
         }
     }
@@ -50,7 +56,10 @@ final class CompanionViewModel {
     func captureScreen(frontmostApp: NSRunningApplication?) {
         captureTask?.cancel()
         phase = .reading
+        onCaptureBegan?()
+
         captureTask = Task {
+            defer { onCaptureEnded?() }
             do {
                 var fresh = try await ScreenCapture.captureDisplayUnderCursor(frontmostApp: frontmostApp)
                 let image = fresh.image
@@ -62,11 +71,25 @@ final class CompanionViewModel {
                 contextLabel = fresh.contextLabel
                 related = ContextRetriever.related(to: fresh, among: recentContexts())
                 if phase == .reading { phase = .idle }
+            } catch ScreenCaptureError.permissionDenied {
+                guard !Task.isCancelled else { return }
+                phase = .needsPermission
             } catch {
                 guard !Task.isCancelled else { return }
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Retries after the user grants permission, so they don't have to guess
+    /// whether it took effect.
+    func retryCapture(frontmostApp: NSRunningApplication?) {
+        captureScreen(frontmostApp: frontmostApp)
+    }
+
+    func openScreenRecordingSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        if let url { NSWorkspace.shared.open(url) }
     }
 
     func submit() {

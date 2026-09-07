@@ -21,12 +21,16 @@ struct ScreenObservation {
 enum ScreenCaptureError: LocalizedError {
     case noDisplay
     case permissionDenied
+    case failed(String)
 
     var errorDescription: String? {
         switch self {
-        case .noDisplay: "No display available to capture."
+        case .noDisplay:
+            "No display available to capture."
         case .permissionDenied:
-            "Screen Recording permission is required. Enable it in System Settings → Privacy & Security → Screen Recording."
+            "Screen Recording permission is needed."
+        case let .failed(detail):
+            "Couldn't read the screen: \(detail)"
         }
     }
 }
@@ -34,12 +38,33 @@ enum ScreenCaptureError: LocalizedError {
 enum ScreenCapture {
     /// Captures the display under the cursor, omitting this app so the companion
     /// never appears in its own screenshot.
+    /// Whether the OS will actually let us capture right now.
+    ///
+    /// Checking this up front matters because the permission can read as granted
+    /// in System Settings while still being denied: an ad-hoc signed build is
+    /// authorized by code hash, so every rebuild invalidates the existing grant
+    /// and leaves a stale row in the list.
+    static var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
+
+    /// Prompts once. Does nothing on later calls, so it is safe to retry.
+    static func requestPermission() {
+        CGRequestScreenCaptureAccess()
+    }
+
     static func captureDisplayUnderCursor(frontmostApp: NSRunningApplication?) async throws -> ScreenObservation {
+        guard hasPermission else {
+            requestPermission()
+            throw ScreenCaptureError.permissionDenied
+        }
+
         let content: SCShareableContent
         do {
             content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         } catch {
-            throw ScreenCaptureError.permissionDenied
+            // Don't assume permission: report what actually went wrong.
+            throw hasPermission
+                ? ScreenCaptureError.failed(error.localizedDescription)
+                : ScreenCaptureError.permissionDenied
         }
 
         guard let display = displayUnderCursor(in: content) ?? content.displays.first else {
