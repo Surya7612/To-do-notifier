@@ -45,6 +45,51 @@ The goal is **not** "Clicky + more features."
 
 The goal is to use native Mac embodiment as one surface for a broader personal context system.
 
+#### Second pass — after the companion was working
+
+Re-reading Clicky's `AGENTS.md` once our own app existed surfaced things worth
+taking that were not obvious before there was code to compare against.
+
+**Adopted:**
+
+| Borrowed | Why it earned its place |
+|---|---|
+| `AGENTS.md` at the repo root | Architecture, key-file table, conventions, and self-update rules. Every agent session was re-deriving the architecture from scratch. Ours also records the no-AI-attribution rule and the hotkey and TCC traps. |
+| Click-outside-to-dismiss | Every other floating panel on the system does this. Ours only closed on Esc, so it hung over whatever you switched to. Mouse-only monitor, so it still needs no Accessibility permission. |
+| `LSUIElement` in Info.plist | We set `.accessory` programmatically, which works but flashes a dock icon at launch. Declaring it removes the flash. |
+| Live audio level → waveform | Clicky drives a waveform from mic levels. Our silence watchdog was already computing peak amplitude and discarding it, so the listening ring now breathes with your voice. Silence looks like silence. |
+| Multi-monitor capture | Already listed above as a Clicky idea, but unimplemented — we only grabbed the display under the cursor. The second monitor usually holds the documentation or terminal the question is actually about. |
+| A design tokens file | Clicky's `DesignSystem.swift`. Ours is smaller, but the panel, library, and cursor ring are separately-authored surfaces that need to look like one app. |
+| A release script | Clicky's `scripts/release.sh`, reduced to the steps a free Apple account can perform. See "Distribution reality" below. |
+
+**Rejected, with reasons:**
+
+| Not taken | Why not |
+|---|---|
+| Cursor pointing (`[POINT:x,y:label]`, bezier arcs to UI elements) | Clicky's signature feature and its most demo-friendly, but it serves tutoring. Our north star is connecting current activity to past intent. This is the clearest case of "Clicky + more features" and is exactly what §2 warns against. |
+| Global push-to-talk via `CGEvent` tap | Requires Accessibility permission. We chose Carbon hot keys specifically to avoid that, and "clear permission boundaries" is a stated privacy principle. Not worth trading for a nicer dictation trigger. |
+| AssemblyAI / OpenAI transcription providers | Both stream your voice off the machine. Apple's on-device recognizer is less accurate, and local-first is a product constraint rather than a default to trade away for accuracy. |
+| PostHog analytics | Contradicts "do not silently collect everything". |
+| Cloudflare Worker API proxy | Solves a problem we do not have: there are no API keys to hide when the model is local Ollama. Revisit only if a cloud model is ever added. |
+| Sparkle auto-updates | Needs Developer ID signing and notarization. See below. |
+
+**One inherited rule we should not copy.** Clicky's `AGENTS.md` says never run
+`xcodebuild` from the terminal because it invalidates TCC permissions. That was
+true for us under ad-hoc signing — it is the bug behind the "app needs
+permission" loop in Phase 4. Once `DEVELOPMENT_TEAM` was set, TCC keys on the
+stable signing identity instead of a per-build hash, and terminal builds became
+safe. Our `AGENTS.md` says so explicitly so the rule is not cargo-culted.
+
+#### Distribution reality
+
+The full Clicky release pipeline — Developer ID export, Apple notarization,
+stapling, Sparkle EdDSA signing, appcast — requires the paid Apple Developer
+Program at $99/year. The available signing identity is `Apple Development`
+only. `scripts/release-companion.sh` therefore stops at: archive, export, DMG,
+GitHub release, and tells downloaders in the generated release notes that they
+must right-click → Open once, and why. The three missing commands are recorded
+in the script's header so the gap closes cheaply if a membership is ever bought.
+
 ---
 
 ### From Engram
@@ -909,6 +954,10 @@ Do not build:
 - YC pitch deck
 - Startup branding exercise
 - Multi-user authentication unless needed for remote sync
+- Cursor-pointing / element-highlighting overlays (see §2, rejected from Clicky)
+- Anything requiring Accessibility permission
+- Cloud speech-to-text or hosted LLMs
+- Usage analytics of any kind
 
 This is a **personal project first**.
 
