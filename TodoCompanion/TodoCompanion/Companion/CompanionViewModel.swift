@@ -29,6 +29,8 @@ final class CompanionViewModel {
     var isListening = false
     var dictationIsOnDevice = true
     var inputDeviceName = ""
+    /// Polled by the cursor indicator to drive the voice ring.
+    var currentInputLevel: CGFloat { dictation.currentLevel }
     /// Surfaced when the chosen input is producing no audio at all.
     var dictationHint = ""
 
@@ -81,11 +83,11 @@ final class CompanionViewModel {
         captureTask = Task {
             defer { onCaptureEnded?() }
             do {
-                var fresh = try await ScreenCapture.captureDisplayUnderCursor(frontmostApp: frontmostApp)
-                let image = fresh.image
-                fresh.recognizedText = await Task.detached {
-                    TextRecognizer.recognize(in: image)
-                }.value
+                var fresh = try await ScreenCapture.captureAllDisplays(frontmostApp: frontmostApp)
+                fresh.primary.recognizedText = await Self.readText(in: fresh.primary.image)
+                for index in fresh.others.indices {
+                    fresh.others[index].recognizedText = await Self.readText(in: fresh.others[index].image)
+                }
                 guard !Task.isCancelled else { return }
                 observation = fresh
                 contextLabel = fresh.contextLabel
@@ -99,6 +101,12 @@ final class CompanionViewModel {
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Vision is CPU-heavy enough to stall the panel's appearance if it runs
+    /// inline, so each display is recognized off the main actor.
+    private static func readText(in image: CGImage) async -> String {
+        await Task.detached { TextRecognizer.recognize(in: image) }.value
     }
 
     /// Retries after the user grants permission, so they don't have to guess

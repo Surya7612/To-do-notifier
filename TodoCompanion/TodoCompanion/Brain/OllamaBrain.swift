@@ -97,7 +97,21 @@ struct OllamaBrain {
         var parts: [String] = []
         if let observation {
             parts.append("Active window: \(observation.contextLabel)")
-            if !includeImage, !observation.recognizedText.isEmpty {
+
+            if includeImage {
+                // The attached image is the focused display only. Running a
+                // local vision model over every monitor costs far more than the
+                // extra pixels are worth, so the others come through as text.
+                let secondary = observation.others.filter { !$0.recognizedText.isEmpty }
+                if !secondary.isEmpty {
+                    parts.append(
+                        "The image is your focused display. Text on your other displays:\n"
+                            + secondary
+                            .map { "[Display \($0.index)]\n\($0.recognizedText)" }
+                            .joined(separator: "\n\n")
+                    )
+                }
+            } else if !observation.recognizedText.isEmpty {
                 parts.append("Text visible on screen:\n\(observation.recognizedText)")
             }
         }

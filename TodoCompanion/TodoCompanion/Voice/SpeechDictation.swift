@@ -53,6 +53,13 @@ final class SpeechDictation {
     private let level = LevelMeter()
     private var silenceWatchdog: Task<Void, Never>?
 
+    /// Speech occupies a narrow band of the available amplitude range, so the
+    /// raw peak barely moves the needle. Boosted and clamped, it reads as voice.
+    var currentLevel: CGFloat {
+        guard isListening else { return 0 }
+        return min(1, CGFloat(level.drainRecentLevel()) * 6)
+    }
+
     func start(onTranscript: @escaping (String) -> Void,
                onEnd: @escaping () -> Void,
                onSilence: @escaping (String) -> Void) async throws {
@@ -150,14 +157,30 @@ final class SpeechDictation {
     /// render thread and read from the main actor, so access is locked.
     private final class LevelMeter: @unchecked Sendable {
         private let lock = NSLock()
-        private var peak: Float = 0
+        /// Loudest sample of the whole session, for the silence watchdog.
+        private var sessionPeak: Float = 0
+        /// Loudest sample since the UI last looked, for the waveform.
+        private var unreadPeak: Float = 0
 
         var isSilent: Bool {
-            lock.withLock { peak < 0.0015 }
+            lock.withLock { sessionPeak < 0.0015 }
         }
 
         func reset() {
-            lock.withLock { peak = 0 }
+            lock.withLock {
+                sessionPeak = 0
+                unreadPeak = 0
+            }
+        }
+
+        /// Consumes the peak so the meter falls back to zero when the user stops
+        /// speaking instead of holding the loudest value forever.
+        func drainRecentLevel() -> Float {
+            lock.withLock {
+                let value = unreadPeak
+                unreadPeak = 0
+                return value
+            }
         }
 
         func record(_ buffer: AVAudioPCMBuffer) {
@@ -169,7 +192,10 @@ final class SpeechDictation {
                     frameMax = max(frameMax, abs(samples[frame]))
                 }
             }
-            lock.withLock { peak = max(peak, frameMax) }
+            lock.withLock {
+                sessionPeak = max(sessionPeak, frameMax)
+                unreadPeak = max(unreadPeak, frameMax)
+            }
         }
     }
 

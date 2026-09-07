@@ -8,7 +8,7 @@ struct CompanionView: View {
     @FocusState private var questionFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Spacing.normal) {
             header
             if viewModel.phase == .needsPermission {
                 permissionNotice
@@ -18,21 +18,21 @@ struct CompanionView: View {
                     relatedStrip
                 }
             }
-            Divider().opacity(0.35)
+            Divider().opacity(DS.Alpha.divider)
             answerArea
         }
-        .padding(16)
-        .frame(width: CompanionPanelController.width, alignment: .topLeading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(DS.Spacing.roomy)
+        .frame(width: DS.Size.panelWidth, alignment: .topLeading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .strokeBorder(.white.opacity(DS.Alpha.hairline), lineWidth: 1)
         )
         .onAppear { questionFocused = true }
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Spacing.tight) {
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
@@ -41,7 +41,7 @@ struct CompanionView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Spacing.tight)
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.semibold))
@@ -52,7 +52,7 @@ struct CompanionView: View {
     }
 
     private var askField: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Spacing.tight) {
             TextField("Ask, or say why this matters…", text: $viewModel.question, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...3)
@@ -86,9 +86,9 @@ struct CompanionView: View {
             .help("Ask about this screen (Return)")
             .disabled(isFieldEmpty || viewModel.isBusy)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(.quaternary.opacity(0.5), in: Capsule())
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.snug)
+        .background(.quaternary.opacity(DS.Alpha.fieldFill), in: Capsule())
     }
 
     private var isFieldEmpty: Bool {
@@ -96,7 +96,7 @@ struct CompanionView: View {
     }
 
     private var permissionNotice: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: DS.Spacing.snug) {
             Text("macOS won't let me read the screen yet.")
                 .font(.callout.weight(.medium))
 
@@ -105,21 +105,21 @@ struct CompanionView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Spacing.tight) {
                 Button("Open System Settings", action: viewModel.openScreenRecordingSettings)
                 Button("Try again") { onRetry() }
             }
             .controlSize(.small)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(DS.Alpha.noticeFill), in: RoundedRectangle(cornerRadius: DS.Radius.card))
     }
 
     /// Surfaced only on an explicit summon — never from background polling.
     private var relatedStrip: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: DS.Spacing.hair) {
             Label("You kept this before", systemImage: "clock.arrow.circlepath")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
@@ -135,9 +135,9 @@ struct CompanionView: View {
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 7))
+                .padding(.horizontal, DS.Spacing.snug)
+                .padding(.vertical, DS.Spacing.hair)
+                .background(.quaternary.opacity(DS.Alpha.chipFill), in: RoundedRectangle(cornerRadius: DS.Radius.chip))
             }
         }
     }
@@ -161,7 +161,7 @@ struct CompanionView: View {
             }
         }
         .scrollIndicators(.never)
-        .frame(maxHeight: CompanionPanelController.maxAnswerHeight)
+        .frame(maxHeight: DS.Size.maxAnswerHeight)
     }
 
     private var placeholder: String {
@@ -174,12 +174,12 @@ struct CompanionView: View {
     }
 
     private var statusColor: Color {
-        if viewModel.isListening { return .pink }
+        if viewModel.isListening { return DS.Status.listening }
         switch viewModel.phase {
-        case .idle: return .green
-        case .reading, .thinking, .answering: return .orange
-        case .saved: return .blue
-        case .needsPermission, .failed: return .red
+        case .idle: return DS.Status.ready
+        case .reading, .thinking, .answering: return DS.Status.busy
+        case .saved: return DS.Status.saved
+        case .needsPermission, .failed: return DS.Status.problem
         }
     }
 }

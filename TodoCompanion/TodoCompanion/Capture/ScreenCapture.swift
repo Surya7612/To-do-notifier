@@ -2,12 +2,44 @@ import AppKit
 import CoreGraphics
 import ScreenCaptureKit
 
-/// One screenshot plus the surrounding context we know about it.
-struct ScreenObservation {
+/// One display's worth of pixels and the text found in them.
+struct CapturedDisplay {
     let image: CGImage
+    /// 1-based, and only ever used for labelling text sent to the model.
+    let index: Int
+    var recognizedText: String = ""
+}
+
+/// Everything captured on one summon, plus the context we know about it.
+///
+/// `primary` is a separate field rather than the first element of an array so
+/// the display the user was actually looking at is guaranteed to exist.
+struct ScreenObservation {
+    var primary: CapturedDisplay
+    var others: [CapturedDisplay] = []
     let appName: String?
     let windowTitle: String?
-    var recognizedText: String = ""
+
+    /// The focused display. This is the one stored with a saved context; a
+    /// second monitor's pixels are rarely what the user meant to keep.
+    var image: CGImage { primary.image }
+
+    var displays: [CapturedDisplay] { [primary] + others }
+
+    /// Labelled per display when there is more than one, so the model can tell
+    /// which text the user is actually looking at.
+    var recognizedText: String {
+        guard !others.isEmpty else { return primary.recognizedText }
+        return displays
+            .filter { !$0.recognizedText.isEmpty }
+            .map { display in
+                let label = display.index == primary.index
+                    ? "[Display \(display.index) — focused]"
+                    : "[Display \(display.index)]"
+                return "\(label)\n\(display.recognizedText)"
+            }
+            .joined(separator: "\n\n")
+    }
 
     var contextLabel: String {
         switch (appName, windowTitle) {
@@ -51,7 +83,11 @@ enum ScreenCapture {
         CGRequestScreenCaptureAccess()
     }
 
-    static func captureDisplayUnderCursor(frontmostApp: NSRunningApplication?) async throws -> ScreenObservation {
+    /// Captures every attached display, with the one under the cursor as
+    /// primary. A second monitor usually holds the documentation, terminal, or
+    /// chat the question is really about, so ignoring it loses the context that
+    /// makes the answer useful.
+    static func captureAllDisplays(frontmostApp: NSRunningApplication?) async throws -> ScreenObservation {
         guard hasPermission else {
             requestPermission()
             throw ScreenCaptureError.permissionDenied
@@ -67,12 +103,43 @@ enum ScreenCapture {
                 : ScreenCaptureError.permissionDenied
         }
 
-        guard let display = displayUnderCursor(in: content) ?? content.displays.first else {
-            throw ScreenCaptureError.noDisplay
-        }
+        let focused = displayUnderCursor(in: content) ?? content.displays.first
+        guard let focused else { throw ScreenCaptureError.noDisplay }
 
         let ownBundleID = Bundle.main.bundleIdentifier
         let excluded = content.applications.filter { $0.bundleIdentifier == ownBundleID }
+
+        // Ordered so the focused display is always index 1 in anything the
+        // model reads, regardless of how macOS happens to enumerate them.
+        let ordered = [focused] + content.displays.filter { $0.displayID != focused.displayID }
+
+        let captured = try await withThrowingTaskGroup(of: (Int, CGImage).self) { group in
+            for (offset, display) in ordered.enumerated() {
+                group.addTask {
+                    (offset, try await shoot(display, excluding: excluded))
+                }
+            }
+            var byIndex: [Int: CGImage] = [:]
+            for try await (offset, image) in group { byIndex[offset] = image }
+            return byIndex
+        }
+
+        guard let primaryImage = captured[0] else { throw ScreenCaptureError.noDisplay }
+
+        let others = ordered.indices.dropFirst().compactMap { offset in
+            captured[offset].map { CapturedDisplay(image: $0, index: offset + 1) }
+        }
+
+        return ScreenObservation(
+            primary: CapturedDisplay(image: primaryImage, index: 1),
+            others: others,
+            appName: frontmostApp?.localizedName,
+            windowTitle: frontWindowTitle(in: content, for: frontmostApp)
+        )
+    }
+
+    private static func shoot(_ display: SCDisplay,
+                              excluding excluded: [SCRunningApplication]) async throws -> CGImage {
         let filter = SCContentFilter(display: display, excludingApplications: excluded, exceptingWindows: [])
 
         let scale = backingScale(for: display)
@@ -82,13 +149,7 @@ enum ScreenCapture {
         config.showsCursor = false
         config.captureResolution = .best
 
-        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-
-        return ScreenObservation(
-            image: image,
-            appName: frontmostApp?.localizedName,
-            windowTitle: frontWindowTitle(in: content, for: frontmostApp)
-        )
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
     }
 
     private static func displayUnderCursor(in content: SCShareableContent) -> SCDisplay? {

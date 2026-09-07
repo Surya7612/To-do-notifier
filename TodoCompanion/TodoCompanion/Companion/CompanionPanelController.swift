@@ -4,24 +4,24 @@ import SwiftUI
 
 @MainActor
 final class CompanionPanelController {
-    static let width: CGFloat = 420
-    static let maxAnswerHeight: CGFloat = 320
-
     /// Only the starting height. The panel resizes to whatever the content
     /// actually needs once SwiftUI has laid it out.
-    private static let initialSize = NSSize(width: width, height: 180)
+    private static let initialSize = NSSize(width: DS.Size.panelWidth, height: 180)
 
     let viewModel: CompanionViewModel
     private var panel: CompanionPanel?
     private weak var previousApp: NSRunningApplication?
 
     private let indicator = CaptureIndicator()
+    private var outsideClickMonitor: Any?
 
     init(modelContext: ModelContext) {
         self.viewModel = CompanionViewModel(modelContext: modelContext)
         viewModel.onCaptureBegan = { [weak self] in self?.indicator.show(.capturing) }
         viewModel.onCaptureEnded = { [weak self] in self?.indicator.hide() }
-        viewModel.onListeningBegan = { [weak self] in self?.indicator.show(.listening) }
+        viewModel.onListeningBegan = { [weak self] in
+            self?.indicator.show(.listening, level: { [weak self] in self?.viewModel.currentInputLevel ?? 0 })
+        }
         viewModel.onListeningEnded = { [weak self] in self?.indicator.hide() }
     }
 
@@ -43,13 +43,33 @@ final class CompanionPanelController {
         panel.setFrameTopLeftPoint(topLeftNearCursor(for: panel.frame.size))
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        watchForOutsideClick()
 
         viewModel.captureScreen(frontmostApp: frontmost)
+    }
+
+    /// Dismisses when the user clicks away, which is what every other floating
+    /// panel on the system does. Only mouse events are observed: a global
+    /// *keyboard* monitor would demand Accessibility permission, and avoiding
+    /// that is why the hotkey uses Carbon in the first place.
+    private func watchForOutsideClick() {
+        guard outsideClickMonitor == nil else { return }
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor in self?.hide() }
+        }
+    }
+
+    private func stopWatchingForOutsideClick() {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        outsideClickMonitor = nil
     }
 
     /// Hands focus back to whatever the user was working in, so the companion
     /// does not leave them staring at an empty desktop.
     func hide() {
+        stopWatchingForOutsideClick()
         panel?.orderOut(nil)
         viewModel.reset()
         previousApp?.activate()

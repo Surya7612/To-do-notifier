@@ -1,7 +1,19 @@
 import AppKit
+import Observation
 import SwiftUI
 
-/// A ring that pulses at the cursor while the screen is being read.
+/// Live values the ring reads every frame.
+///
+/// Separate from the window so SwiftUI can observe it without the indicator
+/// having to rebuild its hosting view on every update.
+@Observable
+final class IndicatorState {
+    var mode: CaptureIndicator.Mode = .capturing
+    var level: CGFloat = 0
+}
+
+/// A ring that pulses at the cursor while the screen is being read or the
+/// microphone is open.
 ///
 /// macOS does not show its recording indicator for one-shot ScreenCaptureKit
 /// grabs, so without this the capture is completely invisible — which is exactly
@@ -16,8 +28,8 @@ final class CaptureIndicator {
 
         var tint: Color {
             switch self {
-            case .capturing: .blue
-            case .listening: .pink
+            case .capturing: DS.Status.saved
+            case .listening: DS.Status.listening
             }
         }
 
@@ -38,21 +50,27 @@ final class CaptureIndicator {
         }
     }
 
-    private static let diameter: CGFloat = 110
+    private static let diameter = DS.Size.indicator
+
+    private let state = IndicatorState()
 
     private var window: NSWindow?
     private var shownAt: Date?
-    private var mode: Mode = .capturing
     private var pendingHide: Task<Void, Never>?
     private var tracking: Task<Void, Never>?
 
-    func show(_ mode: Mode = .capturing, at point: NSPoint? = nil) {
+    /// `level` is polled rather than pushed: the audio tap runs on a render
+    /// thread many times a second, and hopping to the main actor per buffer to
+    /// drive an animation is far more traffic than a 60Hz read needs.
+    func show(_ mode: Mode = .capturing,
+              at point: NSPoint? = nil,
+              level: (@MainActor () -> CGFloat)? = nil) {
         pendingHide?.cancel()
         pendingHide = nil
-        self.mode = mode
+        state.mode = mode
+        state.level = 0
 
         let window = existingWindow()
-        (window.contentView as? NSHostingView<CaptureRingView>)?.rootView = CaptureRingView(mode: mode)
         center(window, on: point ?? NSEvent.mouseLocation)
         window.orderFrontRegardless()
         shownAt = Date()
@@ -60,27 +78,11 @@ final class CaptureIndicator {
         // A ring pinned to where the cursor *was* reads as a stray artifact.
         // Following it keeps the feedback attached to the user's attention,
         // which matters most while listening, since that can run for a while.
-        if point == nil { startTracking(window) }
-    }
-
-    private func startTracking(_ window: NSWindow) {
-        tracking?.cancel()
-        tracking = Task { [weak self] in
-            while !Task.isCancelled {
-                self?.center(window, on: NSEvent.mouseLocation)
-                try? await Task.sleep(for: .milliseconds(16))
-            }
-        }
-    }
-
-    private func center(_ window: NSWindow, on point: NSPoint) {
-        window.setFrameOrigin(
-            NSPoint(x: point.x - Self.diameter / 2, y: point.y - Self.diameter / 2)
-        )
+        startTracking(window, followCursor: point == nil, level: level)
     }
 
     func hide() {
-        let floor = mode.minimumVisible
+        let floor = state.mode.minimumVisible
         let elapsed = shownAt.map { Date().timeIntervalSince($0) } ?? floor
         let remaining = floor - elapsed
 
@@ -94,6 +96,33 @@ final class CaptureIndicator {
             guard !Task.isCancelled else { return }
             dismiss()
         }
+    }
+
+    private func startTracking(_ window: NSWindow,
+                               followCursor: Bool,
+                               level: (@MainActor () -> CGFloat)?) {
+        tracking?.cancel()
+        guard followCursor || level != nil else { return }
+
+        tracking = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if followCursor { self.center(window, on: NSEvent.mouseLocation) }
+                if let level {
+                    // Ease toward the new reading so the ring breathes instead
+                    // of flickering on every buffer.
+                    let target = level()
+                    self.state.level += (target - self.state.level) * (target > self.state.level ? 0.5 : 0.12)
+                }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    private func center(_ window: NSWindow, on point: NSPoint) {
+        window.setFrameOrigin(
+            NSPoint(x: point.x - Self.diameter / 2, y: point.y - Self.diameter / 2)
+        )
     }
 
     private func dismiss() {
@@ -119,36 +148,49 @@ final class CaptureIndicator {
         panel.level = .screenSaver
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.contentView = NSHostingView(rootView: CaptureRingView(mode: mode))
+        panel.contentView = NSHostingView(rootView: CaptureRingView(state: state))
         window = panel
         return panel
     }
 }
 
 struct CaptureRingView: View {
-    let mode: CaptureIndicator.Mode
+    let state: IndicatorState
 
     @State private var pulsing = false
 
     var body: some View {
         ZStack {
             Circle()
-                .strokeBorder(mode.tint.opacity(0.85), lineWidth: 2.5)
+                .strokeBorder(state.mode.tint.opacity(0.85), lineWidth: 2.5)
                 .scaleEffect(pulsing ? 0.95 : 0.35)
                 .opacity(pulsing ? 0 : 0.95)
 
             Circle()
-                .strokeBorder(mode.tint.opacity(0.55), lineWidth: 2)
+                .strokeBorder(state.mode.tint.opacity(0.55), lineWidth: 2)
                 .scaleEffect(pulsing ? 0.6 : 0.2)
                 .opacity(pulsing ? 0.15 : 0.8)
 
-            Image(systemName: mode.glyph)
+            if state.mode == .listening {
+                voiceRing
+            }
+
+            Image(systemName: state.mode.glyph)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(mode.tint)
+                .foregroundStyle(state.mode.tint)
                 .opacity(0.9)
         }
         .animation(.easeOut(duration: 0.85).repeatForever(autoreverses: false), value: pulsing)
         .onAppear { pulsing = true }
         .onDisappear { pulsing = false }
+    }
+
+    /// Tracks the microphone rather than the clock, so silence looks like
+    /// silence. A dead input device is visibly dead instead of merely quiet.
+    private var voiceRing: some View {
+        Circle()
+            .strokeBorder(state.mode.tint.opacity(0.35 + state.level * 0.5), lineWidth: 3)
+            .scaleEffect(0.34 + state.level * 0.34)
+            .animation(.linear(duration: 0.05), value: state.level)
     }
 }
