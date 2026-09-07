@@ -18,6 +18,13 @@ final class CompanionViewModel {
     /// Set by the panel controller so the cursor ring tracks capture exactly.
     var onCaptureBegan: (() -> Void)?
     var onCaptureEnded: (() -> Void)?
+    var onListeningBegan: (() -> Void)?
+    var onListeningEnded: (() -> Void)?
+
+    private let dictation = SpeechDictation()
+
+    var isListening: Bool { dictation.isListening }
+    var dictationIsOnDevice: Bool { dictation.isOnDevice }
 
     var phase: Phase = .idle
     var question: String = ""
@@ -40,14 +47,19 @@ final class CompanionViewModel {
     var hasCapture: Bool { observation != nil }
 
     var statusText: String {
+        if isListening {
+            return dictation.isOnDevice
+                ? "Listening… (on-device)"
+                : "Listening… (Apple servers — on-device unavailable)"
+        }
         switch phase {
-        case .idle: contextLabel
-        case .reading: "Reading your screen…"
-        case .thinking: "Thinking…"
-        case .answering: "Answering…"
-        case let .saved(message): message
-        case .needsPermission: "Screen Recording permission needed"
-        case let .failed(message): message
+        case .idle: return contextLabel
+        case .reading: return "Reading your screen…"
+        case .thinking: return "Thinking…"
+        case .answering: return "Answering…"
+        case let .saved(message): return message
+        case .needsPermission: return "Screen Recording permission needed"
+        case let .failed(message): return message
         }
     }
 
@@ -85,6 +97,29 @@ final class CompanionViewModel {
     /// whether it took effect.
     func retryCapture(frontmostApp: NSRunningApplication?) {
         captureScreen(frontmostApp: frontmostApp)
+    }
+
+    /// Dictates into the same field used for typing, so speech and text are the
+    /// same input rather than two separate flows.
+    func toggleDictation() {
+        if dictation.isListening {
+            dictation.stop()
+            onListeningEnded?()
+            return
+        }
+
+        Task {
+            do {
+                onListeningBegan?()
+                try await dictation.start { [weak self] text in
+                    self?.question = text
+                }
+                if !dictation.isListening { onListeningEnded?() }
+            } catch {
+                onListeningEnded?()
+                phase = .failed(error.localizedDescription)
+            }
+        }
     }
 
     func openScreenRecordingSettings() {
@@ -179,6 +214,10 @@ final class CompanionViewModel {
     func reset() {
         captureTask?.cancel()
         answerTask?.cancel()
+        if dictation.isListening {
+            dictation.stop()
+            onListeningEnded?()
+        }
         question = ""
         answer = ""
         observation = nil

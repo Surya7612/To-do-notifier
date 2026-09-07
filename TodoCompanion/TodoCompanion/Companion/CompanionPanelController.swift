@@ -14,8 +14,10 @@ final class CompanionPanelController {
 
     init(modelContext: ModelContext) {
         self.viewModel = CompanionViewModel(modelContext: modelContext)
-        viewModel.onCaptureBegan = { [weak self] in self?.indicator.show() }
+        viewModel.onCaptureBegan = { [weak self] in self?.indicator.show(.capturing) }
         viewModel.onCaptureEnded = { [weak self] in self?.indicator.hide() }
+        viewModel.onListeningBegan = { [weak self] in self?.indicator.show(.listening) }
+        viewModel.onListeningEnded = { [weak self] in self?.indicator.hide() }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }

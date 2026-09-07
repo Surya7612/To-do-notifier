@@ -59,6 +59,16 @@ struct CompanionView: View {
                 .focused($questionFocused)
                 .onSubmit(viewModel.submit)
 
+            Button(action: viewModel.toggleDictation) {
+                Image(systemName: viewModel.isListening ? "mic.fill" : "mic")
+                    .font(.title3)
+                    .foregroundStyle(viewModel.isListening ? .pink : .primary)
+                    .symbolEffect(.variableColor.iterative, isActive: viewModel.isListening)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("d", modifiers: .command)
+            .help(viewModel.isListening ? "Stop dictating (⌘D)" : "Dictate instead of typing (⌘D)")
+
             Button(action: viewModel.saveCurrentContext) {
                 Image(systemName: "bookmark.circle.fill")
                     .font(.title3)
@@ -156,16 +166,17 @@ struct CompanionView: View {
         case .thinking: "…"
         case let .failed(message): message
         case .saved: "Kept, with your reason attached. Find it again in the library."
-        default: "Return asks. ⌘S remembers this screen. #tags become topics. Esc closes."
+        default: "Return asks. ⌘D dictates. ⌘S remembers this screen. #tags become topics. Esc closes."
         }
     }
 
     private var statusColor: Color {
+        if viewModel.isListening { return .pink }
         switch viewModel.phase {
-        case .idle: .green
-        case .reading, .thinking, .answering: .orange
-        case .saved: .blue
-        case .needsPermission, .failed: .red
+        case .idle: return .green
+        case .reading, .thinking, .answering: return .orange
+        case .saved: return .blue
+        case .needsPermission, .failed: return .red
         }
     }
 }
