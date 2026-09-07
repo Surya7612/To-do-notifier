@@ -45,22 +45,36 @@ struct CompanionView: View {
 
     private var askField: some View {
         HStack(spacing: 8) {
-            TextField("Ask about what's on screen…", text: $viewModel.question, axis: .vertical)
+            TextField("Ask, or say why this matters…", text: $viewModel.question, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...3)
                 .focused($questionFocused)
                 .onSubmit(viewModel.submit)
+
+            Button(action: viewModel.saveCurrentContext) {
+                Image(systemName: "bookmark.circle.fill")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("s", modifiers: .command)
+            .help("Remember this screen with your reason (⌘S)")
+            .disabled(isFieldEmpty || !viewModel.hasCapture)
 
             Button(action: viewModel.submit) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.title3)
             }
             .buttonStyle(.plain)
-            .disabled(viewModel.question.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.isBusy)
+            .help("Ask about this screen (Return)")
+            .disabled(isFieldEmpty || viewModel.isBusy)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(.quaternary.opacity(0.5), in: Capsule())
+    }
+
+    private var isFieldEmpty: Bool {
+        viewModel.question.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     @ViewBuilder
@@ -86,7 +100,8 @@ struct CompanionView: View {
         switch viewModel.phase {
         case .thinking: "…"
         case let .failed(message): message
-        default: "Press Return to ask. Esc closes."
+        case .saved: "Kept, with your reason attached. Find it again in the library."
+        default: "Return asks. ⌘S remembers this screen. #tags become topics. Esc closes."
         }
     }
 
@@ -94,6 +109,7 @@ struct CompanionView: View {
         switch viewModel.phase {
         case .idle: .green
         case .reading, .thinking, .answering: .orange
+        case .saved: .blue
         case .failed: .red
         }
     }

@@ -1,7 +1,4 @@
-import CoreGraphics
 import Foundation
-import ImageIO
-import UniformTypeIdentifiers
 
 enum BrainError: LocalizedError {
     case unreachable
@@ -44,7 +41,7 @@ struct OllamaBrain {
                     ]
                     if includeImage,
                        let image = observation?.image,
-                       let encoded = Self.base64PNG(image) {
+                       let encoded = ImageCodec.base64PNG(from: image) {
                         body["images"] = [encoded]
                     }
 
@@ -93,37 +90,23 @@ struct OllamaBrain {
         return parts.joined(separator: "\n\n")
     }
 
-    private static func base64PNG(_ image: CGImage, maxDimension: CGFloat = 1568) -> String? {
-        let resized = downscale(image, maxDimension: maxDimension) ?? image
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data, UTType.png.identifier as CFString, 1, nil
-        ) else { return nil }
-        CGImageDestinationAddImage(destination, resized, nil)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return (data as Data).base64EncodedString()
-    }
+    /// One-line gloss stored alongside a saved context. Kept separate from the
+    /// user's own stated intent.
+    func summarize(intent: String, screenText: String) async throws -> String {
+        let prompt = """
+        The user saved a screenshot and explained why in their own words.
+        Write one short sentence (under 20 words) describing what the screen shows.
+        Do not restate their reason and do not add commentary.
 
-    private static func downscale(_ image: CGImage, maxDimension: CGFloat) -> CGImage? {
-        let width = CGFloat(image.width)
-        let height = CGFloat(image.height)
-        let scale = min(1, maxDimension / max(width, height))
-        guard scale < 1 else { return image }
+        Their reason: \(intent)
 
-        let newWidth = Int(width * scale)
-        let newHeight = Int(height * scale)
-        guard let context = CGContext(
-            data: nil,
-            width: newWidth,
-            height: newHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
+        Text on screen:
+        \(screenText.prefix(2000))
+        """
 
-        context.interpolationQuality = .high
-        context.draw(image, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
-        return context.makeImage()
+        var collected = ""
+        let stream = answerStream(question: prompt, observation: nil, includeImage: false)
+        for try await chunk in stream { collected += chunk }
+        return collected.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

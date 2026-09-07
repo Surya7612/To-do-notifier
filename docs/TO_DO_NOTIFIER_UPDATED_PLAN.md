@@ -720,22 +720,35 @@ At this stage, begin deciding how old Electron data migrates into the new native
 
 Add native capture:
 
-- [ ] Detect/manual-save screenshots
-- [ ] Quick context bubble
-- [ ] Voice note
-- [ ] Text note
-- [ ] Ignore
-- [ ] Project association
-- [ ] Topic extraction
-- [ ] AI summary
-- [ ] Original user intent
-- [ ] Search
+- [x] Manual-save screenshots (⌘S in the companion panel)
+- [x] Quick context bubble (the companion panel doubles as it)
+- [ ] Voice note (waits on Phase 2)
+- [x] Text note (the panel's field is the intent field)
+- [x] Ignore (Esc discards without saving)
+- [x] Topic extraction (`#tags` typed inline — user-authored, not inferred)
+- [x] AI summary (generated in the background, stored in its own field)
+- [x] Original user intent (authoritative, never overwritten)
+- [x] Search (plain text across intent, summary, topics, app, window, screen text)
+- [ ] Project association (`Project` model and relationship exist; no UI to assign one yet)
+
+**Built on SwiftData**, not Neo4j — per section 7. The schema is two models,
+`SavedContext` and `Project`, with one relationship between them.
+
+The privacy rule from section 12, *"never pretend AI inference is user-authored
+intent,"* is enforced structurally rather than by convention: `intent` and
+`aiSummary` are separate stored properties and the library labels them
+"Why I kept this" and "What the model thinks it shows" respectively.
 
 First "magic moment":
 
 > "What was that screenshot I saved about ScreenCaptureKit?"
 
 And the app retrieves it with the original reason I saved it.
+
+**This now works** via text search in the Saved Context window. It is not yet
+semantic — searching "screen capture" will not match a note that only says
+"display grabbing." Embeddings are deliberately deferred to Phase 5, per the
+plan's own rule about not adding them before structured retrieval works.
 
 ---
 

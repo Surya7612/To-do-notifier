@@ -1,9 +1,10 @@
 import AppKit
+import SwiftData
 import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let companion = CompanionPanelController()
+    lazy var companion = CompanionPanelController(modelContext: ContextStore.shared.mainContext)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSettings.registerDefaults()

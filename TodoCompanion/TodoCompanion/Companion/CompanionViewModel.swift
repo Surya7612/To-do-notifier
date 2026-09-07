@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import SwiftData
 
 @MainActor
 @Observable
@@ -9,6 +10,7 @@ final class CompanionViewModel {
         case reading
         case thinking
         case answering
+        case saved(String)
         case failed(String)
     }
 
@@ -17,11 +19,17 @@ final class CompanionViewModel {
     var answer: String = ""
     var contextLabel: String = "Nothing captured yet"
 
+    private let modelContext: ModelContext
     private var observation: ScreenObservation?
     private var captureTask: Task<Void, Never>?
     private var answerTask: Task<Void, Never>?
 
+    init(modelContext: ModelContext) {
+        self.modelContext = modelContext
+    }
+
     var isBusy: Bool { phase == .thinking || phase == .answering }
+    var hasCapture: Bool { observation != nil }
 
     var statusText: String {
         switch phase {
@@ -29,6 +37,7 @@ final class CompanionViewModel {
         case .reading: "Reading your screen…"
         case .thinking: "Thinking…"
         case .answering: "Answering…"
+        case let .saved(message): message
         case let .failed(message): message
         }
     }
@@ -41,10 +50,10 @@ final class CompanionViewModel {
         captureTask = Task {
             do {
                 var fresh = try await ScreenCapture.captureDisplayUnderCursor(frontmostApp: frontmostApp)
-                if !AppSettings.sendsImage {
-                    let image = fresh.image
-                    fresh.recognizedText = await Task.detached { TextRecognizer.recognize(in: image) }.value
-                }
+                let image = fresh.image
+                fresh.recognizedText = await Task.detached {
+                    TextRecognizer.recognize(in: image)
+                }.value
                 guard !Task.isCancelled else { return }
                 observation = fresh
                 contextLabel = fresh.contextLabel
@@ -64,7 +73,7 @@ final class CompanionViewModel {
         answer = ""
         phase = .thinking
 
-        let brain = OllamaBrain(endpoint: AppSettings.endpoint, model: AppSettings.model)
+        let brain = makeBrain()
         let includeImage = AppSettings.sendsImage
         let snapshot = observation
 
@@ -86,6 +95,58 @@ final class CompanionViewModel {
         }
     }
 
+    /// Persists the current screen with whatever the user typed as the reason.
+    /// The typed text is the record's intent; `#tags` inside it become topics.
+    func saveCurrentContext() {
+        guard let observation else {
+            phase = .failed("Nothing captured yet.")
+            return
+        }
+
+        let raw = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            phase = .failed("Type why this matters, then save.")
+            return
+        }
+
+        let (intent, topics) = raw.splittingHashtags()
+        let record = SavedContext(
+            intent: intent,
+            recognizedText: observation.recognizedText,
+            imageData: ImageCodec.pngData(from: observation.image),
+            sourceApp: observation.appName ?? "",
+            windowTitle: observation.windowTitle ?? "",
+            topics: topics
+        )
+
+        modelContext.insert(record)
+        do {
+            try modelContext.save()
+        } catch {
+            phase = .failed("Couldn't save: \(error.localizedDescription)")
+            return
+        }
+
+        question = ""
+        phase = .saved(topics.isEmpty ? "Saved." : "Saved · \(topics.map { "#\($0)" }.joined(separator: " "))")
+        addSummary(to: record)
+    }
+
+    /// Fills in the model's own description in the background so saving stays instant.
+    private func addSummary(to record: SavedContext) {
+        let brain = makeBrain()
+        let intent = record.intent
+        let screenText = record.recognizedText
+
+        Task {
+            guard let summary = try? await brain.summarize(intent: intent, screenText: screenText),
+                  !summary.isEmpty
+            else { return }
+            record.aiSummary = summary
+            try? modelContext.save()
+        }
+    }
+
     func reset() {
         captureTask?.cancel()
         answerTask?.cancel()
@@ -94,5 +155,9 @@ final class CompanionViewModel {
         observation = nil
         phase = .idle
         contextLabel = "Nothing captured yet"
+    }
+
+    private func makeBrain() -> OllamaBrain {
+        OllamaBrain(endpoint: AppSettings.endpoint, model: AppSettings.model)
     }
 }

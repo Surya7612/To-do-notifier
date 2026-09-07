@@ -1,13 +1,18 @@
 import AppKit
+import SwiftData
 import SwiftUI
 
 @MainActor
 final class CompanionPanelController {
     static let size = NSSize(width: 420, height: 320)
 
-    let viewModel = CompanionViewModel()
+    let viewModel: CompanionViewModel
     private var panel: CompanionPanel?
     private weak var previousApp: NSRunningApplication?
+
+    init(modelContext: ModelContext) {
+        self.viewModel = CompanionViewModel(modelContext: modelContext)
+    }
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
