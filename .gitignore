@@ -51,6 +51,15 @@ __pycache__/
 builder-effective-config.yaml
 builder-debug.yml
 
+# Xcode (native macOS app)
+DerivedData/
+build/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+
 # Old / unused asset dumps
 public/ort/
 sprites/
