@@ -284,6 +284,12 @@ switches to Parakeet, which runs on the Neural Engine through FluidAudio, this p
 only Swift package dependency. Both run on this Mac; the choice is quality against disk space, never
 privacy, and neither may be swapped for a hosted service.
 
+The recognizer is **kept between sessions**, and rebuilt only when the setting changes. Parakeet's
+models take tens of seconds to load onto the Neural Engine, so constructing one per session paid that
+on every single press of the dictation key and made its own `modelsLoaded` guard unreachable — the
+object never survived to read it. `willLoadModel` exists so the first press of a session can say what
+the wait is, since an unexplained pause on a key press reads as the key having been ignored.
+
 Parakeet's transcript is **cumulative**: the model keeps its own accumulated tokens across pauses, so
 the problem described next is absent by construction there rather than stitched back together. Its
 audio is *copied* rather than its buffer retained, which is not an optimization detail — a tap's

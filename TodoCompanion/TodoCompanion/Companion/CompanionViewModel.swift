@@ -37,6 +37,8 @@ final class CompanionViewModel {
     var currentInputLevel: CGFloat { dictation.currentLevel }
     /// Surfaced when the chosen input is producing no audio at all.
     var dictationHint = ""
+    /// True while a recognizer loads its model, which the status line explains.
+    var isLoadingDictationModel = false
 
     var phase: Phase = .idle
     var contextLabel: String = "Nothing captured yet"
@@ -194,7 +196,13 @@ final class CompanionViewModel {
         switch phase {
         case .idle: return contextLabel
         case .reading: return "Reading your screen…"
-        case .startingDictation: return "Turning the microphone on…"
+        case .startingDictation:
+            // Loading Parakeet onto the Neural Engine takes tens of seconds the
+            // first time in a session, and an unexplained wait on a key press
+            // reads as the key having been ignored.
+            return isLoadingDictationModel
+                ? "Loading the Parakeet model — first time only…"
+                : "Turning the microphone on…"
         case .thinking: return "Thinking…"
         case .answering: return "Answering…"
         case let .saved(message): return message
@@ -425,6 +433,7 @@ final class CompanionViewModel {
 
         // Stated before anything can go wrong, so a failure that arrives later
         // replaces a visible "starting" rather than appearing out of nowhere.
+        isLoadingDictationModel = dictation.willLoadModel
         phase = .startingDictation
 
         Task {
@@ -440,12 +449,14 @@ final class CompanionViewModel {
                             "No sound from “\(device)”. Pick a different mic in System Settings → Sound → Input."
                     }
                 )
+                isLoadingDictationModel = false
                 isListening = dictation.isListening
                 dictationIsOnDevice = dictation.isOnDevice
                 inputDeviceName = dictation.inputDeviceName
                 if phase == .startingDictation { phase = .idle }
                 if !isListening { endListening() }
             } catch {
+                isLoadingDictationModel = false
                 endListening()
                 phase = .failed(error.localizedDescription)
             }

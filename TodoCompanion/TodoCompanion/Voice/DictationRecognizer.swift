@@ -45,6 +45,10 @@ protocol DictationRecognizer: AnyObject {
     /// started rather than sitting on a dead button.
     func prepare() async throws
 
+    /// False when `prepare` still has real work to do, so the panel can say
+    /// that a wait is a model loading rather than a key press being ignored.
+    var isPrepared: Bool { get }
+
     /// False means the audio is leaving this Mac, which the panel states.
     var runsOnDevice: Bool { get }
 
@@ -86,6 +90,9 @@ final class AppleDictationRecognizer: DictationRecognizer {
     private var settledTranscript = ""
 
     private(set) var runsOnDevice = true
+
+    /// Nothing to load, so there is never a wait worth explaining.
+    let isPrepared = true
 
     func prepare() async throws {
         guard await Self.authorizeSpeech() else { throw DictationFailure.speechDenied }

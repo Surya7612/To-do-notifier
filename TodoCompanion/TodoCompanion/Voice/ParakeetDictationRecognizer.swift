@@ -22,6 +22,8 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
     /// The whole point of the model being on disk.
     let runsOnDevice = true
 
+    var isPrepared: Bool { modelsLoaded }
+
     /// How often buffered audio is handed to the model.
     ///
     /// The recognizer is an actor and the audio render thread cannot await, so

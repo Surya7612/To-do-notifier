@@ -20,7 +20,24 @@ final class SpeechDictation {
     /// never recovers, which silently produces no audio at all.
     private var engine: AVAudioEngine?
 
+    /// Kept between sessions, and rebuilt only when the chosen engine changes.
+    ///
+    /// Not an optimization. Parakeet's models take tens of seconds to load onto
+    /// the Neural Engine, so building a recognizer per session paid that on
+    /// every single press of the dictation key rather than once, and the
+    /// `modelsLoaded` guard inside it never survived to be read.
     private var recognizer: (any DictationRecognizer)?
+    private var recognizerEngine: AppSettings.DictationEngine?
+
+    /// True when the next `start` has a model to load, which takes tens of
+    /// seconds rather than the moment a microphone takes. The panel says so,
+    /// because an unexplained wait on a key press reads as a hang.
+    var willLoadModel: Bool {
+        let engine = AppSettings.dictationEngine
+        guard engine != .apple else { return false }
+        guard engine == recognizerEngine, let recognizer else { return true }
+        return !recognizer.isPrepared
+    }
 
     private(set) var isListening = false
 
@@ -48,12 +65,17 @@ final class SpeechDictation {
                onSilence: @escaping (String) -> Void) async throws {
         guard !isListening else { return }
 
+        let chosenEngine = AppSettings.dictationEngine
+        if chosenEngine != recognizerEngine || recognizer == nil {
+            recognizer = chosenEngine.makeRecognizer()
+            recognizerEngine = chosenEngine
+        }
+        guard let recognizer else { throw Failure.recognizerUnavailable }
+
         // Prepared before the microphone opens, because this is where a
         // permission prompt or a first-run model download happens and neither
         // should run with the input device held open.
-        let recognizer = AppSettings.dictationEngine.makeRecognizer()
         try await recognizer.prepare()
-        self.recognizer = recognizer
         isOnDevice = recognizer.runsOnDevice
 
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure.micDenied }
@@ -116,7 +138,8 @@ final class SpeechDictation {
             if engine.isRunning { engine.stop() }
         }
         engine = nil
-        recognizer = nil
+        // The recognizer deliberately survives, holding its loaded model. Only
+        // a change of engine replaces it.
     }
 
     /// Tracks whether any non-silent audio arrived. Written from the audio
