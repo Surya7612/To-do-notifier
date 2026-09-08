@@ -11,6 +11,16 @@ struct CompanionView: View {
     @State private var isNamingProject = false
     @State private var newProjectName = ""
 
+    /// Read here rather than through the view model so flipping either one
+    /// redraws the badge immediately. The model re-reads both when a question
+    /// is actually sent, so a switch applies to the very next ask.
+    @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
+    @AppStorage(AppSettings.Key.sendsImage) private var sendsImage = false
+
+    /// Mirrored from the Keychain on appear; a selected provider with no key
+    /// silently answers locally, and that has to be visible.
+    @State private var hasOpenAIKey = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.normal) {
             header
@@ -36,7 +46,10 @@ struct CompanionView: View {
             RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
                 .strokeBorder(.white.opacity(DS.Alpha.hairline), lineWidth: 1)
         )
-        .onAppear { questionFocused = true }
+        .onAppear {
+            questionFocused = true
+            hasOpenAIKey = AppSettings.openAIKey != nil
+        }
     }
 
     private var header: some View {
@@ -259,18 +272,58 @@ struct CompanionView: View {
 
     /// Says plainly whether asking will send the screen off this Mac. A
     /// question that leaves the device must never look like one that does not.
+    ///
+    /// A control rather than a label because the choice is per-question in
+    /// practice: the local model reads text back fine, and is worth leaving for
+    /// a diagram or an unfamiliar interface. Sending someone to a settings
+    /// window mid-question guarantees they never switch — and the click that
+    /// opens it dismisses the panel.
     private var destinationBadge: some View {
-        Label(
-            viewModel.answersLeaveTheMachine ? viewModel.brainLabel : "Local",
-            systemImage: viewModel.answersLeaveTheMachine ? "cloud" : "lock.laptopcomputer"
-        )
+        Menu {
+            Picker("Answer with", selection: $provider) {
+                ForEach(AppSettings.Provider.allCases) { option in
+                    Text(option.displayName).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.inline)
+
+            Divider()
+
+            // The setting that decides whether a visual question can be
+            // answered at all: OpenAI sees the screen only if the screenshot
+            // goes with it, and otherwise guesses at anything that is not text.
+            Toggle("Send the screenshot", isOn: $sendsImage)
+
+            if isOpenAISelected, !hasOpenAIKey {
+                Divider()
+                Text("No API key saved — answering on this Mac until you add one.")
+            } else if isOpenAISelected, !sendsImage {
+                Divider()
+                Text("Sending recognized text only, so OpenAI cannot see images.")
+            }
+
+            Divider()
+            SettingsLink { Text("Settings…") }
+        } label: {
+            Label(
+                viewModel.answersLeaveTheMachine ? viewModel.brainLabel : "Local",
+                systemImage: viewModel.answersLeaveTheMachine ? "cloud" : "lock.laptopcomputer"
+            )
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
         .font(.caption2)
         .lineLimit(1)
         .fixedSize()
         .foregroundStyle(viewModel.answersLeaveTheMachine ? DS.Status.busy : Color.secondary)
         .help(viewModel.answersLeaveTheMachine
-              ? "Your question and the captured screen go to \(viewModel.brainLabel). Saved summaries stay local."
-              : "Nothing leaves this Mac.")
+              ? "Your question and the captured screen go to \(viewModel.brainLabel). Saved summaries stay local. Click to change."
+              : "Nothing leaves this Mac. Click to change who answers.")
+    }
+
+    private var isOpenAISelected: Bool {
+        provider == AppSettings.Provider.openAI.rawValue
     }
 
     private var permissionNotice: some View {
