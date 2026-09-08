@@ -142,7 +142,44 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         }
     }
 
-    private func schedule(_ samples: [Float], sampleRate: Double) throws {
+    /// Below this a sample counts as silence rather than sound.
+    ///
+    /// Kokoro's output does not sit at exactly zero between words, so a test
+    /// against zero would trim nothing at all.
+    private static let silenceFloor: Float = 0.005
+
+    /// The gap left at the end of each piece, which is the pause between one
+    /// sentence and the next.
+    ///
+    /// Roughly what a speaker leaves at a full stop. Trimming to nothing runs
+    /// sentences together, which is a different kind of wrong from the gaps
+    /// this replaces.
+    private static let tailSeconds = 0.18
+
+    /// Strips the padding Kokoro puts at both ends of every synthesis.
+    ///
+    /// Harmless when a whole passage is synthesized in one go, and the reason
+    /// clause-at-a-time delivery sounded mechanical: the model is handed one
+    /// sentence at a time so playback can start early, which meant its lead-in
+    /// and lead-out silence landed at *every* sentence boundary and stacked with
+    /// the pause the punctuation already implies. Both ends are cut and a fixed
+    /// tail put back, so the gap between sentences is one this app chose rather
+    /// than one that accumulated.
+    static func trimmedWithTail(_ samples: [Float], sampleRate: Double) -> [Float] {
+        guard let first = samples.firstIndex(where: { abs($0) > silenceFloor }),
+              let last = samples.lastIndex(where: { abs($0) > silenceFloor })
+        else { return [] }
+
+        // Appended rather than taken from what the model produced, so the gap
+        // is the same at every join instead of depending on how much padding
+        // this particular synthesis happened to leave.
+        var trimmed = Array(samples[first...last])
+        trimmed.append(contentsOf: repeatElement(0, count: Int(tailSeconds * sampleRate)))
+        return trimmed
+    }
+
+    private func schedule(_ rawSamples: [Float], sampleRate: Double) throws {
+        let samples = Self.trimmedWithTail(rawSamples, sampleRate: sampleRate)
         guard !samples.isEmpty,
               let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format,

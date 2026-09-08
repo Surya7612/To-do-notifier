@@ -339,6 +339,24 @@ because scheduling buffers keeps them in order for free. `isSpeaking` only clear
 empty *and* nothing is still playing — the worker finishes generating well before the sound ends, so
 the obvious version turned the stop button off mid-sentence.
 
+**How the answer is cut up is what makes it sound human, and one clause per synthesis is too fine a
+cut.** Sending each clause the moment it ended was right for `AVSpeechSynthesizer`, which queues
+utterances and shapes them itself, and audibly wrong for Kokoro: every piece gets its own intonation
+contour and its own padding of near-silence at both ends, so a paragraph arrived as a sequence of
+announcements. `SpeechPlayback.nextChunk` therefore sends the *first* sentence immediately — that is
+what makes speech start about a second in — and accumulates to `minimumChunk` after it.
+
+It is bounded at the other end too, and that bound is not cosmetic: Kokoro **throws** on a phoneme
+sequence over 510 characters and a failed clause is dropped rather than spoken, so an unbounded chunk
+is silently missing speech. Hence `maximumChunk`, a break at a word gap when a single sentence
+exceeds it, and a test asserting nothing longer ever leaves. A colon is deliberately not a boundary —
+it introduces the clause after it, so splitting there puts the pause in the wrong place — and a period
+only counts when whitespace follows, or every decimal point and file extension ends a sentence.
+
+`trimmedWithTail` cuts the model's padding off both ends and appends a fixed one. Taking the tail from
+whatever the synthesis happened to leave was the same bug in a quieter form, because some clauses come
+back with almost none and those ran together.
+
 **Kokoro is refused outright on macOS 26.4 and 26.5.** Those releases carry an Apple bug that crashes
 Kokoro synthesis inside libBNNS *intermittently*, whatever the compute units are set to; 26.6 fixes it.
 FluidAudio only logs a warning. A wrong answer here does not look like a broken voice, it looks like the
@@ -441,9 +459,9 @@ the screen, it is the wrong change.
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
-| `Voice/SpeechPlayback.swift` | ~160 | Decides what of a streaming answer gets read aloud, and when. Strips markup, breaks clauses. |
+| `Voice/SpeechPlayback.swift` | ~266 | Decides what of a streaming answer gets read aloud, and when. Strips markup, sizes clauses. |
 | `Voice/VoiceSynthesizer.swift` | ~133 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
-| `Voice/KokoroVoiceSynthesizer.swift` | ~175 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
+| `Voice/KokoroVoiceSynthesizer.swift` | ~212 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
 | `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
 | `Voice/DictationRecognizer.swift` | ~213 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
 | `Voice/ParakeetDictationRecognizer.swift` | ~148 | The Parakeet backend, on the Neural Engine through FluidAudio. |
@@ -529,7 +547,7 @@ What is covered, and why these pieces specifically:
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
-| `VoiceEngineTests` | Which systems the Kokoro voice will run on | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. Asserts against stated versions rather than the running one, and pins that neither offered voice is a hosted service. |
+| `VoiceEngineTests` | Which systems the Kokoro voice will run on, how an answer is cut into things to say, and the join between them | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. The chunking decides whether the delivery sounds like a person or a station announcement, which is inaudible from the code, and an over-long chunk is *dropped* rather than spoken — so it pins the upper bound as well as the lower. Also pins that neither offered voice is a hosted service. |
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
