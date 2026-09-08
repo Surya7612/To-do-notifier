@@ -465,6 +465,9 @@ struct CompanionView: View {
                         ForEach(viewModel.turns) { turn in
                             turnView(turn)
                         }
+                        if let target = viewModel.pointerTarget {
+                            pointerRow(target)
+                        }
                         if let edit = viewModel.proposedEdit {
                             diffView(edit)
                         }
@@ -506,6 +509,25 @@ struct CompanionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    /// Offers to point at the control the answer named.
+    ///
+    /// The matched words are on the button rather than hidden behind it, so the
+    /// user knows what is about to be boxed before anything is drawn over their
+    /// screen — and can ignore it when the match is not what they meant.
+    private func pointerRow(_ target: ScreenTextLocator.Match) -> some View {
+        Button {
+            viewModel.showPointerTarget()
+        } label: {
+            Label("Show me “\(target.text)”", systemImage: "viewfinder.rectangular")
+                .font(.caption)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(DS.Status.saved)
+        .help("Draw a box around “\(target.text)” on screen (⌘P)")
+        .keyboardShortcut("p", modifiers: .command)
+        .padding(.top, DS.Spacing.hair)
     }
 
     /// The change Max is proposing, shown before anything is written.
