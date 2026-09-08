@@ -130,9 +130,7 @@ function loadCompanionProjects(filePath = companionProjectsPath()) {
 }
 
 module.exports = {
-  COMPANION_BUNDLE_ID,
   companionProjectsPath,
   parseCompanionProjects,
-  parseRequestedTasks,
   loadCompanionProjects,
 };

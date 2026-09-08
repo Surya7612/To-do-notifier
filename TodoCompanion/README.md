@@ -97,9 +97,9 @@ even answering the question.
 Two voices are offered, and both run on this Mac. **System** is the default and uses the voices built
 into macOS: nothing to download, and audibly robotic even on the premium ones. **Kokoro** runs
 Kokoro-82M on the Neural Engine and sounds markedly more natural, at the cost of fetching about 174 MB
-of model the first time you use it. It needs **macOS 26.6 or later**: earlier releases in that line
-carry an Apple bug that crashes this kind of synthesis intermittently, so on 26.4 and 26.5 the app
-refuses it and says so in Settings rather than risking taking itself down mid-sentence.
+of model the first time you use it. It is refused on **macOS 26.4 and 26.5**, which carry an Apple bug
+that crashes this kind of synthesis intermittently; Settings says so rather than risking the app taking
+itself down mid-sentence. Every other release runs it.
 
 It is off by default, stops the moment you dictate, ask something else, or close the panel, and there
 is a button in the panel header to stop it mid-sentence. Code blocks are announced rather than read
@@ -428,10 +428,10 @@ put is the only signal anything went wrong.
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
 | `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and the system and Kokoro voices |
-| `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
+| `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing and the Apple Reminders mirror, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, graph, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |
-| `Support/` | Settings, design tokens, Keychain, notifications, image encoding |
+| `Support/` | Settings, design tokens, Keychain, notifications, EventKit, file dialogs, image encoding |
 
 New `.swift` files anywhere under `TodoCompanion/` are added to the target automatically — the project
 uses a file-system synchronized group, so `project.pbxproj` does not need editing.
@@ -451,8 +451,9 @@ than by convention: `summarize` is absent from the `Brain` protocol and exists o
 so no cloud provider can be attached to it. That is why summaries of everything you keep stay local
 even when OpenAI is answering your questions.
 
-Answers are spoken by the speech voices built into macOS, so enabling that sends nothing anywhere.
-There is no wake word and no always-listening mode: the microphone opens when you open it.
+Both voices that can read an answer aloud run on this Mac — the macOS system voices and Kokoro-82M on
+the Neural Engine — so enabling that sends nothing anywhere. There is no wake word and no
+always-listening mode: the microphone opens when you open it.
 
 Max can write to exactly one file, chosen by you through a file dialog, and only when you press Apply
 on a diff. Inference never writes to disk on its own.
@@ -461,13 +462,14 @@ Nothing is drawn over your screen unless you ask for it, and your pointer is nev
 Accessibility permission is requested or used — the global hotkey, the click-outside dismissal, and
 the on-screen highlight were each built to avoid needing it.
 
-The App Sandbox is enabled, with outgoing network, microphone, and user-selected file access as the
-only added entitlements.
+The App Sandbox is enabled. The only added entitlements are outgoing network, microphone,
+user-selected file access, and — if you turn on the Apple Reminders mirror — Reminders.
 
 ## Not built yet
 
-- **Remote reminders.** Reminders are local, so they need this Mac awake when they fire. A hosted
-  scheduler is the one thing that would fix that, and the only reason to build one.
+- **Reminders that know whether they arrived.** Copying them into Apple Reminders covers being away
+  from this Mac, which was the part that actually hurt, but nothing here tracks delivery, retries a
+  failure, or escalates one you ignored. Those still need a hosted scheduler.
 - **A wake word.** Saying "hey Max" would mean an always-hot microphone, which sits badly beside an
   app whose screen capture is explicit and whose mic state is deliberately visible. The hotkey is one
   keystroke and needs no Accessibility permission. The Electron app in this repository has a wake word

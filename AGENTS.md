@@ -1,7 +1,7 @@
 # To-Do Notifier — Agent Instructions
 
 <!-- Single source of truth for AI coding agents working in this repo. -->
-<!-- AGENTS.md spec: https://agents.md — read by Cursor, Claude Code, Copilot, and others. -->
+<!-- AGENTS.md spec: https://agents.md -->
 
 ## Overview
 
@@ -582,18 +582,18 @@ the screen, it is the wrong change.
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
-| `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
+| `Store/ReminderPhrase.swift` | ~272 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
 | `Store/ReminderMirror.swift` | ~140 | Which of the to-do app's tasks belong in Apple Reminders, and what to withdraw. Pure. |
-| `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
-| `Support/AppleReminders.swift` | ~200 | Writes that list through EventKit, into a syncing account so it reaches the phone. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
-| `Store/ProjectExport.swift` | ~174 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
-| `Support/AppSettings.swift` | ~190 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
+| `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
+| `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
+| `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
+| `Support/AppSettings.swift` | ~289 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
 | `Support/DesignSystem.swift` | ~59 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
@@ -640,7 +640,10 @@ xcodebuild test -project TodoCompanion.xcodeproj -scheme TodoCompanion -destinat
 `TodoCompanionTests/` uses Swift Testing (`import Testing`, `@Test`, `#expect`). The whole suite runs in
 well under a second because it covers only pure logic — no screen, no microphone, no Ollama, no network.
 
-What is covered, and why these pieces specifically:
+What is covered, and why these pieces specifically. The table is keyed by the **file** a suite lives
+in, and several files hold more than one `@Suite` — `PromptTests.swift` alone carries the conversation,
+persona, savable-reason and preset suites — so a suite name absent here is usually grouped rather than
+untested. `TestSupport.swift` is fixtures, not a suite.
 
 | Suite | Covers | Why it needs a test |
 |-------|--------|---------------------|
@@ -688,6 +691,12 @@ notification here, because Max already scheduled one — and the same sweep must
 ordinary task around it. Both failures are inaudible from the code and obvious to the user: one alert
 arriving twice, or a task going quiet for no stated reason.
 
+The rest of that suite predates the companion and covers the Electron app's own edges:
+`dataMerge.test.ts` on merging a stored file with current defaults and on the external-URL allowlist,
+`safeWindow.test.ts` on not addressing a destroyed `BrowserWindow`, `companionChat.test.ts` on the
+chat helpers, and `src/lib/voiceParse.test.ts` on turning a spoken sentence into a command. They are
+listed here so "what is tested" can be answered from this file alone.
+
 Two conventions worth keeping:
 
 - Assert on **behaviour** — ordering, inclusion, the reason string — rather than exact scores, so weights
@@ -725,10 +734,9 @@ Keep argument names the same as the variables they came from rather than abbrevi
 
 - Commit messages are prose explaining *why*, in the imperative mood. No bullet lists, no `feat:`
   prefixes, no emoji
-- **Never** add `Co-authored-by` trailers or any attribution to an AI tool. History must show only
-  the repository owner. Cursor's git wrapper re-injects this trailer, so commits are made with
-  `git commit-tree` plumbing to bypass it, then verified with
-  `git log --format='%B' | rg -i 'co-authored-by'`
+- **Never** add `Co-authored-by` trailers or any other attribution. History shows the repository
+  owner. Some tooling appends one unasked, so verify with
+  `git log --format='%B' -1 | rg -i 'co-authored-by'` and amend if it appears
 - Do not force-push shared branches
 
 ### Do not
@@ -736,7 +744,7 @@ Keep argument names the same as the variables they came from rather than abbrevi
 - Do not add cloud **transcription** or **speech synthesis**, or analytics. Voice and usage data stay
  on the machine
 - Do not add a wake word or any always-listening mode. The mic opens when the user opens it. Note the
- Electron app's own wake word (`ilEnabled`) ships **off by default**, which is the evidence, not the
+ Electron app's own wake word (`wakeWordEnabled`) ships **off by default**, which is the evidence, not the
  counter-example
 - Do not let inference write to disk. Max proposes a file change, the user is shown a diff, and only a
  button press writes anything. Do not extend editing past one explicitly-picked file

@@ -430,7 +430,9 @@ Do not depend on the home Mac being awake for critical remote reminders.
 
 The Mac can sleep, reboot, lose Wi-Fi, or the app can close.
 
-Remote reminders should eventually come from a small cloud scheduler/service.
+Most of this is now answered without a server: dated tasks are mirrored into Apple Reminders through
+EventKit, so the alert arrives on the phone and the watch whatever this Mac is doing. See Phase 7. A
+small cloud scheduler is still the only thing that would buy delivery state, retry, and escalation.
 
 Only minimal reminder data needs to leave the Mac:
 
@@ -646,15 +648,14 @@ Only migrate older features when the native architecture benefits from it.
 
 ---
 
-# 10. Xcode + Cursor Workflow
+# 10. Editor and Xcode
 
-Use both.
+Use both, on the split below. They edit the same files on disk, so the only thing that matters is
+which one owns the project file.
 
-## Cursor
+## The editor
 
-Primary source-code editor / AI coding environment.
-
-Use it for:
+Primary place source is written:
 
 - Swift source
 - SwiftUI
@@ -681,17 +682,17 @@ Use for:
 - Target settings
 - Project configuration
 
-Both edit the same files on disk.
-
 ### Important
 
-Avoid letting Cursor blindly modify:
+Do not hand-edit:
 
 ```text
 project.pbxproj
 ```
 
-unless necessary.
+unless there is no alternative. New `.swift` files never require it — the target uses a file-system
+synchronized group — so in practice this comes up only for package dependencies and entitlements,
+both of which were done by hand here and both of which are easy to corrupt.
 
 Let Xcode manage:
 
@@ -711,7 +712,6 @@ Let Xcode manage:
 - [x] Install Xcode
 - [x] Create native macOS project
 - [x] Save it inside the existing repository
-- [x] Open the native project folder in Cursor
 - [x] Confirm build/run from Xcode
 - [x] Create clean Git branch for native work (`native-companion`)
 
@@ -799,6 +799,13 @@ Add:
       an interface means looking at the interface, not at the panel, and a
       hosted voice was never on the table — the ban on cloud transcription
       applies in reverse.
+- [x] A second engine at each end, both still on this Mac, because the defaults
+      that need no download are also the weaker ones. Parakeet transcribes and
+      Kokoro-82M speaks, both on the Neural Engine through FluidAudio — one
+      dependency, added for the recognizer and later earning its place twice by
+      supplying the voice. Apple's backends stay the default: asking for
+      hundreds of megabytes before anyone has tried the feature is the wrong
+      trade. The choice is quality against disk space, never privacy.
 - [x] Visual listening state (pink ring at the cursor, driven by real input level
       so a muted or wrong input device is visible rather than silent)
 - [x] Stop / cancel control (⌘D again, Esc, or silence)
@@ -1391,16 +1398,18 @@ Do not build:
   app whose screen capture is explicit and whose mic state is deliberately
   visible, and the hotkey is already one keystroke with no Accessibility
   requirement. The Electron app's own wake word ships off by default
-- Cloud speech **synthesis**. Spoken answers are built, using the macOS voices;
-  a hosted voice would export the screen to a vendor that is not answering the
-  question
+- Cloud speech **synthesis**. Spoken answers are built, using either the macOS
+  voices or Kokoro-82M on the Neural Engine; a hosted voice would export the
+  screen to a vendor that is not answering the question
 - Calendar/email integrations immediately
 - Social features
 - SaaS billing
 - YC pitch deck
 - Startup branding exercise
 - Multi-user authentication unless needed for remote sync
-- Cursor-pointing / element-highlighting overlays (see §2, rejected from Clicky)
+- Moving the user's pointer to a control (see §2, rejected from Clicky). Only the
+  *pointing* half was rejected; Phase 10 ships an on-screen highlight, which is
+  drawn from a button press and names its match first
 - Anything requiring Accessibility permission
 - Cloud speech-to-text
 - Hosted LLMs doing **background** work — summaries, categorisation, anything

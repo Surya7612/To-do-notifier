@@ -41,7 +41,7 @@ The native companion has [its own README](TodoCompanion/README.md).
 | --- | --- |
 | **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications; project labels and filter from the companion, and reminders it asked to be turned into tasks |
 | **Focus** | Pomodoro timer with optional ambient sound |
-| **Companion** | Always-on desktop pet (drag anywhere; corner / perch / body-double modes) |
+| **Pet** | Always-on desktop sprite (drag anywhere; corner / perch / body-double modes) |
 | **Voice** | **⌘G** talk / **Esc** stop — commands + short chat over open work |
 | **Tutor** | Rubber Duck mode: explain out loud; optional Socrates probing questions |
 | **Study** | Notes + flashcards generated from what you said or typed |
@@ -227,7 +227,9 @@ npm run check
 
 ### Tests
 
-Both suites run in CI on every push.
+CI runs the Electron suite on pushes to `main` and on pull requests. The companion's suite is run
+locally, deliberately: it targets a macOS release newer than GitHub's runners provide, so putting it
+in the workflow could only ever produce a failure that says nothing about the code.
 
 ```bash
 npm test                                                    # Electron — Vitest
@@ -241,8 +243,9 @@ runs in well under a second. `electron/lib/companionProjects.test.ts` and `Proje
 two halves of the same cross-language contract, pinning the published JSON's keys on one side and
 every shape of bad input on the other, since neither language compiles against the other.
 `electron/lib/companionTasks.test.ts` covers the reminder import, where a mistake is persisted and
-compounding rather than wrong once — importing twice on every window focus, or resurrecting a task
-already completed.
+compounding rather than wrong once — adding the same task on every tick, or resurrecting one already
+completed — and `electron/lib/remindersService.test.ts` pins that an imported reminder is announced by
+the companion and not a second time here.
 
 ---
 

@@ -6,11 +6,10 @@ const {
   companionTodoId,
   importCompanionTasks,
   isCompanionTodoId,
-  todosToImport,
 } = require("../../electron/lib/companionTasks.cjs");
 
 /**
- * This app's half of the reminder hand-over.
+ * This app's half of the reminder contract.
  *
  * The companion cannot write `app-data.json`, so it publishes reminders and
  * this creates real tasks from them. Worth testing because the failure is
@@ -101,7 +100,7 @@ describe("importing the companion's reminder requests", () => {
 
   it("survives absent todos and absent requests", () => {
     expect(importCompanionTasks(null, null).created).toHaveLength(0);
-    expect(todosToImport(undefined, undefined)).toHaveLength(0);
+    expect(importCompanionTasks(undefined, undefined).created).toHaveLength(0);
   });
 
   it("recognises its own ids, and only its own", () => {

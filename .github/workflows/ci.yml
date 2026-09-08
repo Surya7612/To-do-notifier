@@ -1,3 +1,7 @@
+# Covers the Electron app only. The native companion's suite is not run here
+# because it targets a macOS release newer than the one GitHub's runners
+# provide, so it could only ever report a failure that says nothing about the
+# code. It is run locally with `xcodebuild test` — see AGENTS.md.
 name: CI
 
 on:

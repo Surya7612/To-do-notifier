@@ -42,8 +42,8 @@ function isCompanionTodoId(id) {
  * The tasks that would be new, given what is already here.
  *
  * Idempotency rests entirely on the id, which is why the companion's
- * identifier has to be stable: this runs on every launch and every focus, and
- * the reminder stays in the published list until it fires. Note that an
+ * identifier has to be stable: this runs at startup and on a timer, and a
+ * reminder stays in the published list for a while after it fires. Note that an
  * already-imported task counts whether it is open or done — a task completed
  * here must not come back the next time this runs.
  *
@@ -82,9 +82,9 @@ function todosToImport(requestedTasks, existingTodos, now = new Date()) {
  * Adds whatever is new, and reports what it added.
  *
  * Returns the original array untouched when there is nothing to do, so the
- * caller can skip saving. That matters more than it looks: this runs on every
- * window focus, and writing unconditionally would rewrite the file — and
- * re-render the task list — every time the user came back to the window.
+ * caller can skip saving. That matters more than it looks: this runs every
+ * thirty seconds, and writing unconditionally would rewrite the file — and
+ * re-render the task list — on every tick.
  *
  * @param {Array} todos
  * @param {Array} requestedTasks
@@ -101,9 +101,7 @@ function importCompanionTasks(todos, requestedTasks, now = new Date()) {
 }
 
 module.exports = {
-  COMPANION_TODO_PREFIX,
   companionTodoId,
   isCompanionTodoId,
-  todosToImport,
   importCompanionTasks,
 };
