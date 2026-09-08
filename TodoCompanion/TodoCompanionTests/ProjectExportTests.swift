@@ -149,6 +149,59 @@ import Testing
         #expect(payload.requestedTasks.isEmpty)
     }
 
+    // MARK: - Standing in until the to-do app catches up
+
+    private func todo(_ id: String, isDone: Bool = false) -> LinkedTodo {
+        LinkedTodo(id: id, title: "Whatever", dueAt: Date().addingTimeInterval(3_600), isDone: isDone)
+    }
+
+    @Test func aReminderTheToDoAppHasNotSeenYetStandsInForItself() throws {
+        // Without this the Apple Reminders mirror deletes it again on the very
+        // next sweep, because `plan` withdraws anything absent from the to-do
+        // app's list — and that app may not even be running.
+        let record = reminder("Record a demo video", dueIn: 600)
+        let standIns = ProjectExport.anticipatedTasks(for: [record], knownTo: [])
+
+        let only = try #require(standIns.first)
+        #expect(standIns.count == 1)
+        #expect(only.title == "Record a demo video")
+        #expect(!only.isDone)
+        // The id the to-do app will independently arrive at, so the later sweep
+        // reconciles instead of mirroring the same reminder twice.
+        #expect(only.id == ProjectExport.importedTaskPrefix + record.reminderIdentifier)
+    }
+
+    @Test func itStopsStandingInOnceTheTaskExists() {
+        let record = reminder("Record a demo video", dueIn: 600)
+        let imported = todo(ProjectExport.importedTaskPrefix + record.reminderIdentifier)
+
+        #expect(ProjectExport.anticipatedTasks(for: [record], knownTo: [imported]).isEmpty)
+    }
+
+    @Test func aTaskCompletedInTheToDoAppIsNotKeptAliveByItsReminder() {
+        // The reminder still exists here, so the naive version would keep
+        // offering it and the mirror would never withdraw something the user
+        // has finished. Known to that app in *any* state is enough to stand down.
+        let record = reminder("Record a demo video", dueIn: 600)
+        let done = todo(ProjectExport.importedTaskPrefix + record.reminderIdentifier, isDone: true)
+
+        #expect(ProjectExport.anticipatedTasks(for: [record], knownTo: [done]).isEmpty)
+    }
+
+    @Test func aLongStaleReminderStopsStandingIn() {
+        // Same bound as the export: a task deleted in the other app must not be
+        // resurrected on every launch forever.
+        let record = reminder("Ancient", dueIn: -(ProjectExport.offerWindowAfterDue + 3_600))
+
+        #expect(ProjectExport.anticipatedTasks(for: [record], knownTo: []).isEmpty)
+    }
+
+    @Test func aSaveWithNoReminderNeverStandsIn() {
+        let record = SavedContext(intent: "Just keeping this", imageData: Data(), sourceApp: "Safari")
+
+        #expect(ProjectExport.anticipatedTasks(for: [record], knownTo: []).isEmpty)
+    }
+
     @Test func aFiledReminderJoinsItsProjectsTaskList() throws {
         // So a task created from the reminder carries the project's label in
         // the other app, through the labelling that already exists there rather

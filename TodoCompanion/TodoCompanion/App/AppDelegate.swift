@@ -27,6 +27,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Anything captured on the phone while this Mac was asleep is waiting
         // in the folder, so launch is the moment to collect it.
         InboxImporter.importAll(into: ContextStore.shared.mainContext)
+
+        mirrorTasksToAppleReminders()
+    }
+
+    /// Catches up the Apple Reminders list without waiting to be summoned.
+    ///
+    /// The mirror otherwise runs only on summon, which is the wrong moment for
+    /// the one thing it is for: a reminder set just before the lid closes is
+    /// still due when the Mac comes back, and nothing would have told the phone
+    /// because nobody pressed the hotkey in between. Launch is also when the
+    /// to-do app's file is most likely to have moved on without this app
+    /// looking — it is a different process, and it has been writing while this
+    /// one was not running.
+    ///
+    /// Still not a background poll: it happens once, at launch, in the same
+    /// place the phone inbox is collected, rather than on a timer.
+    private func mirrorTasksToAppleReminders() {
+        guard AppSettings.mirrorsToAppleReminders, AppleReminders.isAuthorized else { return }
+
+        let work = TodoBridge.load()
+        let todos = work.todos + ProjectExport.anticipatedTasks(
+            for: ProjectExport.pendingReminders(in: ContextStore.shared.mainContext),
+            knownTo: work.todos
+        )
+
+        Task {
+            do {
+                let armed = try await AppleReminders.sync(openTodos: todos,
+                                                          quietHours: work.quietHours)
+                // Apple announces what it has taken on, so this app must not
+                // also announce it — the same rule the panel applies on summon.
+                for identifier in ProjectExport.reminderIdentifiers(inTaskIDs: armed) {
+                    Reminders.cancel(id: identifier)
+                }
+            } catch {
+                // Nothing is on screen at launch to tell, and Settings is where
+                // the state of this is reported.
+                NSLog("[AppleReminders] launch mirror failed: \(error)")
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

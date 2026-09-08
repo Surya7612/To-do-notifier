@@ -203,6 +203,22 @@ the same publish-only footing as `ProjectExport` — completion is never read ba
 make Reminders a second source of truth for what is done. Off by default, since it is the only feature
 here that puts the user's task titles into another company's sync.
 
+**The mirror runs at launch and when a reminder is set, not only on summon.** Tying it to the summon
+alone broke it in its own motivating case: a reminder reaches Apple only after the to-do app has turned
+it into a task and this app has been summoned *again* to read it back, and "remind me in two hours" is
+usually said just before walking away from the Mac. There was no next summon, so the phone was never
+told. `AppDelegate` therefore sweeps once at launch, beside the phone-inbox import, and
+`saveCurrentContext` hands a new reminder over immediately. Still not a background poll — it acts when
+something happens, not on a timer.
+
+That early hand-over needs `ProjectExport.anticipatedTasks`, and the reason is not obvious:
+`ReminderMirror.plan` withdraws anything absent from the to-do app's open list, so a reminder given to
+Apple before that app created the task would be **deleted by the very next sweep** — and that app may
+not be running at all. So a reminder stands in for itself, under the `companion:` id the importer will
+independently arrive at, until the real task appears and reconciles. It stands down as soon as the id
+is known over there in *any* state, which is what lets a task the user completed withdraw normally
+instead of being kept alive by the reminder that created it.
+
 Four things about it are load-bearing. **Only tasks still ahead of us are copied**: an `EKAlarm` whose
 date has passed is delivered as soon as it syncs, so mirroring a backlog would fire every overdue task
 at once on every device the moment the switch was flipped. **Withdrawal keys on the task leaving the

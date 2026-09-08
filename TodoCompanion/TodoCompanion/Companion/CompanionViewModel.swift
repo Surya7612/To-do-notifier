@@ -758,6 +758,10 @@ final class CompanionViewModel {
 
         if let reminder {
             scheduleReminder(for: record, at: reminder, destination: destination, tagSuffix: tagSuffix)
+            // Handed to Apple now rather than on the next summon: this is
+            // usually said just before walking away from the Mac, which is the
+            // one case where there is no next summon.
+            mirrorTasksToAppleReminders()
         }
     }
 
@@ -772,7 +776,13 @@ final class CompanionViewModel {
     private func mirrorTasksToAppleReminders() {
         guard AppSettings.mirrorsToAppleReminders, AppleReminders.isAuthorized else { return }
 
-        let todos = linkedWork.todos
+        // Reminders set here stand in for themselves until the to-do app has
+        // turned them into tasks. Ahead of it rather than instead of it: the
+        // same id arrives from `TodoBridge` later and reconciles.
+        let todos = linkedWork.todos + ProjectExport.anticipatedTasks(
+            for: ProjectExport.pendingReminders(in: modelContext),
+            knownTo: linkedWork.todos
+        )
         let quietHours = linkedWork.quietHours
 
         Task {
