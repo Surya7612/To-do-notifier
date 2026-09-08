@@ -96,7 +96,9 @@ struct LibraryView: View {
         guard !Task.isCancelled else { return }
 
         let brain = OllamaBrain(endpoint: AppSettings.endpoint, model: AppSettings.model)
-        guard let vector = try? await brain.embed(term, model: AppSettings.embeddingModel) else {
+        let embeddingModel = AppSettings.embeddingModel
+        let prepared = Embedding.prepared(term, as: .query, for: embeddingModel)
+        guard let vector = try? await brain.embed(prepared, model: embeddingModel) else {
             semanticMatchIDs = []
             return
         }

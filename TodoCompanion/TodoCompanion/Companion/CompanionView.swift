@@ -18,6 +18,16 @@ struct CompanionView: View {
     @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
     @AppStorage(AppSettings.Key.sendsImage) private var sendsImage = false
 
+    /// Observed but never read, purely so that changing a model in Settings
+    /// while the panel is open invalidates this view. The badge keeps taking its
+    /// text from `viewModel.destination`, which derives it from the same facts
+    /// `makeBrain()` uses; recomputing it here instead would let the badge and
+    /// the answering model drift apart, which is the bug `AnswerDestination`
+    /// exists to prevent. Without these the label stayed on the old model until
+    /// some unrelated change forced a redraw.
+    @AppStorage(AppSettings.Key.openAIModel) private var observedCloudModel = ""
+    @AppStorage(AppSettings.Key.model) private var observedLocalModel = ""
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.normal) {
             header

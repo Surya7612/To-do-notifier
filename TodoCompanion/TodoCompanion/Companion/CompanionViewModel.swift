@@ -272,7 +272,9 @@ final class CompanionViewModel {
             .joined(separator: "\n")
         guard !query.isEmpty else { return }
 
-        guard let vector = try? await localBrain().embed(query, model: AppSettings.embeddingModel) else {
+        let embeddingModel = AppSettings.embeddingModel
+        let prepared = Embedding.prepared(query, as: .query, for: embeddingModel)
+        guard let vector = try? await localBrain().embed(prepared, model: embeddingModel) else {
             return
         }
         guard !Task.isCancelled, observation.contextLabel == self.observation?.contextLabel else {
@@ -860,13 +862,14 @@ final class CompanionViewModel {
         guard AppSettings.semanticEnabled else { return }
 
         let model = AppSettings.embeddingModel
-        guard record.needsEmbedding(for: model) else { return }
+        guard record.needsEmbedding(for: Embedding.identifier(for: model)) else { return }
 
-        guard let vector = try? await localBrain().embed(record.embeddingSource, model: model) else {
+        let prepared = Embedding.prepared(record.embeddingSource, as: .document, for: model)
+        guard let vector = try? await localBrain().embed(prepared, model: model) else {
             return
         }
         record.embeddingData = vector.data
-        record.embeddingModel = model
+        record.embeddingModel = Embedding.identifier(for: model)
         try? modelContext.save()
     }
 
@@ -879,9 +882,9 @@ final class CompanionViewModel {
     private func backfillEmbeddings() {
         guard AppSettings.semanticEnabled else { return }
 
-        let model = AppSettings.embeddingModel
+        let identifier = Embedding.identifier(for: AppSettings.embeddingModel)
         let pending = recentContexts()
-            .filter { $0.needsEmbedding(for: model) }
+            .filter { $0.needsEmbedding(for: identifier) }
             .prefix(8)
         guard !pending.isEmpty else { return }
 

@@ -14,11 +14,13 @@ struct OpenAIModelChoiceTests {
         #expect(OpenAIModelChoice.selection(for: "gpt-6-something") == .custom)
     }
 
-    /// The stored setting on an existing install. Without an entry it would
-    /// show as "Custom…", which reads as though the user typed it.
-    @Test("the legacy default is listed, so an existing setting appears as itself")
-    func legacyDefaultIsListed() {
+    /// `gpt-4o-mini` is still the stored setting on any install predating the
+    /// picker. Without an entry it would show as "Custom…", which reads as
+    /// though the user typed it.
+    @Test("both the current default and the one it replaced are listed")
+    func defaultsAreListed() {
         #expect(OpenAIModelChoice.named(OpenAIBrain.defaultModel) != nil)
+        #expect(OpenAIModelChoice.named("gpt-4o-mini") != nil, "still stored on older installs")
     }
 
     @Test("every listed model has a distinct API name")
