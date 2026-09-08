@@ -560,12 +560,20 @@ that button, so the user sees which words will be boxed before anything is drawn
 
 Matching is deliberately reluctant: a **quoted** label outranks everything, since `Prompt.system` asks
 Max to quote a control's label character for character, and that is the model stating what it meant
-rather than us inferring it from prose. An unquoted candidate must be six characters or multi-word and
-must not be one of `descriptiveWords` — "menu", "panel", "button" are how Max talks *about* controls, so
-matching them points at whatever unrelated place the word happens to be printed. An unlabelled glyph is
-therefore unfindable, which is the right failure: Max describes those positionally, and a confident box
-over the wrong icon is worse than no box. If a change would let an unexplained or unquoted guess draw on
-the screen, it is the wrong change.
+rather than us inferring it from prose. An unquoted candidate must be six characters or multi-word, must
+not be one of `descriptiveWords` — "menu", "panel", "button" are how Max talks *about* controls, so
+matching them points at whatever unrelated place the word happens to be printed — and must be
+**printed on screen the way a label is printed**, meaning a capital, an interior capital or a digit.
+
+That last rule replaced length doing the job alone, which was a poor proxy for being a name: "should",
+"before" and "because" all clear six characters. The observed failure was Max asking "When should I
+remind you?" and offering to point at "should" wherever it appeared. The cost is that an entirely
+lowercase label is now unfindable, which is the cheaper mistake — no box, rather than a confident one
+over unrelated running text — and quoting still overrides it, since that is Max stating what it meant.
+
+An unlabelled glyph is likewise unfindable, which is the right failure: Max describes those
+positionally, and a confident box over the wrong icon is worse than no box. If a change would let an
+unexplained or unquoted guess draw on the screen, it is the wrong change.
 
 ## Key files — `TodoCompanion/TodoCompanion/`
 

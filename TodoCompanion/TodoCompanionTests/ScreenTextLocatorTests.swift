@@ -55,6 +55,59 @@ struct ScreenTextLocatorTests {
         #expect(match.text == "Fairlight")
     }
 
+    @Test("an ordinary word long enough to clear the floor is still not believed")
+    func longOrdinaryWordIsIgnored() {
+        // The observed failure: Max replied "When should I remind you to record
+        // the demo?" and offered to point at "should", which is six characters
+        // and so cleared the length floor that was standing in for being a name.
+        let regions = [
+            TextRegion(string: "should", boundingBox: .init(x: 0.2, y: 0.4, width: 0.06, height: 0.02),
+                       line: 4, position: 0),
+        ]
+
+        #expect(ScreenTextLocator.locate(named: "When should I remind you to record the demo?",
+                                         in: regions) == nil)
+    }
+
+    @Test("a lowercase word is not offered, because prose is printed that way and labels are not")
+    func lowercaseRunningTextIsIgnored() {
+        // Gives up on a genuinely lowercase label, which is the cheaper mistake:
+        // no box, rather than a confident one over unrelated running text.
+        let regions = [
+            TextRegion(string: "duration", boundingBox: .init(x: 0.2, y: 0.4, width: 0.08, height: 0.02),
+                       line: 2, position: 0),
+        ]
+
+        #expect(ScreenTextLocator.locate(named: "Set the duration to four seconds.", in: regions) == nil)
+    }
+
+    @Test("an identifier still counts, since a digit or interior capital is never prose")
+    func identifierMatches() throws {
+        let regions = [
+            TextRegion(string: "qwen3", boundingBox: .init(x: 0.2, y: 0.4, width: 0.05, height: 0.02),
+                       line: 2, position: 0),
+            TextRegion(string: "SwiftData", boundingBox: .init(x: 0.3, y: 0.4, width: 0.09, height: 0.02),
+                       line: 2, position: 1),
+        ]
+
+        let match = try #require(ScreenTextLocator.locate(named: "The SwiftData store holds it.", in: regions))
+        #expect(match.text == "SwiftData")
+    }
+
+    @Test("quoting still wins, even for a word that would otherwise be refused")
+    func quotingOverridesTheLabelShape() throws {
+        // Max quoting a label character for character is Max stating what it
+        // meant, which outranks every inference this file makes.
+        let regions = [
+            TextRegion(string: "should", boundingBox: .init(x: 0.2, y: 0.4, width: 0.06, height: 0.02),
+                       line: 4, position: 0),
+        ]
+
+        let match = try #require(ScreenTextLocator.locate(named: "The word \"should\" on line four.",
+                                                          in: regions))
+        #expect(match.text == "should")
+    }
+
     @Test("a match inside a longer word does not count")
     func respectsWordBoundaries() {
         let regions = [TextRegion(string: "Color", boundingBox: .init(x: 0, y: 0, width: 0.1, height: 0.1),
