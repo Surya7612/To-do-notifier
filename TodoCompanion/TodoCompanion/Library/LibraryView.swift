@@ -5,26 +5,71 @@ struct LibraryView: View {
     @Query(sort: \SavedContext.createdAt, order: .reverse)
     private var contexts: [SavedContext]
 
+    @Query(sort: \Project.name)
+    private var projects: [Project]
+
     @Environment(\.modelContext) private var modelContext
 
     @State private var search = ""
     @State private var selection: SavedContext?
+    @State private var scope: Scope = .everything
+    @State private var isNamingProject = false
+    @State private var isRenamingProject = false
+    @State private var projectName = ""
+
+    /// The other app's tasks, re-read whenever the shown project changes. It
+    /// owns that file and can change it while this window is open.
+    @State private var work = LinkedWork()
+
+    /// Which slice of the library the sidebar is showing.
+    private enum Scope: Hashable {
+        case everything
+        case project(String)
+        case unfiled
+    }
+
+    private var inScope: [SavedContext] {
+        switch scope {
+        case .everything:
+            return contexts
+        case .unfiled:
+            return contexts.filter { $0.project == nil }
+        case let .project(identifier):
+            return contexts.filter { $0.project?.identifier == identifier }
+        }
+    }
 
     private var filtered: [SavedContext] {
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !term.isEmpty else { return contexts }
-        return contexts.filter {
+        guard !term.isEmpty else { return inScope }
+        return inScope.filter {
             $0.searchHaystack.localizedCaseInsensitiveContains(term)
+        }
+    }
+
+    private var scopeTitle: String {
+        switch scope {
+        case .everything: return "Everything"
+        case .unfiled: return "No project"
+        case let .project(identifier):
+            return projects.first { $0.identifier == identifier }?.name ?? "Project"
         }
     }
 
     var body: some View {
         NavigationSplitView {
-            list
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+            VStack(spacing: 0) {
+                scopePicker
+                Divider()
+                list
+            }
+            .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         } detail: {
             if let selection {
                 ContextDetailView(context: selection)
+            } else if case let .project(identifier) = scope,
+                      let project = projects.first(where: { $0.identifier == identifier }) {
+                ProjectOverview(project: project, work: work)
             } else {
                 ContentUnavailableView(
                     "Nothing selected",
@@ -33,8 +78,99 @@ struct LibraryView: View {
                 )
             }
         }
+        .task(id: scope) { work = TodoBridge.load() }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")
         .frame(minWidth: 820, minHeight: 520)
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button("New project…") { isNamingProject = true }
+                    if case let .project(identifier) = scope,
+                       let project = projects.first(where: { $0.identifier == identifier }) {
+                        Divider()
+                        Button("Rename \(project.name)…") {
+                            projectName = project.name
+                            isRenamingProject = true
+                        }
+                        // Saves survive: the relationship nullifies rather than
+                        // cascading, so deleting a project unfiles its contents
+                        // instead of destroying them.
+                        Button("Delete \(project.name)", role: .destructive) {
+                            delete(project)
+                        }
+                    }
+                } label: {
+                    Label("Projects", systemImage: "folder.badge.gearshape")
+                }
+            }
+        }
+        .alert("New project", isPresented: $isNamingProject) {
+            TextField("Name", text: $projectName)
+            Button("Cancel", role: .cancel) { projectName = "" }
+            Button("Create") { createProject() }
+        }
+        .alert("Rename project", isPresented: $isRenamingProject) {
+            TextField("Name", text: $projectName)
+            Button("Cancel", role: .cancel) { projectName = "" }
+            Button("Rename") { renameCurrentProject() }
+        }
+    }
+
+    private func createProject() {
+        let name = Project.normalize(projectName)
+        projectName = ""
+        guard !name.isEmpty,
+              !projects.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame })
+        else { return }
+
+        let project = Project(name: name)
+        modelContext.insert(project)
+        try? modelContext.save()
+        scope = .project(project.identifier)
+    }
+
+    private func renameCurrentProject() {
+        let name = Project.normalize(projectName)
+        projectName = ""
+        guard !name.isEmpty,
+              case let .project(identifier) = scope,
+              let project = projects.first(where: { $0.identifier == identifier })
+        else { return }
+
+        project.name = name
+        try? modelContext.save()
+    }
+
+    private func delete(_ project: Project) {
+        // The panel remembers a project by identifier, so a stale selection
+        // would otherwise keep pointing at something gone.
+        if AppSettings.currentProjectID == project.identifier {
+            AppSettings.currentProjectID = nil
+        }
+        scope = .everything
+        modelContext.delete(project)
+        try? modelContext.save()
+    }
+
+    /// Projects live above the list rather than as a second sidebar column: with
+    /// a handful of projects a whole column is mostly empty space.
+    private var scopePicker: some View {
+        HStack(spacing: DS.Spacing.tight) {
+            Picker("Show", selection: $scope) {
+                Text("Everything (\(contexts.count))").tag(Scope.everything)
+                ForEach(projects) { project in
+                    Text("\(project.name) (\(project.contexts.count))")
+                        .tag(Scope.project(project.identifier))
+                }
+                let unfiled = contexts.count { $0.project == nil }
+                if unfiled > 0 {
+                    Text("No project (\(unfiled))").tag(Scope.unfiled)
+                }
+            }
+            .labelsHidden()
+        }
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.tight)
     }
 
     @ViewBuilder
@@ -45,8 +181,14 @@ struct LibraryView: View {
                 systemImage: "bookmark",
                 description: Text("Press \(AppSettings.hotkey.displayName), type why a screen matters, then ⌘S.")
             )
-        } else if filtered.isEmpty {
+        } else if filtered.isEmpty, !search.trimmingCharacters(in: .whitespaces).isEmpty {
             ContentUnavailableView.search(text: search)
+        } else if filtered.isEmpty {
+            ContentUnavailableView(
+                "Nothing in \(scopeTitle)",
+                systemImage: "folder",
+                description: Text("Pick this project in the panel before saving, or move something here.")
+            )
         } else {
             List(filtered, id: \.persistentModelID, selection: $selection) { context in
                 NavigationLink(value: context) {
@@ -60,6 +202,144 @@ struct LibraryView: View {
     }
 }
 
+/// A project seen whole: what the user kept, and what they still have to do.
+///
+/// The tasks come from the To-Do Notifier and are only ever read. Which tasks
+/// belong to a project is this app's own idea, so it is stored here rather than
+/// written back into a file another app owns.
+private struct ProjectOverview: View {
+    let project: Project
+    let work: LinkedWork
+
+    @Environment(\.modelContext) private var modelContext
+    @State private var isPickingTasks = false
+
+    private var linked: [LinkedTodo] { work.todos(withIDs: project.linkedTodoIDs) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(project.name)
+                    .font(.largeTitle.weight(.semibold))
+
+                tasksSection
+                keptSection
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var tasksSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Still to do")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .textCase(.uppercase)
+                Spacer()
+                Button("Choose tasks…") { isPickingTasks = true }
+                    .font(.caption)
+                    .disabled(work.todos.isEmpty)
+            }
+
+            if !TodoBridge.isLinked {
+                Text("Link your To-Do Notifier data in Settings to see tasks here.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if linked.isEmpty {
+                Text("No tasks assigned to this project yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(linked) { todo in
+                    HStack(spacing: 8) {
+                        Image(systemName: todo.isDone ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(todo.isDone ? Color.secondary : DS.Status.ready)
+                        Text(todo.title)
+                            .strikethrough(todo.isDone)
+                            .foregroundStyle(todo.isDone ? .secondary : .primary)
+                        if let due = todo.dueAt {
+                            Text(due.formatted(.relative(presentation: .named)))
+                                .font(.caption)
+                                .foregroundStyle(todo.isOverdue ? DS.Status.problem : Color.secondary)
+                        }
+                    }
+                    .font(.callout)
+                }
+
+                // Completing a task belongs in the app that owns tasks.
+                Text("Tick these off in the To-Do Notifier — this view only reads them.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .popover(isPresented: $isPickingTasks, arrowEdge: .bottom) {
+            taskPicker
+        }
+    }
+
+    private var taskPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tasks in \(project.name)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(work.todos) { todo in
+                        Toggle(isOn: binding(for: todo)) {
+                            Text(todo.title).lineLimit(1)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+            }
+            .frame(width: 320, height: 260)
+        }
+        .padding(DS.Spacing.normal)
+    }
+
+    private func binding(for todo: LinkedTodo) -> Binding<Bool> {
+        Binding(
+            get: { project.linkedTodoIDs.contains(todo.id) },
+            set: { isOn in
+                if isOn {
+                    guard !project.linkedTodoIDs.contains(todo.id) else { return }
+                    project.linkedTodoIDs.append(todo.id)
+                } else {
+                    project.linkedTodoIDs.removeAll { $0 == todo.id }
+                }
+                try? modelContext.save()
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var keptSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Kept for this project")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+
+            if project.contexts.isEmpty {
+                Text("Choose this project in the panel before saving a screen.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(project.contexts.sorted { $0.createdAt > $1.createdAt },
+                        id: \.persistentModelID) { context in
+                    LibraryRow(context: context)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct LibraryRow: View {
     let context: SavedContext
 
@@ -70,13 +350,26 @@ private struct LibraryRow: View {
                 Text(context.intent)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text(context.provenanceLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: DS.Spacing.hair) {
+                    if let project = context.project {
+                        Label(project.name, systemImage: "folder.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.tint)
+                            .lineLimit(1)
+                    }
+                    Text(context.provenanceLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Text(context.createdAt.formatted(.relative(presentation: .named)))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                if context.hasPendingReminder, let remindAt = context.remindAt {
+                    Label(CompanionViewModel.reminderFormat(remindAt), systemImage: "bell.fill")
+                        .font(.caption2)
+                        .foregroundStyle(DS.Status.saved)
+                }
             }
         }
         .padding(.vertical, 3)
@@ -101,6 +394,7 @@ private struct LibraryRow: View {
 private struct ContextDetailView: View {
     let context: SavedContext
 
+    @Query(sort: \Project.name) private var projects: [Project]
     @Environment(\.modelContext) private var modelContext
     @State private var showingFullText = false
 
@@ -124,6 +418,17 @@ private struct ContextDetailView: View {
                         .textSelection(.enabled)
                 }
 
+                section("Project") {
+                    Picker("Project", selection: projectBinding) {
+                        Text("No project").tag(nil as String?)
+                        ForEach(projects) { project in
+                            Text(project.name).tag(project.identifier as String?)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
                 if !context.topics.isEmpty {
                     section("Topics") {
                         HStack(spacing: 6) {
@@ -144,6 +449,30 @@ private struct ContextDetailView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                    }
+                }
+
+                if let remindAt = context.remindAt {
+                    section("Reminder") {
+                        HStack(spacing: 10) {
+                            Label(CompanionViewModel.reminderFormat(remindAt),
+                                  systemImage: context.hasPendingReminder ? "bell.fill" : "bell.slash")
+                                .font(.callout)
+                                .foregroundStyle(context.hasPendingReminder ? DS.Status.saved : Color.secondary)
+
+                            if context.hasPendingReminder {
+                                Button("Cancel") {
+                                    Reminders.cancel(id: context.reminderIdentifier)
+                                    context.remindAt = nil
+                                    try? modelContext.save()
+                                }
+                                .font(.caption)
+                            } else {
+                                Text("already passed")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
                     }
                 }
 
@@ -177,6 +506,9 @@ private struct ContextDetailView: View {
         .toolbar {
             ToolbarItem(placement: .destructiveAction) {
                 Button(role: .destructive) {
+                    // Otherwise the notification still fires for something the
+                    // user has deleted, and nothing can cancel it afterwards.
+                    Reminders.cancel(id: context.reminderIdentifier)
                     modelContext.delete(context)
                     try? modelContext.save()
                 } label: {
@@ -185,6 +517,18 @@ private struct ContextDetailView: View {
                 .help("Delete this saved context")
             }
         }
+    }
+
+    /// Bound by identifier rather than by `Project` so the picker does not need
+    /// the model objects to be `Hashable` in a way SwiftData does not promise.
+    private var projectBinding: Binding<String?> {
+        Binding(
+            get: { context.project?.identifier },
+            set: { identifier in
+                context.project = projects.first { $0.identifier == identifier }
+                try? modelContext.save()
+            }
+        )
     }
 
     @ViewBuilder

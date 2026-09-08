@@ -23,6 +23,7 @@ enum ContextRetriever {
 
     static func related(to observation: ScreenObservation,
                         among candidates: [SavedContext],
+                        inProject activeProject: Project? = nil,
                         limit: Int = 3,
                         now: Date = Date()) -> [RetrievalMatch] {
         let screenTokens = tokenize(observation.recognizedText)
@@ -36,6 +37,14 @@ enum ContextRetriever {
         for candidate in candidates {
             var score = 0.0
             var reasons: [String] = []
+
+            // Worth more than any single screen signal, because the user said
+            // this is what they are working on. It is a stated fact rather than
+            // something read off the pixels.
+            if let activeProject, candidate.project?.identifier == activeProject.identifier {
+                score += 3.5
+                reasons.append("in \(activeProject.name)")
+            }
 
             // A topic the user chose, literally present on screen now.
             let hitTopics = candidate.topics.filter { visible.contains($0) }
@@ -52,9 +61,13 @@ enum ContextRetriever {
                 reasons.append("same app")
             }
 
+            // 1.2 rather than 1.0 so that two distinctive shared words clear the
+            // threshold on their own. At 0.8 it took three, which made the best
+            // signal available — the user's own reason echoing what is on screen
+            // — weaker than the weakest one, being in the same application.
             let overlap = tokenize(candidate.intent).intersection(visible)
             if !overlap.isEmpty {
-                score += min(3.0, 0.8 * Double(overlap.count))
+                score += min(3.0, 1.2 * Double(overlap.count))
                 reasons.append("mentions \(overlap.sorted().prefix(2).joined(separator: ", "))")
             }
 

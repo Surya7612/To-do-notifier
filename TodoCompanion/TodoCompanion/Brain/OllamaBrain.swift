@@ -1,60 +1,26 @@
 import Foundation
 
-enum BrainError: LocalizedError {
-    case unreachable
-    case http(Int, String)
-
-    var errorDescription: String? {
-        switch self {
-        case .unreachable:
-            "Can't reach Ollama. Start it with `ollama serve`, then try again."
-        case let .http(code, detail):
-            "Ollama returned \(code): \(detail)"
-        }
-    }
-}
-
 /// Streams a reply from a local Ollama model. Text-only models get OCR text;
 /// vision models can receive the screenshot itself.
-struct OllamaBrain {
+struct OllamaBrain: Brain {
     let endpoint: URL
     let model: String
 
-    private static let system = """
-    You are a concise desktop companion. You are shown what is currently on the user's screen, \
-    any notes the user saved earlier that look related, and their question. Answer directly in \
-    at most four sentences. If you do not know, say that instead of guessing.
+    var label: String { model }
+    var leavesTheMachine: Bool { false }
 
-    The "Active window" line is ground truth for which application the user is in; it comes from \
-    the operating system, not from looking at pixels. Never contradict it. If that application is \
-    displaying something else — a screenshot, a PDF, a video, a design mockup — then the user is \
-    working in the active window and merely looking at that content. Say so in those terms rather \
-    than claiming the screen is the thing being displayed.
-
-    The user's own saved notes outrank your reading of the screen — if they conflict, trust the \
-    note and say so. Saved notes are background, not the question; do not bring one up unless it \
-    bears on what was actually asked.
-    """
-
-    func answerStream(question: String,
-                      observation: ScreenObservation?,
-                      memories: [String] = [],
-                      includeImage: Bool)
-        -> AsyncThrowingStream<String, Error> {
+    func answerStream(question: String, context: AskContext) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     var body: [String: Any] = [
                         "model": model,
-                        "system": Self.system,
-                        "prompt": Self.prompt(question: question,
-                                              observation: observation,
-                                              memories: memories,
-                                              includeImage: includeImage),
+                        "system": Prompt.system,
+                        "prompt": Prompt.user(question: question, context: context),
                         "stream": true,
                     ]
-                    if includeImage,
-                       let image = observation?.image,
+                    if context.includeImage,
+                       let image = context.observation?.image,
                        let encoded = ImageCodec.base64PNG(from: image) {
                         body["images"] = [encoded]
                     }
@@ -90,27 +56,14 @@ struct OllamaBrain {
         }
     }
 
-    private static func prompt(question: String,
-                               observation: ScreenObservation?,
-                               memories: [String],
-                               includeImage: Bool) -> String {
-        var parts: [String] = []
-        if let observation {
-            parts.append("Active window: \(observation.contextLabel)")
-            if !includeImage, !observation.recognizedText.isEmpty {
-                parts.append("Text visible on screen:\n\(observation.recognizedText)")
-            }
-        }
-        if !memories.isEmpty {
-            parts.append("The user saved these earlier, in their own words:\n"
-                         + memories.joined(separator: "\n"))
-        }
-        parts.append("Question: \(question)")
-        return parts.joined(separator: "\n\n")
-    }
-
     /// One-line gloss stored alongside a saved context. Kept separate from the
     /// user's own stated intent.
+    ///
+    /// Deliberately lives here rather than on `Brain`: summaries are generated
+    /// in the background across everything the user keeps, and that body of
+    /// material should never be shipped to a third party. Compressing OCR text
+    /// into a sentence is also something a small local model does perfectly
+    /// well, so there is no quality argument for sending it anywhere.
     func summarize(intent: String, screenText: String) async throws -> String {
         let prompt = """
         The user saved a screenshot and explained why in their own words.
@@ -124,7 +77,7 @@ struct OllamaBrain {
         """
 
         var collected = ""
-        let stream = answerStream(question: prompt, observation: nil, includeImage: false)
+        let stream = answerStream(question: prompt, context: AskContext())
         for try await chunk in stream { collected += chunk }
         return collected.trimmingCharacters(in: .whitespacesAndNewlines)
     }

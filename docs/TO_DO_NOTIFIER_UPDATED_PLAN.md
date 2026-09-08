@@ -45,6 +45,91 @@ The goal is **not** "Clicky + more features."
 
 The goal is to use native Mac embodiment as one surface for a broader personal context system.
 
+#### Second pass — after the companion was working
+
+Re-reading Clicky's `AGENTS.md` once our own app existed surfaced things worth
+taking that were not obvious before there was code to compare against.
+
+**Adopted:**
+
+| Borrowed | Why it earned its place |
+|---|---|
+| `AGENTS.md` at the repo root | Architecture, key-file table, conventions, and self-update rules. Every agent session was re-deriving the architecture from scratch. Ours also records the no-AI-attribution rule and the hotkey and TCC traps. |
+| Click-outside-to-dismiss | Every other floating panel on the system does this. Ours only closed on Esc, so it hung over whatever you switched to. Mouse-only monitor, so it still needs no Accessibility permission. |
+| `LSUIElement` in Info.plist | We set `.accessory` programmatically, which works but flashes a dock icon at launch. Declaring it removes the flash. |
+| Live audio level → waveform | Clicky drives a waveform from mic levels. Our silence watchdog was already computing peak amplitude and discarding it, so the listening ring now breathes with your voice. Silence looks like silence. |
+| Multi-monitor capture | Already listed above as a Clicky idea, but unimplemented — we only grabbed the display under the cursor. The second monitor usually holds the documentation or terminal the question is actually about. |
+| A design tokens file | Clicky's `DesignSystem.swift`. Ours is smaller, but the panel, library, and cursor ring are separately-authored surfaces that need to look like one app. |
+| A release script | Clicky's `scripts/release.sh`, reduced to the steps a free Apple account can perform. See "Distribution reality" below. |
+
+**Rejected, with reasons:**
+
+| Not taken | Why not |
+|---|---|
+| Cursor pointing (`[POINT:x,y:label]`, bezier arcs to UI elements) | Clicky's signature feature and its most demo-friendly, but it serves tutoring. Our north star is connecting current activity to past intent. This is the clearest case of "Clicky + more features" and is exactly what §2 warns against. |
+| Global push-to-talk via `CGEvent` tap | Requires Accessibility permission. We chose Carbon hot keys specifically to avoid that, and "clear permission boundaries" is a stated privacy principle. Not worth trading for a nicer dictation trigger. |
+| AssemblyAI / OpenAI transcription providers | Both stream your voice off the machine. Apple's on-device recognizer is less accurate, and local-first is a product constraint rather than a default to trade away for accuracy. |
+| PostHog analytics | Contradicts "do not silently collect everything". |
+| Cloudflare Worker API proxy | Solves a problem we do not have: there are no API keys to hide when the model is local Ollama. Revisit only if a cloud model is ever added. |
+| Sparkle auto-updates | Needs Developer ID signing and notarization. See below. |
+
+**One inherited rule we should not copy.** Clicky's `AGENTS.md` says never run
+`xcodebuild` from the terminal because it invalidates TCC permissions. That was
+true for us under ad-hoc signing — it is the bug behind the "app needs
+permission" loop in Phase 4. Once `DEVELOPMENT_TEAM` was set, TCC keys on the
+stable signing identity instead of a per-build hash, and terminal builds became
+safe. Our `AGENTS.md` says so explicitly so the rule is not cargo-culted.
+
+#### Third pass — a cloud model, region selection, and the bridge
+
+Two of the three rejections above were revisited once the local model's ceiling
+became obvious in practice. Asked what was on screen, it described an editor
+displaying a screenshot as "a To-Do-Notifier application" — a plausible sentence
+about the wrong thing. Remembering survives that. Explaining a concept does not.
+
+**A cloud provider, scoped by a rule rather than a preference.** OpenAI is now
+selectable, and §12 already allowed for it: "local-first by *default*", "minimal
+cloud data", "API keys in Keychain". The rule that keeps it honest is narrower
+than a toggle:
+
+> A cloud model may answer a question the user explicitly asked.
+> It may never do background work.
+
+Summaries are generated unprompted, across everything the user ever keeps, and
+that accumulated picture of a working life is precisely what should not be
+exported — while compressing OCR into one sentence is something a small local
+model does perfectly well, so there is no quality argument either. This is
+enforced by the type system, not by discipline: `summarize` is absent from the
+`Brain` protocol and exists only on `OllamaBrain`, so no cloud provider can be
+attached to it. Ollama remains the default, the key lives in the Keychain, and
+the panel carries a standing badge naming who will answer.
+
+**Region selection, which is not the rejected pointing feature.** Clicky has the
+*model* point at UI elements. This has the *user* point, which needs no
+coordinate mapping, no animation, and no multi-monitor arithmetic. It also costs
+nothing at capture time: the screenshot is already in memory from the summon, so
+selecting a region is a crop rather than a second capture, which cannot flicker
+and cannot race a screen that changed in between. Two presets — *Explain this*
+and *What's the next step?* — cover the questions worth a shortcut.
+
+**Phase 3 finally exists.** Until now the two apps in this repository had never
+exchanged a byte, despite the whole premise being one personal context system.
+`TodoBridge` reads the Electron app's `app-data.json` and feeds open tasks into
+the prompt, so "what should I work on" has something real to answer from. The
+companion is sandboxed and cannot reach `~/Library/Application Support` on its
+own; rather than switching the sandbox off, the user points at the file once and
+a security-scoped bookmark carries the grant forward. Read-only, always.
+
+#### Distribution reality
+
+The full Clicky release pipeline — Developer ID export, Apple notarization,
+stapling, Sparkle EdDSA signing, appcast — requires the paid Apple Developer
+Program at $99/year. The available signing identity is `Apple Development`
+only. `scripts/release-companion.sh` therefore stops at: archive, export, DMG,
+GitHub release, and tells downloaders in the generated release notes that they
+must right-click → Open once, and why. The three missing commands are recorded
+in the script's header so the gap closes cheaply if a membership is ever bought.
+
 ---
 
 ### From Engram
@@ -663,10 +748,11 @@ for when a vision model is pulled.
 
 Still open from this phase:
 
-- [ ] Visual "listening"/streaming animation beyond the status dot
+- [x] Visual "listening"/streaming animation beyond the status dot (a ring at the
+      cursor: blue while capturing, pink with a live audio waveform while listening)
 - [x] Configurable hotkey (a picker of non-reserved combos in Settings)
-- [ ] Multi-monitor: capture the display under the cursor is done; capturing *all*
-      displays for one question is not
+- [x] Multi-monitor: every attached display is captured for one question, with the
+      one under the cursor as primary and the others supplied as labelled text
 
 This teaches:
 
@@ -686,13 +772,23 @@ This teaches:
 
 Add:
 
-- [ ] Push-to-talk
-- [ ] Speech-to-text
-- [ ] Voice response
-- [ ] Visual listening state
-- [ ] Stop / cancel control
+- [x] Push-to-talk (⌘D, or the mic button, toggles a dictation session)
+- [x] Speech-to-text (`SFSpeechRecognizer` forced on-device; the panel says which)
+- [ ] Voice response — not built, and no longer obviously wanted. Reading four
+      sentences aloud is slower than reading them, and the panel is already on
+      screen by the time the answer arrives.
+- [x] Visual listening state (pink ring at the cursor, driven by real input level
+      so a muted or wrong input device is visible rather than silent)
+- [x] Stop / cancel control (⌘D again, Esc, or silence)
 
 Do not add wake-word monitoring immediately.
+
+Two things worth recording from building this. The audio engine has to be
+recreated per session — a retained `AVAudioEngine` caches a zero-channel input
+format and then yields silence forever. And the input level meter turned out to
+matter more than the waveform it draws: dictation failing because the default
+input is a pair of AirPods in another room is indistinguishable from dictation
+being broken, unless the UI shows that no sound is arriving.
 
 ---
 
@@ -729,7 +825,8 @@ Add native capture:
 - [x] AI summary (generated in the background, stored in its own field)
 - [x] Original user intent (authoritative, never overwritten)
 - [x] Search (plain text across intent, summary, topics, app, window, screen text)
-- [ ] Project association (`Project` model and relationship exist; no UI to assign one yet)
+- [x] Project association (chosen in the panel before saving, reassignable in the
+      library, which also browses by project)
 
 **Built on SwiftData**, not Neo4j — per section 7. The schema is two models,
 `SavedContext` and `Project`, with one relationship between them.
@@ -757,7 +854,8 @@ plan's own rule about not adding them before structured retrieval works.
 Add:
 
 - [ ] Semantic search
-- [ ] Project-aware retrieval (needs the project-assignment UI first)
+- [x] Project-aware retrieval (a save in the current project scores 3.5, above
+      any single screen signal, and says so: "in Engram")
 - [x] Time-based retrieval (recency weighting, deliberately weak)
 - [x] Provenance (app and window stored and shown on every match)
 - [x] Related context (scored against the current screen on each summon)
@@ -773,10 +871,11 @@ the current screen using signals the user can reason about:
 
 | Signal | Weight |
 |--------|--------|
+| Belongs to the project the user says they are working on | 3.5 |
 | A `#topic` literally visible on screen | 3.0 each |
 | Same window title | 2.5 |
 | Same application | 2.0 |
-| Words shared between the saved reason and the screen | up to 3.0 |
+| Words shared between the saved reason and the screen | 1.2 each, up to 3.0 |
 | Recency | up to 1.0, decaying over 30 days |
 
 Anything under 2.0 is dropped. Every match carries a human-readable reason
@@ -788,6 +887,15 @@ Embeddings would improve recall but cannot tell you *why* something came back.
 
 Known rough edge to tune with real use: "same app" alone clears the threshold, so
 once there are many saves from one editor the top three may be dominated by it.
+A test pins that behaviour deliberately, so changing it has to be a decision
+rather than a drift.
+
+Writing those tests corrected one of these weights. Shared words were originally
+worth 0.8 each against a threshold of 2.0, which meant the user's own reason had
+to echo **three** distinctive words on screen before it counted for anything —
+while sitting in the same application, which says nothing about relevance,
+qualified on its own at 2.0. The strongest available signal was weaker than the
+weakest one. Two shared words now clear the bar; one still does not.
 
 ---
 
@@ -837,7 +945,25 @@ The goal is:
 
 ## Phase 7 — Remote Reminders
 
-Add a small hosted reminder scheduler.
+Local reminders came first, and they cover most of what this phase was for.
+
+- [x] Reminder on a saved context (`remindAt`, scheduled through
+      `UNUserNotificationCenter`, cancellable from the library)
+- [x] Natural-language time from the saved reason ("remind me tomorrow at 4")
+- [x] Notification opens the library at the thing it is about
+
+The design rule that matters here: the parser may **offer** a time but only arms
+the reminder itself when the user explicitly asked to be reminded. A date merely
+mentioned in passing is offered switched off, and the time chosen is always shown
+along with the words it was read from. Setting a reminder from inference would be
+exactly the "present model inference as the user's intent" failure this project
+is built to avoid.
+
+`remindAt` had existed on the model since Phase 4 with nothing reading or writing
+it — a field that implied a feature that was not there. Worth noting as a failure
+mode of its own: schema is not behaviour.
+
+What is still genuinely remote-only, and therefore still open:
 
 - [ ] Minimal cloud reminder model
 - [ ] Email channel
@@ -846,6 +972,35 @@ Add a small hosted reminder scheduler.
 - [ ] Quiet hours
 - [ ] Escalation logic
 - [ ] Optional experimental self-iMessage
+
+The honest limitation of the local version: a reminder needs this Mac awake at
+the time it fires. That is the one thing a hosted scheduler would actually buy,
+and it is the reason to build one eventually rather than now.
+
+Native reminders respect the quiet hours already configured in the Electron app,
+read through the same read-only bridge. Two notification systems disagreeing
+about one do-not-disturb setting is worse than one of them ignoring it, because
+the disagreement is invisible until a reminder fires at 2am.
+
+### Why the two apps were not merged
+
+Folding the Electron app into the native one was considered once projects existed
+on one side and tasks on the other. Measured, it is ~3,100 lines in `electron/`
+and ~4,400 in `src/`: more than twice the native app's size, to arrive at feature
+parity with something that already works.
+
+Worse, about a third of it should not be ported at all. The pet is ~1,300 lines
+built on copyrighted art that cannot ship, and the voice stack is ~950 lines
+using cloud TTS that section 12 forbids. And the real boundary is not the
+runtime, it is the product: the Electron app is a gamified study companion
+(pet, streaks, flashcards, Socratic tutoring, pomodoro) and the native one is a
+context and memory tool. Merging them yields a split personality rather than one
+coherent app.
+
+What they genuinely share is a task list, so that is what is shared. A project
+can hold tasks from the to-do app, with the link stored on this side —
+`Project.linkedTodoIDs` — so the companion never becomes a writer of a file it
+does not own. Completing a task stays where tasks live.
 
 Later:
 
@@ -909,6 +1064,10 @@ Do not build:
 - YC pitch deck
 - Startup branding exercise
 - Multi-user authentication unless needed for remote sync
+- Cursor-pointing / element-highlighting overlays (see §2, rejected from Clicky)
+- Anything requiring Accessibility permission
+- Cloud speech-to-text or hosted LLMs
+- Usage analytics of any kind
 
 This is a **personal project first**.
 
