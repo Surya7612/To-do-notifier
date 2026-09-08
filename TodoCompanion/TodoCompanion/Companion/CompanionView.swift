@@ -17,6 +17,9 @@ struct CompanionView: View {
             } else {
                 askField
                 actionRow
+                if viewModel.reminderSuggestion != nil {
+                    reminderRow
+                }
                 if !viewModel.related.isEmpty {
                     relatedStrip
                 }
@@ -97,6 +100,53 @@ struct CompanionView: View {
 
     private var isFieldEmpty: Bool {
         viewModel.question.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Appears only when the typed reason reads like a request to come back to
+    /// this. The time is always shown rather than applied quietly, and the
+    /// toggle starts off unless the user actually used the words "remind me" —
+    /// reading a date out of their sentence is inference, and inference here
+    /// gets to suggest but not to act.
+    @ViewBuilder
+    private var reminderRow: some View {
+        if let suggestion = viewModel.reminderSuggestion, let date = viewModel.reminderDate {
+            HStack(spacing: DS.Spacing.tight) {
+                Toggle(isOn: $viewModel.reminderIsArmed) {
+                    Label(
+                        CompanionViewModel.reminderFormat(date),
+                        systemImage: viewModel.reminderIsArmed ? "bell.fill" : "bell"
+                    )
+                    .font(.caption)
+                }
+                .toggleStyle(.checkbox)
+                .help("Set a reminder for this when you save it")
+
+                if let matched = suggestion.matchedText, !matched.isEmpty {
+                    // Says which words produced the time, so an odd guess is
+                    // traceable to what was typed instead of looking arbitrary.
+                    Text("from “\(matched)”")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: DS.Spacing.hair)
+
+                Menu("Change") {
+                    ForEach(ReminderPreset.allCases) { preset in
+                        Button(preset.rawValue) { viewModel.chooseReminder(preset) }
+                    }
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .fixedSize()
+                .font(.caption)
+            }
+            .padding(.horizontal, DS.Spacing.normal)
+            .padding(.vertical, DS.Spacing.snug)
+            .background(.quaternary.opacity(DS.Alpha.fieldFill),
+                        in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        }
     }
 
     /// Region selection and the two questions worth a shortcut, plus a standing

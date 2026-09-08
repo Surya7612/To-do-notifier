@@ -77,6 +77,11 @@ private struct LibraryRow: View {
                 Text(context.createdAt.formatted(.relative(presentation: .named)))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                if context.hasPendingReminder, let remindAt = context.remindAt {
+                    Label(CompanionViewModel.reminderFormat(remindAt), systemImage: "bell.fill")
+                        .font(.caption2)
+                        .foregroundStyle(DS.Status.saved)
+                }
             }
         }
         .padding(.vertical, 3)
@@ -147,6 +152,30 @@ private struct ContextDetailView: View {
                     }
                 }
 
+                if let remindAt = context.remindAt {
+                    section("Reminder") {
+                        HStack(spacing: 10) {
+                            Label(CompanionViewModel.reminderFormat(remindAt),
+                                  systemImage: context.hasPendingReminder ? "bell.fill" : "bell.slash")
+                                .font(.callout)
+                                .foregroundStyle(context.hasPendingReminder ? DS.Status.saved : Color.secondary)
+
+                            if context.hasPendingReminder {
+                                Button("Cancel") {
+                                    Reminders.cancel(id: context.reminderIdentifier)
+                                    context.remindAt = nil
+                                    try? modelContext.save()
+                                }
+                                .font(.caption)
+                            } else {
+                                Text("already passed")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+
                 section("Where it came from") {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(context.provenanceLabel)
@@ -177,6 +206,9 @@ private struct ContextDetailView: View {
         .toolbar {
             ToolbarItem(placement: .destructiveAction) {
                 Button(role: .destructive) {
+                    // Otherwise the notification still fires for something the
+                    // user has deleted, and nothing can cancel it afterwards.
+                    Reminders.cancel(id: context.reminderIdentifier)
                     modelContext.delete(context)
                     try? modelContext.save()
                 } label: {

@@ -6,7 +6,7 @@ struct TodoCompanionApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Todo Companion", systemImage: "bubble.left.and.text.bubble.right") {
+        MenuBarExtra {
             // No .keyboardShortcut on this one: the Carbon hotkey already owns
             // the combo globally, and a menu key equivalent would fire it a
             // second time once the panel activates the app.
@@ -21,6 +21,8 @@ struct TodoCompanionApp: App {
 
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
+        } label: {
+            MenuBarLabel()
         }
 
         Window("Saved Context", id: AppWindow.library) {
@@ -37,6 +39,32 @@ struct TodoCompanionApp: App {
 
 enum AppWindow {
     static let library = "library"
+}
+
+/// Lets code outside SwiftUI open the library.
+///
+/// `openWindow` only exists in a view's environment, and a fired reminder is
+/// handled in the app delegate. Rather than reach for a URL scheme for one
+/// internal navigation, the menu bar label — the one view that is always
+/// instantiated, since the status item is always on screen — hands the action
+/// over at launch.
+@MainActor
+enum LibraryWindow {
+    static var opener: (() -> Void)?
+
+    static func open() { opener?() }
+}
+
+private struct MenuBarLabel: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: "bubble.left.and.text.bubble.right")
+            .accessibilityLabel("Todo Companion")
+            .onAppear {
+                LibraryWindow.opener = { openWindow(id: AppWindow.library) }
+            }
+    }
 }
 
 /// Its own view so the label tracks the shortcut chosen in Settings.

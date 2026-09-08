@@ -942,7 +942,25 @@ The goal is:
 
 ## Phase 7 — Remote Reminders
 
-Add a small hosted reminder scheduler.
+Local reminders came first, and they cover most of what this phase was for.
+
+- [x] Reminder on a saved context (`remindAt`, scheduled through
+      `UNUserNotificationCenter`, cancellable from the library)
+- [x] Natural-language time from the saved reason ("remind me tomorrow at 4")
+- [x] Notification opens the library at the thing it is about
+
+The design rule that matters here: the parser may **offer** a time but only arms
+the reminder itself when the user explicitly asked to be reminded. A date merely
+mentioned in passing is offered switched off, and the time chosen is always shown
+along with the words it was read from. Setting a reminder from inference would be
+exactly the "present model inference as the user's intent" failure this project
+is built to avoid.
+
+`remindAt` had existed on the model since Phase 4 with nothing reading or writing
+it — a field that implied a feature that was not there. Worth noting as a failure
+mode of its own: schema is not behaviour.
+
+What is still genuinely remote-only, and therefore still open:
 
 - [ ] Minimal cloud reminder model
 - [ ] Email channel
@@ -951,6 +969,10 @@ Add a small hosted reminder scheduler.
 - [ ] Quiet hours
 - [ ] Escalation logic
 - [ ] Optional experimental self-iMessage
+
+The honest limitation of the local version: a reminder needs this Mac awake at
+the time it fires. That is the one thing a hosted scheduler would actually buy,
+and it is the reason to build one eventually rather than now.
 
 Later:
 

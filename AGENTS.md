@@ -76,6 +76,14 @@ same-app, and token overlap rather than embeddings. This is a deliberate trade: 
 the user *why* something resurfaced, and unexplained resurfacing is indistinguishable from the app
 guessing. Revisit only when the structured version demonstrably fails.
 
+**A reminder is set by the user, never by the parser.** `ReminderPhrase` reads a saved reason and may
+*offer* a time, but it only arms the reminder by default when the user actually used words like "remind
+me". A date noticed in passing — "notes from tomorrow's standup" — is offered switched off. The chosen
+time is always displayed, along with the words it came from, so the app's reading is visible rather than
+applied silently. This is the core principle applied to scheduling: inference may suggest, not act.
+Note that `NSDataDetector` takes no reference date and always resolves relative words against the system
+clock, which is why the tests assert relative facts instead of fixed timestamps.
+
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
@@ -100,7 +108,9 @@ from the screenshot along with the panel.
 | `Brain/OllamaBrain.swift` | ~84 | Streaming Ollama client. Also the only place summaries are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
-| `Store/SavedContext.swift` | ~96 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
+| `Store/SavedContext.swift` | ~110 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
+| `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
+| `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextRetriever.swift` | ~102 | Explainable relevance scoring against the current screen. |
 | `Store/TodoBridge.swift` | ~153 | Read-only bridge to the Electron app's `app-data.json` via a security-scoped bookmark. |
@@ -147,6 +157,7 @@ What is covered, and why these pieces specifically:
 | `TodoBridgeTests` | Parsing the Electron app's `app-data.json` | Another app owns that file and can change or truncate it. Also pins that the OpenAI key in the same file never reaches prompt data. |
 | `PromptTests` | Prompt construction | Where the "user intent outranks inference" rule actually lives. Regressions here surface as subtly worse answers, not errors. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
+| `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 
 Two conventions worth keeping:
 

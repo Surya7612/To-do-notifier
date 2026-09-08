@@ -37,9 +37,29 @@ final class CompanionViewModel {
     var dictationHint = ""
 
     var phase: Phase = .idle
-    var question: String = ""
     var answer: String = ""
     var contextLabel: String = "Nothing captured yet"
+
+    /// Re-reads the reminder suggestion on every keystroke, so the offer
+    /// appears and disappears as the sentence changes.
+    var question: String = "" {
+        didSet { refreshReminderSuggestion() }
+    }
+
+    /// What the app thinks the typed reason is asking for, if anything.
+    private(set) var reminderSuggestion: ReminderSuggestion?
+
+    /// The time a reminder will actually be set for. Separate from the
+    /// suggestion so choosing a preset does not have to fight the parser on the
+    /// next keystroke.
+    private(set) var reminderDate: Date?
+
+    /// Whether saving will also set a reminder.
+    ///
+    /// Armed automatically only when the user literally asked to be reminded.
+    /// A date noticed in passing is offered switched off, because acting on
+    /// inference is the one thing this app does not do.
+    var reminderIsArmed = false
 
     /// Things saved earlier that look relevant to the screen in front of the user.
     var related: [RetrievalMatch] = []
@@ -317,6 +337,9 @@ final class CompanionViewModel {
             topics: topics
         )
 
+        let reminder = reminderIsArmed ? reminderDate : nil
+        record.remindAt = reminder
+
         modelContext.insert(record)
         do {
             try modelContext.save()
@@ -325,9 +348,92 @@ final class CompanionViewModel {
             return
         }
 
+        let tagSuffix = topics.isEmpty ? "" : " · \(topics.map { "#\($0)" }.joined(separator: " "))"
         question = ""
-        phase = .saved(topics.isEmpty ? "Saved." : "Saved · \(topics.map { "#\($0)" }.joined(separator: " "))")
+        phase = .saved("Saved.\(tagSuffix)")
         addSummary(to: record)
+
+        if let reminder { scheduleReminder(for: record, at: reminder, tagSuffix: tagSuffix) }
+    }
+
+    /// Scheduling can fail on a permission the user has already refused, and a
+    /// reminder that was silently never set is worse than one that was never
+    /// offered — the whole point is that it can be relied on.
+    private func scheduleReminder(for record: SavedContext, at date: Date, tagSuffix: String) {
+        let id = record.reminderIdentifier
+        let intent = record.intent
+        let sourceApp = record.sourceApp
+
+        Task {
+            let scheduled = await Reminders.schedule(id: id,
+                                                     at: date,
+                                                     intent: intent,
+                                                     sourceApp: sourceApp)
+            guard case .saved = phase else { return }
+
+            if scheduled {
+                phase = .saved("Saved · reminder \(Self.reminderFormat(date))\(tagSuffix)")
+            } else {
+                record.remindAt = nil
+                try? modelContext.save()
+                phase = .saved("Saved, but notifications are off in System Settings.")
+            }
+        }
+    }
+
+    /// "tomorrow at 9:00 AM" reads better than a bare timestamp for something a
+    /// few hours or days out, which is what these almost always are.
+    static func reminderFormat(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let time = date.formatted(date: .omitted, time: .shortened)
+
+        if calendar.isDateInToday(date) { return "today at \(time)" }
+        if calendar.isDateInTomorrow(date) { return "tomorrow at \(time)" }
+
+        let days = calendar.dateComponents([.day], from: Date(), to: date).day ?? 0
+        if days < 7 { return "\(date.formatted(.dateTime.weekday(.wide))) at \(time)" }
+
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// Reminder controls.
+    ///
+    /// The user's typed sentence is never edited to strip the reminder
+    /// phrasing: "remind me tomorrow" is part of why they saved it and stays in
+    /// the record verbatim.
+    private func refreshReminderSuggestion() {
+        let raw = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            reminderSuggestion = nil
+            reminderDate = nil
+            reminderIsArmed = false
+            return
+        }
+
+        // A time the user picked by hand outranks anything re-parsed from the
+        // text they are still typing.
+        let wasChosenByHand = reminderDate != nil && reminderDate != reminderSuggestion?.date
+        let fresh = ReminderPhrase.suggestion(in: raw)
+
+        reminderSuggestion = fresh
+        guard let fresh else {
+            if !wasChosenByHand {
+                reminderDate = nil
+                reminderIsArmed = false
+            }
+            return
+        }
+
+        if !wasChosenByHand {
+            reminderDate = fresh.date
+            reminderIsArmed = fresh.wasExplicitlyRequested
+        }
+    }
+
+    func chooseReminder(_ preset: ReminderPreset) {
+        guard let date = preset.date() else { return }
+        reminderDate = date
+        reminderIsArmed = true
     }
 
     /// Fills in the model's own description in the background so saving stays instant.
@@ -358,6 +464,9 @@ final class CompanionViewModel {
         related = []
         phase = .idle
         contextLabel = "Nothing captured yet"
+        reminderSuggestion = nil
+        reminderDate = nil
+        reminderIsArmed = false
     }
 
     /// Falls back to the local model when OpenAI is selected without a key,

@@ -41,8 +41,23 @@ final class SavedContext {
     var windowTitle: String = ""
 
     var topics: [String] = []
-    var remindAt: Date?
     var project: Project?
+
+    /// When the user asked to be brought back to this. Nil means no reminder.
+    var remindAt: Date?
+
+    /// Identifier for the pending notification.
+    ///
+    /// A separate stored value rather than `persistentModelID`, which has no
+    /// stable string form to hand `UNNotificationRequest` and would change
+    /// under a store migration — leaving a scheduled reminder no longer
+    /// cancellable.
+    var reminderIdentifier: String = UUID().uuidString
+
+    var hasPendingReminder: Bool {
+        guard let remindAt else { return false }
+        return remindAt > Date()
+    }
 
     init(intent: String,
          recognizedText: String = "",
