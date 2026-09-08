@@ -61,6 +61,13 @@ final class CompanionViewModel {
     /// inference is the one thing this app does not do.
     var reminderIsArmed = false
 
+    /// Every project, for the picker.
+    private(set) var projects: [Project] = []
+
+    /// What the user says they are working on. New saves join it, and anything
+    /// already in it is favoured when deciding what to resurface.
+    private(set) var currentProject: Project?
+
     /// Things saved earlier that look relevant to the screen in front of the user.
     var related: [RetrievalMatch] = []
 
@@ -84,6 +91,7 @@ final class CompanionViewModel {
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
+        reloadProjects()
     }
 
     var isBusy: Bool { phase == .thinking || phase == .answering }
@@ -127,7 +135,12 @@ final class CompanionViewModel {
                 guard !Task.isCancelled else { return }
                 observation = fresh
                 contextLabel = fresh.contextLabel
-                related = ContextRetriever.related(to: fresh, among: recentContexts())
+                // Re-read here rather than only at init: the library can add or
+                // remove projects while the panel object stays alive.
+                reloadProjects()
+                related = ContextRetriever.related(to: fresh,
+                                                   among: recentContexts(),
+                                                   inProject: currentProject)
                 linkedWork = TodoBridge.load()
                 if phase == .reading { phase = .idle }
             } catch ScreenCaptureError.permissionDenied {
@@ -339,6 +352,7 @@ final class CompanionViewModel {
 
         let reminder = reminderIsArmed ? reminderDate : nil
         record.remindAt = reminder
+        record.project = currentProject
 
         modelContext.insert(record)
         do {
@@ -349,17 +363,23 @@ final class CompanionViewModel {
         }
 
         let tagSuffix = topics.isEmpty ? "" : " · \(topics.map { "#\($0)" }.joined(separator: " "))"
+        let destination = currentProject.map { "Saved to \($0.name)" } ?? "Saved"
         question = ""
-        phase = .saved("Saved.\(tagSuffix)")
+        phase = .saved("\(destination)\(tagSuffix)")
         addSummary(to: record)
 
-        if let reminder { scheduleReminder(for: record, at: reminder, tagSuffix: tagSuffix) }
+        if let reminder {
+            scheduleReminder(for: record, at: reminder, destination: destination, tagSuffix: tagSuffix)
+        }
     }
 
     /// Scheduling can fail on a permission the user has already refused, and a
     /// reminder that was silently never set is worse than one that was never
     /// offered — the whole point is that it can be relied on.
-    private func scheduleReminder(for record: SavedContext, at date: Date, tagSuffix: String) {
+    private func scheduleReminder(for record: SavedContext,
+                                  at date: Date,
+                                  destination: String,
+                                  tagSuffix: String) {
         let id = record.reminderIdentifier
         let intent = record.intent
         let sourceApp = record.sourceApp
@@ -372,7 +392,7 @@ final class CompanionViewModel {
             guard case .saved = phase else { return }
 
             if scheduled {
-                phase = .saved("Saved · reminder \(Self.reminderFormat(date))\(tagSuffix)")
+                phase = .saved("\(destination) · reminder \(Self.reminderFormat(date))\(tagSuffix)")
             } else {
                 record.remindAt = nil
                 try? modelContext.save()
@@ -434,6 +454,46 @@ final class CompanionViewModel {
         guard let date = preset.date() else { return }
         reminderDate = date
         reminderIsArmed = true
+    }
+
+    /// Project controls.
+    func reloadProjects() {
+        let descriptor = FetchDescriptor<Project>(sortBy: [SortDescriptor(\.name)])
+        projects = (try? modelContext.fetch(descriptor)) ?? []
+
+        // A project deleted elsewhere should not leave a dangling selection.
+        let saved = AppSettings.currentProjectID
+        currentProject = projects.first { $0.identifier == saved }
+        if currentProject == nil, saved != nil {
+            AppSettings.currentProjectID = nil
+        }
+    }
+
+    func chooseProject(_ project: Project?) {
+        currentProject = project
+        AppSettings.currentProjectID = project?.identifier
+    }
+
+    /// - Returns: the project now selected, existing or new.
+    ///
+    /// Reuses a project of the same name rather than creating a second one, so
+    /// a typo-free re-entry does not split a project in two.
+    @discardableResult
+    func createProject(named rawName: String) -> Project? {
+        let name = Project.normalize(rawName)
+        guard !name.isEmpty else { return nil }
+
+        if let existing = projects.first(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+            chooseProject(existing)
+            return existing
+        }
+
+        let project = Project(name: name)
+        modelContext.insert(project)
+        try? modelContext.save()
+        reloadProjects()
+        chooseProject(projects.first { $0.identifier == project.identifier } ?? project)
+        return currentProject
     }
 
     /// Fills in the model's own description in the background so saving stays instant.

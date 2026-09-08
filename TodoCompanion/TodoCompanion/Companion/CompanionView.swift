@@ -8,6 +8,8 @@ struct CompanionView: View {
     let onClearRegion: () -> Void
 
     @FocusState private var questionFocused: Bool
+    @State private var isNamingProject = false
+    @State private var newProjectName = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.normal) {
@@ -17,8 +19,8 @@ struct CompanionView: View {
             } else {
                 askField
                 actionRow
-                if viewModel.reminderSuggestion != nil {
-                    reminderRow
+                if !isFieldEmpty {
+                    saveOptionsRow
                 }
                 if !viewModel.related.isEmpty {
                     relatedStrip
@@ -102,50 +104,108 @@ struct CompanionView: View {
         viewModel.question.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// Appears only when the typed reason reads like a request to come back to
-    /// this. The time is always shown rather than applied quietly, and the
-    /// toggle starts off unless the user actually used the words "remind me" —
-    /// reading a date out of their sentence is inference, and inference here
-    /// gets to suggest but not to act.
-    @ViewBuilder
-    private var reminderRow: some View {
-        if let suggestion = viewModel.reminderSuggestion, let date = viewModel.reminderDate {
-            HStack(spacing: DS.Spacing.tight) {
-                Toggle(isOn: $viewModel.reminderIsArmed) {
-                    Label(
-                        CompanionViewModel.reminderFormat(date),
-                        systemImage: viewModel.reminderIsArmed ? "bell.fill" : "bell"
-                    )
-                    .font(.caption)
-                }
-                .toggleStyle(.checkbox)
-                .help("Set a reminder for this when you save it")
-
-                if let matched = suggestion.matchedText, !matched.isEmpty {
-                    // Says which words produced the time, so an odd guess is
-                    // traceable to what was typed instead of looking arbitrary.
-                    Text("from “\(matched)”")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: DS.Spacing.hair)
-
-                Menu("Change") {
-                    ForEach(ReminderPreset.allCases) { preset in
-                        Button(preset.rawValue) { viewModel.chooseReminder(preset) }
-                    }
-                }
-                .menuStyle(.button)
-                .buttonStyle(.borderless)
-                .fixedSize()
-                .font(.caption)
+    /// What saving will actually do — which project this joins, and whether it
+    /// comes back. Shown only once something has been typed, so the common path
+    /// of ask-and-read stays uncluttered.
+    private var saveOptionsRow: some View {
+        HStack(spacing: DS.Spacing.tight) {
+            projectPicker
+            if viewModel.reminderSuggestion != nil {
+                Divider().frame(height: 14)
+                reminderControls
             }
-            .padding(.horizontal, DS.Spacing.normal)
-            .padding(.vertical, DS.Spacing.snug)
-            .background(.quaternary.opacity(DS.Alpha.fieldFill),
-                        in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+            Spacer(minLength: DS.Spacing.hair)
+        }
+        .font(.caption)
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.snug)
+        .background(.quaternary.opacity(DS.Alpha.fieldFill),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+    }
+
+    private var projectPicker: some View {
+        Menu {
+            Button("No project") { viewModel.chooseProject(nil) }
+            if !viewModel.projects.isEmpty {
+                Divider()
+                ForEach(viewModel.projects) { project in
+                    Button(project.name) { viewModel.chooseProject(project) }
+                }
+            }
+            Divider()
+            Button("New project…") { isNamingProject = true }
+        } label: {
+            Label(viewModel.currentProject?.name ?? "No project",
+                  systemImage: viewModel.currentProject == nil ? "folder" : "folder.fill")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .fixedSize()
+        .help("Which project this save belongs to")
+        .popover(isPresented: $isNamingProject) {
+            newProjectField
+        }
+    }
+
+    private var newProjectField: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+            Text("Name this project")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Engram", text: $newProjectName)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+                .onSubmit(commitNewProject)
+            HStack {
+                Spacer()
+                Button("Create", action: commitNewProject)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(newProjectName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(DS.Spacing.normal)
+    }
+
+    private func commitNewProject() {
+        viewModel.createProject(named: newProjectName)
+        newProjectName = ""
+        isNamingProject = false
+    }
+
+    /// The time is always shown rather than applied quietly, and the toggle
+    /// starts off unless the user actually used the words "remind me" — reading
+    /// a date out of their sentence is inference, and inference here gets to
+    /// suggest but not to act.
+    @ViewBuilder
+    private var reminderControls: some View {
+        if let suggestion = viewModel.reminderSuggestion, let date = viewModel.reminderDate {
+            Toggle(isOn: $viewModel.reminderIsArmed) {
+                Label(
+                    CompanionViewModel.reminderFormat(date),
+                    systemImage: viewModel.reminderIsArmed ? "bell.fill" : "bell"
+                )
+            }
+            .toggleStyle(.checkbox)
+            .fixedSize()
+            .help("Set a reminder for this when you save it")
+
+            if let matched = suggestion.matchedText, !matched.isEmpty {
+                // Says which words produced the time, so an odd guess is
+                // traceable to what was typed instead of looking arbitrary.
+                Text("from “\(matched)”")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Menu("Change") {
+                ForEach(ReminderPreset.allCases) { preset in
+                    Button(preset.rawValue) { viewModel.chooseReminder(preset) }
+                }
+            }
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
+            .fixedSize()
         }
     }
 

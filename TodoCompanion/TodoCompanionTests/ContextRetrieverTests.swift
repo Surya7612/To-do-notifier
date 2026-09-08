@@ -128,6 +128,45 @@ struct ContextRetrieverTests {
         #expect(try #require(lines.first).contains("I wanted to compare this to Engram"))
     }
 
+    @Test("a save in the project the user says they are working on is favoured")
+    func activeProjectIsFavoured() throws {
+        let project = Project(name: "Engram")
+        let inProject = Fixture.saved(intent: "unrelated wording entirely")
+        inProject.project = project
+        let sameApp = Fixture.saved(intent: "something else", app: "Xcode")
+        let screen = Fixture.observation(app: "Xcode")
+
+        let matches = ContextRetriever.related(to: screen,
+                                               among: [sameApp, inProject],
+                                               inProject: project)
+
+        #expect(try #require(matches.first).context.intent == "unrelated wording entirely")
+        #expect(try #require(matches.first).reason.contains("Engram"))
+    }
+
+    @Test("belonging to a different project is not a match")
+    func otherProjectsAreNotFavoured() {
+        let active = Project(name: "Engram")
+        let other = Project(name: "Taxes")
+        let saved = Fixture.saved(intent: "nothing in common")
+        saved.project = other
+
+        let matches = ContextRetriever.related(to: Fixture.observation(text: "unrelated screen"),
+                                               among: [saved],
+                                               inProject: active)
+
+        #expect(matches.isEmpty)
+    }
+
+    @Test("with no project chosen, project membership changes nothing")
+    func noActiveProjectIsNeutral() {
+        let saved = Fixture.saved(intent: "nothing in common")
+        saved.project = Project(name: "Engram")
+
+        #expect(ContextRetriever.related(to: Fixture.observation(text: "unrelated screen"),
+                                         among: [saved]).isEmpty)
+    }
+
     @Test("no candidates means no matches")
     func emptyCandidatesAreSafe() {
         #expect(ContextRetriever.related(to: Fixture.observation(text: "anything"), among: []).isEmpty)

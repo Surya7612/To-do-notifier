@@ -9,6 +9,7 @@ enum AppSettings {
         static let hotkeyID = "hotkeyID"
         static let provider = "provider"
         static let openAIModel = "openAIModel"
+        static let currentProjectID = "currentProjectID"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -72,5 +73,25 @@ enum AppSettings {
     /// Send the screenshot itself instead of OCR text. Requires a vision-capable Ollama model.
     static var sendsImage: Bool {
         UserDefaults.standard.bool(forKey: Key.sendsImage)
+    }
+
+    /// What the user says they are working on.
+    ///
+    /// Chosen explicitly and left alone until they change it. Deriving it from
+    /// the frontmost app was the obvious alternative and was rejected: a wrong
+    /// guess here silently misfiles everything saved afterwards, and the user
+    /// would have no way to see that it had happened.
+    static var currentProjectID: String? {
+        get {
+            let raw = UserDefaults.standard.string(forKey: Key.currentProjectID) ?? ""
+            return raw.isEmpty ? nil : raw
+        }
+        set {
+            guard let newValue, !newValue.isEmpty else {
+                UserDefaults.standard.removeObject(forKey: Key.currentProjectID)
+                return
+            }
+            UserDefaults.standard.set(newValue, forKey: Key.currentProjectID)
+        }
     }
 }

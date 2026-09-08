@@ -76,6 +76,14 @@ same-app, and token overlap rather than embeddings. This is a deliberate trade: 
 the user *why* something resurfaced, and unexplained resurfacing is indistinguishable from the app
 guessing. Revisit only when the structured version demonstrably fails.
 
+**The current project is stated, not detected.** `AppSettings.currentProjectID` holds a project the user
+picked, and it stays until they change it. Deriving it from the frontmost app or window was the obvious
+alternative and was rejected: a wrong guess silently misfiles everything saved afterwards, and there is
+no point at which the user would see that it had happened. Because the project is a stated fact rather
+than something read off the pixels, it outscores every individual screen signal in retrieval (3.5) and
+names itself in the reason — "in Engram". Deleting a project nullifies rather than cascades, so its
+saves are unfiled instead of destroyed.
+
 **A reminder is set by the user, never by the parser.** `ReminderPhrase` reads a saved reason and may
 *offer* a time, but it only arms the reminder by default when the user actually used words like "remind
 me". A date noticed in passing — "notes from tomorrow's standup" — is offered switched off. The chosen
@@ -93,13 +101,13 @@ from the screenshot along with the panel.
 
 | File | Lines | Purpose |
 |---|---|---|
-| `TodoCompanionApp.swift` | ~62 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
-| `App/AppDelegate.swift` | ~21 | Lifecycle. Registers the global hotkey and owns the panel controller. |
+| `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
+| `App/AppDelegate.swift` | ~52 | Lifecycle. Registers the global hotkey and owns the panel controller. |
 | `App/SettingsView.swift` | ~131 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
-| `Companion/CompanionPanelController.swift` | ~147 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
+| `Companion/CompanionPanelController.swift` | ~157 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~244 | Panel UI: status header, ask field, dictation and save buttons, related-context strip, answer area. |
-| `Companion/CompanionViewModel.swift` | ~389 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, and presets. |
+| `Companion/CompanionView.swift` | ~358 | Panel UI: status header, ask field, dictation and save buttons, related-context strip, answer area. |
+| `Companion/CompanionViewModel.swift` | ~574 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
 | `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
@@ -108,19 +116,19 @@ from the screenshot along with the panel.
 | `Brain/OllamaBrain.swift` | ~84 | Streaming Ollama client. Also the only place summaries are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
-| `Store/SavedContext.swift` | ~110 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
+| `Store/SavedContext.swift` | ~127 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
 | `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
-| `Store/ContextRetriever.swift` | ~102 | Explainable relevance scoring against the current screen. |
-| `Store/TodoBridge.swift` | ~153 | Read-only bridge to the Electron app's `app-data.json` via a security-scoped bookmark. |
-| `Support/AppSettings.swift` | ~76 | `UserDefaults` keys, defaults, and the provider choice. |
-| `Support/DesignSystem.swift` | ~49 | Spacing, radius, alpha, and status colour tokens. |
+| `Store/ContextRetriever.swift` | ~115 | Explainable relevance scoring against the current screen. |
+| `Store/TodoBridge.swift` | ~183 | Read-only bridge to the Electron app's `app-data.json` via a security-scoped bookmark. |
+| `Support/AppSettings.swift` | ~97 | `UserDefaults` keys, defaults, and the provider choice. |
+| `Support/DesignSystem.swift` | ~51 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
 | `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |
 | `Hotkey/HotkeyChoice.swift` | ~45 | The vetted list of non-reserved shortcuts. |
-| `Library/LibraryView.swift` | ~201 | Browse, search, and delete saved contexts. |
+| `Library/LibraryView.swift` | ~399 | Browse by project, search, reassign, rename, and delete saved contexts. |
 
 ## Build & run
 

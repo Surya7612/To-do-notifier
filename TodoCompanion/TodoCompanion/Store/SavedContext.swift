@@ -2,17 +2,33 @@ import Foundation
 import SwiftData
 
 /// A named bucket a saved context can belong to.
+///
+/// Deliberately just a name. A project here is a thing the user is working on,
+/// not a schema — anything more structured would be guessing at how they think
+/// about their own work.
 @Model
 final class Project {
     var name: String = ""
     var createdAt: Date = Date()
 
+    /// Stable string identity, for remembering the chosen project in
+    /// `UserDefaults` across launches. `persistentModelID` has no durable
+    /// string form to store.
+    var identifier: String = UUID().uuidString
+
     @Relationship(deleteRule: .nullify, inverse: \SavedContext.project)
     var contexts: [SavedContext] = []
 
     init(name: String) {
-        self.name = name
+        self.name = Self.normalize(name)
         self.createdAt = Date()
+        self.identifier = UUID().uuidString
+    }
+
+    /// Collapses whitespace so "  Engram " and "Engram" are not two projects
+    /// the user has to keep straight.
+    nonisolated static func normalize(_ name: String) -> String {
+        name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }
 

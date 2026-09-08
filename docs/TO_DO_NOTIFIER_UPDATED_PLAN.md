@@ -825,7 +825,8 @@ Add native capture:
 - [x] AI summary (generated in the background, stored in its own field)
 - [x] Original user intent (authoritative, never overwritten)
 - [x] Search (plain text across intent, summary, topics, app, window, screen text)
-- [ ] Project association (`Project` model and relationship exist; no UI to assign one yet)
+- [x] Project association (chosen in the panel before saving, reassignable in the
+      library, which also browses by project)
 
 **Built on SwiftData**, not Neo4j — per section 7. The schema is two models,
 `SavedContext` and `Project`, with one relationship between them.
@@ -853,7 +854,8 @@ plan's own rule about not adding them before structured retrieval works.
 Add:
 
 - [ ] Semantic search
-- [ ] Project-aware retrieval (needs the project-assignment UI first)
+- [x] Project-aware retrieval (a save in the current project scores 3.5, above
+      any single screen signal, and says so: "in Engram")
 - [x] Time-based retrieval (recency weighting, deliberately weak)
 - [x] Provenance (app and window stored and shown on every match)
 - [x] Related context (scored against the current screen on each summon)
@@ -869,6 +871,7 @@ the current screen using signals the user can reason about:
 
 | Signal | Weight |
 |--------|--------|
+| Belongs to the project the user says they are working on | 3.5 |
 | A `#topic` literally visible on screen | 3.0 each |
 | Same window title | 2.5 |
 | Same application | 2.0 |

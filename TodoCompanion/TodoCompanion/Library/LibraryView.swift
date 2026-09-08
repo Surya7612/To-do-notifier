@@ -5,23 +5,61 @@ struct LibraryView: View {
     @Query(sort: \SavedContext.createdAt, order: .reverse)
     private var contexts: [SavedContext]
 
+    @Query(sort: \Project.name)
+    private var projects: [Project]
+
     @Environment(\.modelContext) private var modelContext
 
     @State private var search = ""
     @State private var selection: SavedContext?
+    @State private var scope: Scope = .everything
+    @State private var isNamingProject = false
+    @State private var isRenamingProject = false
+    @State private var projectName = ""
+
+    /// Which slice of the library the sidebar is showing.
+    private enum Scope: Hashable {
+        case everything
+        case project(String)
+        case unfiled
+    }
+
+    private var inScope: [SavedContext] {
+        switch scope {
+        case .everything:
+            return contexts
+        case .unfiled:
+            return contexts.filter { $0.project == nil }
+        case let .project(identifier):
+            return contexts.filter { $0.project?.identifier == identifier }
+        }
+    }
 
     private var filtered: [SavedContext] {
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !term.isEmpty else { return contexts }
-        return contexts.filter {
+        guard !term.isEmpty else { return inScope }
+        return inScope.filter {
             $0.searchHaystack.localizedCaseInsensitiveContains(term)
+        }
+    }
+
+    private var scopeTitle: String {
+        switch scope {
+        case .everything: return "Everything"
+        case .unfiled: return "No project"
+        case let .project(identifier):
+            return projects.first { $0.identifier == identifier }?.name ?? "Project"
         }
     }
 
     var body: some View {
         NavigationSplitView {
-            list
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+            VStack(spacing: 0) {
+                scopePicker
+                Divider()
+                list
+            }
+            .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         } detail: {
             if let selection {
                 ContextDetailView(context: selection)
@@ -35,6 +73,96 @@ struct LibraryView: View {
         }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")
         .frame(minWidth: 820, minHeight: 520)
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button("New project…") { isNamingProject = true }
+                    if case let .project(identifier) = scope,
+                       let project = projects.first(where: { $0.identifier == identifier }) {
+                        Divider()
+                        Button("Rename \(project.name)…") {
+                            projectName = project.name
+                            isRenamingProject = true
+                        }
+                        // Saves survive: the relationship nullifies rather than
+                        // cascading, so deleting a project unfiles its contents
+                        // instead of destroying them.
+                        Button("Delete \(project.name)", role: .destructive) {
+                            delete(project)
+                        }
+                    }
+                } label: {
+                    Label("Projects", systemImage: "folder.badge.gearshape")
+                }
+            }
+        }
+        .alert("New project", isPresented: $isNamingProject) {
+            TextField("Name", text: $projectName)
+            Button("Cancel", role: .cancel) { projectName = "" }
+            Button("Create") { createProject() }
+        }
+        .alert("Rename project", isPresented: $isRenamingProject) {
+            TextField("Name", text: $projectName)
+            Button("Cancel", role: .cancel) { projectName = "" }
+            Button("Rename") { renameCurrentProject() }
+        }
+    }
+
+    private func createProject() {
+        let name = Project.normalize(projectName)
+        projectName = ""
+        guard !name.isEmpty,
+              !projects.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame })
+        else { return }
+
+        let project = Project(name: name)
+        modelContext.insert(project)
+        try? modelContext.save()
+        scope = .project(project.identifier)
+    }
+
+    private func renameCurrentProject() {
+        let name = Project.normalize(projectName)
+        projectName = ""
+        guard !name.isEmpty,
+              case let .project(identifier) = scope,
+              let project = projects.first(where: { $0.identifier == identifier })
+        else { return }
+
+        project.name = name
+        try? modelContext.save()
+    }
+
+    private func delete(_ project: Project) {
+        // The panel remembers a project by identifier, so a stale selection
+        // would otherwise keep pointing at something gone.
+        if AppSettings.currentProjectID == project.identifier {
+            AppSettings.currentProjectID = nil
+        }
+        scope = .everything
+        modelContext.delete(project)
+        try? modelContext.save()
+    }
+
+    /// Projects live above the list rather than as a second sidebar column: with
+    /// a handful of projects a whole column is mostly empty space.
+    private var scopePicker: some View {
+        HStack(spacing: DS.Spacing.tight) {
+            Picker("Show", selection: $scope) {
+                Text("Everything (\(contexts.count))").tag(Scope.everything)
+                ForEach(projects) { project in
+                    Text("\(project.name) (\(project.contexts.count))")
+                        .tag(Scope.project(project.identifier))
+                }
+                let unfiled = contexts.count { $0.project == nil }
+                if unfiled > 0 {
+                    Text("No project (\(unfiled))").tag(Scope.unfiled)
+                }
+            }
+            .labelsHidden()
+        }
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.tight)
     }
 
     @ViewBuilder
@@ -45,8 +173,14 @@ struct LibraryView: View {
                 systemImage: "bookmark",
                 description: Text("Press \(AppSettings.hotkey.displayName), type why a screen matters, then ⌘S.")
             )
-        } else if filtered.isEmpty {
+        } else if filtered.isEmpty, !search.trimmingCharacters(in: .whitespaces).isEmpty {
             ContentUnavailableView.search(text: search)
+        } else if filtered.isEmpty {
+            ContentUnavailableView(
+                "Nothing in \(scopeTitle)",
+                systemImage: "folder",
+                description: Text("Pick this project in the panel before saving, or move something here.")
+            )
         } else {
             List(filtered, id: \.persistentModelID, selection: $selection) { context in
                 NavigationLink(value: context) {
@@ -70,10 +204,18 @@ private struct LibraryRow: View {
                 Text(context.intent)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                Text(context.provenanceLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: DS.Spacing.hair) {
+                    if let project = context.project {
+                        Label(project.name, systemImage: "folder.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.tint)
+                            .lineLimit(1)
+                    }
+                    Text(context.provenanceLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Text(context.createdAt.formatted(.relative(presentation: .named)))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -106,6 +248,7 @@ private struct LibraryRow: View {
 private struct ContextDetailView: View {
     let context: SavedContext
 
+    @Query(sort: \Project.name) private var projects: [Project]
     @Environment(\.modelContext) private var modelContext
     @State private var showingFullText = false
 
@@ -127,6 +270,17 @@ private struct ContextDetailView: View {
                     Text(context.intent)
                         .font(.body)
                         .textSelection(.enabled)
+                }
+
+                section("Project") {
+                    Picker("Project", selection: projectBinding) {
+                        Text("No project").tag(nil as String?)
+                        ForEach(projects) { project in
+                            Text(project.name).tag(project.identifier as String?)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
 
                 if !context.topics.isEmpty {
@@ -217,6 +371,18 @@ private struct ContextDetailView: View {
                 .help("Delete this saved context")
             }
         }
+    }
+
+    /// Bound by identifier rather than by `Project` so the picker does not need
+    /// the model objects to be `Hashable` in a way SwiftData does not promise.
+    private var projectBinding: Binding<String?> {
+        Binding(
+            get: { context.project?.identifier },
+            set: { identifier in
+                context.project = projects.first { $0.identifier == identifier }
+                try? modelContext.save()
+            }
+        )
     }
 
     @ViewBuilder

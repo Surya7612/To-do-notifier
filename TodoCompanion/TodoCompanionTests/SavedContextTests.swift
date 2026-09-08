@@ -82,6 +82,34 @@ struct SavedContextTests {
     }
 }
 
+@Suite("Projects")
+struct ProjectTests {
+    @Test("surrounding and repeated whitespace is collapsed")
+    func normalizesWhitespace() {
+        #expect(Project.normalize("  Engram  ") == "Engram")
+        #expect(Project.normalize("Job   Search") == "Job Search")
+        #expect(Project.normalize("\nEngram\t") == "Engram")
+    }
+
+    @Test("a name of nothing but whitespace normalizes to empty, and is refused upstream")
+    func emptyNamesCollapse() {
+        #expect(Project.normalize("   ") == "")
+        #expect(Project.normalize("") == "")
+    }
+
+    @Test("the name is normalized on the way in, not just on display")
+    func initNormalizes() {
+        #expect(Project(name: "  Engram  ").name == "Engram")
+    }
+
+    @Test("each project gets its own identifier")
+    func identifiersAreDistinct() {
+        // Two projects can legitimately share a name mid-rename, so identity
+        // cannot be the name.
+        #expect(Project(name: "Engram").identifier != Project(name: "Engram").identifier)
+    }
+}
+
 /// The summon shortcut is only useful if it is one macOS has not already
 /// claimed, and a reserved combo fails silently rather than erroring.
 @Suite("Hotkey choices")
