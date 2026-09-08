@@ -34,6 +34,63 @@ enum AppSettings {
         }
     }
 
+    /// Who the panel says will answer, and whether the user's choice is
+    /// actually in force.
+    ///
+    /// Exists because a selection that cannot be honoured has to be *stated*.
+    /// Selecting OpenAI with no key in the Keychain falls back to the local
+    /// model, and labelling that "Local" makes the switch look broken rather
+    /// than makes the missing key visible — the user flipped something and
+    /// nothing moved.
+    enum AnswerDestination: Equatable, Sendable {
+        case local
+        case cloud(String)
+        case cloudWithoutKey
+
+        /// Pure so it can be tested without a Keychain or a defaults domain.
+        static func resolve(provider: Provider, hasCloudKey: Bool, cloudModel: String) -> AnswerDestination {
+            switch provider {
+            case .ollama: return .local
+            case .openAI: return hasCloudKey ? .cloud(cloudModel) : .cloudWithoutKey
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .local: return "Local"
+            case let .cloud(model): return model
+            case .cloudWithoutKey: return "OpenAI — no key"
+            }
+        }
+
+        var glyph: String {
+            switch self {
+            case .local: return "lock.laptopcomputer"
+            case .cloud: return "cloud"
+            case .cloudWithoutKey: return "exclamationmark.triangle"
+            }
+        }
+
+        /// Only a usable cloud provider actually sends anything.
+        var leavesTheMachine: Bool {
+            switch self {
+            case .cloud: return true
+            case .local, .cloudWithoutKey: return false
+            }
+        }
+
+        func explanation(localModel: String) -> String {
+            switch self {
+            case .local:
+                return "Answered by \(localModel) on this Mac. Nothing leaves the device. Click to change."
+            case let .cloud(model):
+                return "Your question and the captured screen go to \(model). Saved summaries stay local. Click to change."
+            case .cloudWithoutKey:
+                return "OpenAI is selected but no API key is saved, so \(localModel) is answering on this Mac. Add a key in Settings."
+            }
+        }
+    }
+
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             Key.ollamaEndpoint: defaultEndpoint,

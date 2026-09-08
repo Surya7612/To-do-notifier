@@ -53,6 +53,16 @@ struct SettingsView: View {
                      : "Nothing leaves this Mac. Local vision models are weaker at reading interfaces, so answers about what is on screen are rougher.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                // Selecting a provider is not the same as being able to use it,
+                // and the difference is otherwise only discoverable by noticing
+                // that the answers did not improve.
+                if provider == AppSettings.Provider.openAI.rawValue, !keyIsStored {
+                    Label("No API key saved yet, so questions are still answered on this Mac.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("On this Mac") {

@@ -90,12 +90,28 @@ final class CompanionViewModel {
     /// True once the user has narrowed the capture to a region they dragged.
     var hasRegion: Bool { observation?.isCropped ?? false }
 
-    /// Whether the active brain sends the screen off this machine. Surfaced in
-    /// the panel: a question that leaves the device should never look identical
-    /// to one that does not.
-    var answersLeaveTheMachine: Bool { makeBrain().leavesTheMachine }
+    /// Whether a key is stored for the cloud provider.
+    ///
+    /// Cached rather than read from the Keychain inside `destination`, which is
+    /// evaluated on every redraw — and the panel redraws on every streamed
+    /// token. Refreshed at each summon and whenever the provider changes, which
+    /// covers every moment it could have become true.
+    private(set) var hasCloudKey = AppSettings.openAIKey != nil
 
-    var brainLabel: String { makeBrain().label }
+    func refreshCloudKey() {
+        hasCloudKey = AppSettings.openAIKey != nil
+    }
+
+    /// Who will answer, as the panel states it. Derived from the same two facts
+    /// `makeBrain()` uses, so the badge cannot claim one thing while a different
+    /// model answers.
+    var destination: AppSettings.AnswerDestination {
+        AppSettings.AnswerDestination.resolve(provider: AppSettings.provider,
+                                              hasCloudKey: hasCloudKey,
+                                              cloudModel: AppSettings.openAIModel)
+    }
+
+    var localModelName: String { AppSettings.model }
 
     private let modelContext: ModelContext
     private var observation: ScreenObservation?
@@ -136,6 +152,8 @@ final class CompanionViewModel {
         captureTask?.cancel()
         phase = .reading
         onCaptureBegan?()
+        // A key may have been added in Settings since the last summon.
+        refreshCloudKey()
 
         captureTask = Task {
             defer { onCaptureEnded?() }
@@ -542,8 +560,10 @@ final class CompanionViewModel {
         reminderIsArmed = false
     }
 
-    /// Falls back to the local model when OpenAI is selected without a key,
-    /// so a missing secret degrades to a worse answer rather than an error.
+    /// Falls back to the local model when OpenAI is selected without a key, so
+    /// a missing secret degrades to a worse answer rather than an error. The
+    /// badge says so — see `AnswerDestination.cloudWithoutKey` — because a
+    /// silent downgrade is indistinguishable from the switch not working.
     private func makeBrain() -> any Brain {
         if AppSettings.provider == .openAI, let key = AppSettings.openAIKey {
             return OpenAIBrain(apiKey: key, model: AppSettings.openAIModel)

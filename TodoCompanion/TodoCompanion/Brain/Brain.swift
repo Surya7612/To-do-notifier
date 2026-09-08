@@ -62,8 +62,12 @@ enum Prompt {
     than claiming the screen is the thing being displayed.
 
     The user's own saved notes outrank your reading of the screen — if they conflict, trust the \
-    note and say so. Saved notes are background, not the question; do not bring one up unless it \
-    bears on what was actually asked.
+    note and say so. Saved notes are background, not the question.
+
+    Start with the answer. Never open by working through the context you were given: do not state \
+    that a note, a task, or the screen is irrelevant, and do not restate the question. A note that \
+    does not bear on what was asked is simply left out, silently. If none of the context is \
+    relevant, just answer from what you know.
     """
 
     static func user(question: String, context: AskContext) -> String {

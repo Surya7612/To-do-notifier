@@ -114,4 +114,103 @@ struct PromptTests {
         #expect(local.leavesTheMachine == false)
         #expect(OpenAIBrain(apiKey: "sk-not-used", model: "gpt-4o-mini").leavesTheMachine)
     }
+
+    /// Asked to explain something not on screen, the local model opened with
+    /// "The user's saved note about testing the microphone is unrelated to the
+    /// current question. The note about testing the code is also unrelated." —
+    /// two sentences of the model auditing its own context before answering.
+    /// Saying notes are "background" was not enough; it had to be told not to
+    /// narrate them.
+    @Test("the model is told to answer rather than to review its context first")
+    func forbidsNarratingIrrelevantContext() {
+        #expect(Prompt.system.contains("Start with the answer"))
+        #expect(Prompt.system.contains("is irrelevant"))
+        #expect(Prompt.system.contains("do not restate the question"))
+    }
+}
+
+/// The badge in the panel header states who will answer. It has to say
+/// something different for each choice, or a provider switch looks like it did
+/// nothing — which is exactly what happened when OpenAI was selected with no
+/// key and the badge went on reading "Local".
+@Suite("Answer destination")
+struct AnswerDestinationTests {
+    private func resolve(_ provider: AppSettings.Provider,
+                         hasCloudKey: Bool,
+                         cloudModel: String = "gpt-4o-mini") -> AppSettings.AnswerDestination {
+        AppSettings.AnswerDestination.resolve(provider: provider,
+                                              hasCloudKey: hasCloudKey,
+                                              cloudModel: cloudModel)
+    }
+
+    @Test("the local choice is local whether or not a cloud key exists")
+    func localIgnoresTheKey() {
+        #expect(resolve(.ollama, hasCloudKey: false) == .local)
+        #expect(resolve(.ollama, hasCloudKey: true) == .local)
+    }
+
+    @Test("choosing the cloud with a key names the model that will answer")
+    func cloudNamesItsModel() {
+        let destination = resolve(.openAI, hasCloudKey: true, cloudModel: "gpt-5")
+        #expect(destination == .cloud("gpt-5"))
+        #expect(destination.label == "gpt-5")
+    }
+
+    @Test("choosing the cloud with no key is its own state, not silently local")
+    func missingKeyIsVisible() {
+        let destination = resolve(.openAI, hasCloudKey: false)
+
+        #expect(destination == .cloudWithoutKey)
+        #expect(destination != .local, "the whole bug was this collapsing into .local")
+        #expect(destination.label != AppSettings.AnswerDestination.local.label)
+    }
+
+    @Test("every choice produces a distinguishable label")
+    func labelsAreDistinct() {
+        let labels = [
+            resolve(.ollama, hasCloudKey: false).label,
+            resolve(.openAI, hasCloudKey: true).label,
+            resolve(.openAI, hasCloudKey: false).label,
+        ]
+        #expect(Set(labels).count == labels.count)
+    }
+
+    /// The claim in the header must match what actually happens, so a selected
+    /// cloud provider that cannot be used must not claim egress.
+    @Test("only a usable cloud provider claims to leave the machine")
+    func onlyUsableCloudLeaves() {
+        #expect(resolve(.ollama, hasCloudKey: true).leavesTheMachine == false)
+        #expect(resolve(.openAI, hasCloudKey: true).leavesTheMachine)
+        #expect(resolve(.openAI, hasCloudKey: false).leavesTheMachine == false)
+    }
+
+    /// Pins the badge to the brain it is describing. These are computed from the
+    /// same two facts in different files, and a disagreement would mean the
+    /// panel naming one model while another answers.
+    @Test("the badge agrees with the brain it describes")
+    func agreesWithTheBrain() {
+        let cloud = OpenAIBrain(apiKey: "sk-not-used", model: "gpt-4o-mini")
+        #expect(resolve(.openAI, hasCloudKey: true).leavesTheMachine == cloud.leavesTheMachine)
+
+        let local = OllamaBrain(endpoint: URL(string: "http://127.0.0.1:11434")!, model: "llama3.2")
+        #expect(resolve(.ollama, hasCloudKey: false).leavesTheMachine == local.leavesTheMachine)
+    }
+
+    @Test("a missing key is explained by naming what is answering instead")
+    func explainsTheFallback() {
+        let explanation = resolve(.openAI, hasCloudKey: false).explanation(localModel: "llama3.2")
+
+        #expect(explanation.contains("llama3.2"))
+        #expect(explanation.contains("Settings"))
+    }
+
+    @Test("each choice has its own glyph")
+    func glyphsAreDistinct() {
+        let glyphs = [
+            resolve(.ollama, hasCloudKey: false).glyph,
+            resolve(.openAI, hasCloudKey: true).glyph,
+            resolve(.openAI, hasCloudKey: false).glyph,
+        ]
+        #expect(Set(glyphs).count == glyphs.count)
+    }
 }

@@ -17,10 +17,6 @@ struct CompanionView: View {
     @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
     @AppStorage(AppSettings.Key.sendsImage) private var sendsImage = false
 
-    /// Mirrored from the Keychain on appear; a selected provider with no key
-    /// silently answers locally, and that has to be visible.
-    @State private var hasOpenAIKey = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.normal) {
             header
@@ -48,7 +44,7 @@ struct CompanionView: View {
         )
         .onAppear {
             questionFocused = true
-            hasOpenAIKey = AppSettings.openAIKey != nil
+            viewModel.refreshCloudKey()
         }
     }
 
@@ -294,21 +290,21 @@ struct CompanionView: View {
             // goes with it, and otherwise guesses at anything that is not text.
             Toggle("Send the screenshot", isOn: $sendsImage)
 
-            if isOpenAISelected, !hasOpenAIKey {
+            switch viewModel.destination {
+            case .cloudWithoutKey:
                 Divider()
-                Text("No API key saved — answering on this Mac until you add one.")
-            } else if isOpenAISelected, !sendsImage {
+                Text("No API key saved, so \(viewModel.localModelName) is answering.")
+            case .cloud where !sendsImage:
                 Divider()
                 Text("Sending recognized text only, so OpenAI cannot see images.")
+            default:
+                EmptyView()
             }
 
             Divider()
             SettingsLink { Text("Settings…") }
         } label: {
-            Label(
-                viewModel.answersLeaveTheMachine ? viewModel.brainLabel : "Local",
-                systemImage: viewModel.answersLeaveTheMachine ? "cloud" : "lock.laptopcomputer"
-            )
+            Label(viewModel.destination.label, systemImage: viewModel.destination.glyph)
         }
         .menuStyle(.button)
         .buttonStyle(.borderless)
@@ -316,14 +312,22 @@ struct CompanionView: View {
         .font(.caption2)
         .lineLimit(1)
         .fixedSize()
-        .foregroundStyle(viewModel.answersLeaveTheMachine ? DS.Status.busy : Color.secondary)
-        .help(viewModel.answersLeaveTheMachine
-              ? "Your question and the captured screen go to \(viewModel.brainLabel). Saved summaries stay local. Click to change."
-              : "Nothing leaves this Mac. Click to change who answers.")
+        .foregroundStyle(badgeColor)
+        .help(viewModel.destination.explanation(localModel: viewModel.localModelName))
+        // Keychain reads are cached in the view model, so a provider change has
+        // to prompt a re-read; otherwise adding a key never takes effect until
+        // the next summon.
+        .onChange(of: provider) { viewModel.refreshCloudKey() }
     }
 
-    private var isOpenAISelected: Bool {
-        provider == AppSettings.Provider.openAI.rawValue
+    /// A choice that is not being honoured is neither reassuring nor a warning
+    /// about egress — it is a problem, and reads as one.
+    private var badgeColor: Color {
+        switch viewModel.destination {
+        case .local: return .secondary
+        case .cloud: return DS.Status.busy
+        case .cloudWithoutKey: return DS.Status.problem
+        }
     }
 
     private var permissionNotice: some View {
