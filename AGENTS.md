@@ -257,6 +257,18 @@ rather than `ReminderPhrase`'s fallback guess of tomorrow morning. "Remind me wh
 no time and stays a question, and switching the offered reminder off makes the sentence a question
 again. Preset wording can never qualify.
 
+**The cue and the time may arrive in two messages, because Max asks for the second one.** "Remind me
+to record demo" states no time, so it stays a question — and Max answers it by asking when. It could
+not then act on the reply: a bare "in 10 minutes" carries no cue, so each half alone was only ever a
+question and the conversation Max itself opened could not be finished. `ReminderPhrase.pendingRequest`
+holds the outstanding request and `isInstruction` lets a stated time complete it. This is still not
+inference acting: both halves are the user's own words, and Max asked for the second. Two bounds keep
+it that way. A message stating **no** time closes the request rather than leaving it open, or a time
+mentioned much later would attach itself to a subject the user had walked away from. And the save is
+filed under the *original* request rather than the typed field, because "in 10 minutes" is a time and
+not a reason anyone would want to read back later — which is why `saveCurrentContext` takes a `reason`
+override at all. Both functions are pure and tested; the view model only holds the outstanding string.
+
 **A reminder is set by the user, never by the parser.** `ReminderPhrase` reads a saved reason and may
 *offer* a time, but it only arms the reminder by default when the user actually used words like "remind
 me". A date noticed in passing — "notes from tomorrow's standup" — is offered switched off. The chosen

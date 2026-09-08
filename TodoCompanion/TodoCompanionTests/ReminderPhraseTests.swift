@@ -38,6 +38,50 @@ struct ReminderPhraseTests {
     /// a stated hour that has already passed is rejected by design, so the
     /// original wording made this pass before 10 AM and fail after it. What is
     /// under test is a stated clock time, not which day it lands on.
+    /// Max answers "remind me to record demo" by asking when, so it has to be
+    /// able to act on the reply. Before this, the cue and the time sat in two
+    /// different messages and each half alone is only ever a question, so the
+    /// conversation Max opened could not be finished — the observed case.
+    @Test("answering Max's \"when?\" carries the reminder out")
+    func aStatedTimeCompletesAnEarlierRequest() throws {
+        let asked = try #require(suggestion("remind me to record demo"))
+        // Explicit, but no time in it, so on its own it stays a question.
+        #expect(asked.wasExplicitlyRequested)
+        #expect(asked.matchedText == nil)
+        #expect(!ReminderPhrase.isInstruction(suggestion: asked, isArmed: true, hasPendingRequest: false))
+
+        let outstanding = ReminderPhrase.pendingRequest(message: "remind me to record demo",
+                                                        suggestion: asked)
+        #expect(outstanding == "remind me to record demo")
+
+        let answered = try #require(suggestion("in 10 minutes"))
+        #expect(!answered.wasExplicitlyRequested)
+        #expect(answered.matchedText != nil)
+
+        // The same bare time is an instruction only because Max asked for it.
+        #expect(ReminderPhrase.isInstruction(suggestion: answered, isArmed: true, hasPendingRequest: true))
+        #expect(!ReminderPhrase.isInstruction(suggestion: answered, isArmed: true, hasPendingRequest: false))
+    }
+
+    @Test("a request the user walked away from does not collect a later time")
+    func anAbandonedRequestLapses() throws {
+        let asked = try #require(suggestion("remind me to record demo"))
+        #expect(ReminderPhrase.pendingRequest(message: "remind me to record demo", suggestion: asked) != nil)
+
+        // Asking something else entirely closes it, or a time mentioned much
+        // later would attach itself to a subject the user had left behind.
+        let unrelated = suggestion("what does this error mean")
+        #expect(ReminderPhrase.pendingRequest(message: "what does this error mean",
+                                              suggestion: unrelated) == nil)
+    }
+
+    @Test("switching the reminder off makes the answer a question again")
+    func disarmingOverridesAPendingRequest() throws {
+        let answered = try #require(suggestion("in 10 minutes"))
+
+        #expect(!ReminderPhrase.isInstruction(suggestion: answered, isArmed: false, hasPendingRequest: true))
+    }
+
     @Test("an explicit cue with a stated time is an instruction")
     func instructionNeedsBothCueAndTime() throws {
         let instruction = try #require(suggestion("remind me to text voice bugs tomorrow at 10 AM"))

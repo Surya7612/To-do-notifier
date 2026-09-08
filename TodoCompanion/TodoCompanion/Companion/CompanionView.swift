@@ -121,7 +121,9 @@ struct CompanionView: View {
             .keyboardShortcut("d", modifiers: .command)
             .help(viewModel.isListening ? "Stop dictating (⌘D)" : "Dictate instead of typing (⌘D)")
 
-            Button(action: viewModel.saveCurrentContext) {
+            Button {
+                viewModel.saveCurrentContext()
+            } label: {
                 Image(systemName: "bookmark.circle.fill")
                     .font(.title3)
             }
