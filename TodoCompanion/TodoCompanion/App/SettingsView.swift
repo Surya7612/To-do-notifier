@@ -1,3 +1,4 @@
+import AVFAudio
 import SwiftUI
 
 struct SettingsView: View {
@@ -7,6 +8,10 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.hotkeyID) private var hotkeyID = HotkeyChoice.fallback.id
     @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
     @AppStorage(AppSettings.Key.openAIModel) private var openAIModel = OpenAIBrain.defaultModel
+    @AppStorage(AppSettings.Key.semanticEnabled) private var semanticEnabled = false
+    @AppStorage(AppSettings.Key.embeddingModel) private var embeddingModel = AppSettings.defaultEmbeddingModel
+    @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
+    @AppStorage(AppSettings.Key.voiceIdentifier) private var voiceIdentifier = ""
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
@@ -15,6 +20,8 @@ struct SettingsView: View {
     @State private var isLinked = TodoBridge.isLinked
     @State private var linkedSummary = ""
     @State private var canImportKey = false
+    @State private var inboxFolder: String?
+    @State private var inboxWaiting = 0
 
     var body: some View {
         Form {
@@ -53,11 +60,59 @@ struct SettingsView: View {
                      : "Nothing leaves this Mac. Local vision models are weaker at reading interfaces, so answers about what is on screen are rougher.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                // Selecting a provider is not the same as being able to use it,
+                // and the difference is otherwise only discoverable by noticing
+                // that the answers did not improve.
+                if provider == AppSettings.Provider.openAI.rawValue, !keyIsStored {
+                    Label("No API key saved yet, so questions are still answered on this Mac.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("On this Mac") {
                 TextField("Ollama endpoint", text: $endpoint)
                 TextField("Model", text: $model)
+            }
+
+            Section("Reading answers aloud") {
+                Toggle("Have \(Prompt.assistantName) read answers out loud", isOn: $speaksAnswers)
+
+                if speaksAnswers {
+                    Picker("Voice", selection: $voiceIdentifier) {
+                        Text("System default").tag("")
+                        ForEach(SpeechPlayback.availableVoices, id: \.identifier) { voice in
+                            Text(voice.name).tag(voice.identifier)
+                        }
+                    }
+                }
+
+                Text("Uses the speech voices built into macOS, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Finding things by meaning") {
+                Toggle("Match saved context by meaning, not just words", isOn: $semanticEnabled)
+
+                Text(semanticEnabled
+                     ? "Search and resurfacing also compare meaning, so \u{201C}screen capture\u{201D} can find a note that says \u{201C}display grabbing\u{201D}. Matches still say why they surfaced."
+                     : "Search and resurfacing compare words only, so \u{201C}screen capture\u{201D} will not find a note that says \u{201C}display grabbing\u{201D}.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if semanticEnabled {
+                    TextField("Embedding model", text: $embeddingModel)
+
+                    // Runs across everything kept, unprompted, which is exactly
+                    // the work that must never reach a hosted provider — so it
+                    // is worth stating rather than leaving to be assumed.
+                    Text("Needs a second Ollama model: run `ollama pull \(embeddingModel)`. It runs on this Mac and is never sent anywhere, even when OpenAI is answering your questions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("OpenAI") {
@@ -121,6 +176,36 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Capture from your phone") {
+                HStack {
+                    Text(inboxFolder ?? "Not linked")
+                        .foregroundStyle(inboxFolder == nil ? .secondary : .primary)
+                    Spacer()
+                    Button(inboxFolder == nil ? "Choose folder…" : "Unlink") {
+                        if inboxFolder == nil {
+                            if InboxImporter.link() { refreshInbox() }
+                        } else {
+                            InboxImporter.unlink()
+                            refreshInbox()
+                        }
+                    }
+                }
+
+                if inboxFolder != nil {
+                    Text(inboxWaiting == 0
+                         ? "Nothing waiting. Items are brought in when the app launches and each time you summon the panel."
+                         : "\(inboxWaiting) waiting. They will be brought in on the next summon.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                // Says plainly that this is not iCloud sync, because a folder in
+                // iCloud Drive looks like it and behaves differently on failure.
+                Text("Put the folder in iCloud Drive and an iPhone Shortcut can save into it. The folder is a transport, not storage — anything brought in is removed from it. See the README for the Shortcut.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Screen context") {
                 Toggle("Send the screenshot instead of on-device text", isOn: $sendsImage)
                 Text(sendsImage
@@ -135,8 +220,14 @@ struct SettingsView: View {
         .onAppear {
             keyIsStored = AppSettings.openAIKey != nil
             refreshLinkedSummary()
+            refreshInbox()
             canImportKey = !keyIsStored && TodoBridge.importableOpenAIKey() != nil
         }
+    }
+
+    private func refreshInbox() {
+        inboxFolder = InboxImporter.folderName
+        inboxWaiting = InboxImporter.pendingCount
     }
 
     private func refreshLinkedSummary() {

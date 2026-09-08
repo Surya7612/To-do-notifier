@@ -37,14 +37,49 @@ final class CompanionViewModel {
     var dictationHint = ""
 
     var phase: Phase = .idle
-    var answer: String = ""
     var contextLabel: String = "Nothing captured yet"
+
+    /// The conversation so far, oldest first. The last turn's answer is what
+    /// `answer` is streaming into.
+    private(set) var turns: [Turn] = []
+
+    /// Reads answers aloud when the user has asked for that.
+    let speech = SpeechPlayback()
+
+    /// The one file the user opened for Max to work on, if any.
+    let editableFile = EditableFile()
+
+    /// A rewrite Max produced, waiting to be accepted or discarded. Never
+    /// written without the user pressing Apply.
+    private(set) var proposedEdit: ProposedEdit?
+
+    struct ProposedEdit: Equatable {
+        let fileName: String
+        let contents: String
+        let lines: [TextDiff.Line]
+        let summary: TextDiff.Summary
+    }
 
     /// Re-reads the reminder suggestion on every keystroke, so the offer
     /// appears and disappears as the sentence changes.
     var question: String = "" {
         didSet { refreshReminderSuggestion() }
     }
+
+    /// The reason a save would be filed under, or nil if there isn't one yet.
+    ///
+    /// The typed field when it has something in it, otherwise the first
+    /// question the user actually typed this session. Asking something moves it
+    /// out of the field and into the transcript, and without this fallback
+    /// pressing ⌘S straight after asking would refuse for no visible reason.
+    ///
+    /// Preset wording is skipped rather than used, because `intent` is a
+    /// promise that the words in it are the user's own.
+    var savableReason: String? {
+        Turn.savableReason(typed: question, turns: turns)
+    }
+
+    var canSave: Bool { savableReason != nil && observation != nil }
 
     /// What the app thinks the typed reason is asking for, if anything.
     private(set) var reminderSuggestion: ReminderSuggestion?
@@ -90,12 +125,28 @@ final class CompanionViewModel {
     /// True once the user has narrowed the capture to a region they dragged.
     var hasRegion: Bool { observation?.isCropped ?? false }
 
-    /// Whether the active brain sends the screen off this machine. Surfaced in
-    /// the panel: a question that leaves the device should never look identical
-    /// to one that does not.
-    var answersLeaveTheMachine: Bool { makeBrain().leavesTheMachine }
+    /// Whether a key is stored for the cloud provider.
+    ///
+    /// Cached rather than read from the Keychain inside `destination`, which is
+    /// evaluated on every redraw — and the panel redraws on every streamed
+    /// token. Refreshed at each summon and whenever the provider changes, which
+    /// covers every moment it could have become true.
+    private(set) var hasCloudKey = AppSettings.openAIKey != nil
 
-    var brainLabel: String { makeBrain().label }
+    func refreshCloudKey() {
+        hasCloudKey = AppSettings.openAIKey != nil
+    }
+
+    /// Who will answer, as the panel states it. Derived from the same two facts
+    /// `makeBrain()` uses, so the badge cannot claim one thing while a different
+    /// model answers.
+    var destination: AppSettings.AnswerDestination {
+        AppSettings.AnswerDestination.resolve(provider: AppSettings.provider,
+                                              hasCloudKey: hasCloudKey,
+                                              cloudModel: AppSettings.openAIModel)
+    }
+
+    var localModelName: String { AppSettings.model }
 
     private let modelContext: ModelContext
     private var observation: ScreenObservation?
@@ -136,6 +187,11 @@ final class CompanionViewModel {
         captureTask?.cancel()
         phase = .reading
         onCaptureBegan?()
+        // A key may have been added in Settings since the last summon.
+        refreshCloudKey()
+        // Before retrieval reads the store, so something captured on the phone
+        // an hour ago can resurface on this summon rather than the next one.
+        InboxImporter.importAll(into: modelContext)
 
         captureTask = Task {
             defer { onCaptureEnded?() }
@@ -156,6 +212,13 @@ final class CompanionViewModel {
                                                    inProject: currentProject)
                 linkedWork = TodoBridge.load()
                 if phase == .reading { phase = .idle }
+
+                // Both run after the panel is already usable. Meaning matching
+                // needs a round trip to the local model, and making every
+                // summon wait on it would trade a visible delay for a signal
+                // the user has not asked for yet.
+                backfillEmbeddings()
+                await addMeaningMatches(for: fresh)
             } catch ScreenCaptureError.permissionDenied {
                 guard !Task.isCancelled else { return }
                 phase = .needsPermission
@@ -164,6 +227,33 @@ final class CompanionViewModel {
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Re-scores the related strip once the screen itself has a vector.
+    ///
+    /// A second pass rather than part of the first: the structured matches are
+    /// already on screen by now, and this can only add to them or reorder them.
+    /// If the embedding model is missing or Ollama is down, the first pass is
+    /// simply what the user keeps.
+    private func addMeaningMatches(for observation: ScreenObservation) async {
+        guard AppSettings.semanticEnabled else { return }
+
+        let query = [observation.contextLabel, observation.recognizedText]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        guard !query.isEmpty else { return }
+
+        guard let vector = try? await localBrain().embed(query, model: AppSettings.embeddingModel) else {
+            return
+        }
+        guard !Task.isCancelled, observation.contextLabel == self.observation?.contextLabel else {
+            return
+        }
+
+        related = ContextRetriever.related(to: observation,
+                                           among: recentContexts(),
+                                           inProject: currentProject,
+                                           screenEmbedding: vector)
     }
 
     /// Vision is CPU-heavy enough to stall the panel's appearance if it runs
@@ -214,7 +304,7 @@ final class CompanionViewModel {
 
     func ask(_ preset: Preset) {
         question = preset.question
-        submit()
+        submit(isFromPreset: true)
     }
 
     /// Narrows the capture to a rectangle the user drags out.
@@ -266,6 +356,10 @@ final class CompanionViewModel {
             return
         }
 
+        // Half duplex. The synthesizer plays through the speakers and the mic
+        // would transcribe it, so Max would end up dictating to itself.
+        speech.stop()
+
         // Stated before anything can go wrong, so a failure that arrives later
         // replaces a visible "starting" rather than appearing out of nowhere.
         phase = .startingDictation
@@ -302,41 +396,164 @@ final class CompanionViewModel {
         onListeningEnded?()
     }
 
+    // MARK: Proposed edits
+
+    /// Pulls a rewrite out of the finished answer, if there is one.
+    ///
+    /// Nothing is written here. An identical rewrite is discarded rather than
+    /// offered, because "Apply" on a diff with no changes in it is a button
+    /// that does nothing and implies the model achieved something.
+    private func captureProposedEdit(from reply: String) {
+        guard editableFile.isOpen,
+              let proposed = CodeBlock.extract(from: reply)
+        else { return }
+
+        let lines = TextDiff.compare(editableFile.contents, to: proposed)
+        let summary = TextDiff.summary(of: lines)
+        guard !summary.isEmpty else { return }
+
+        proposedEdit = ProposedEdit(fileName: editableFile.name,
+                                    contents: proposed,
+                                    lines: lines,
+                                    summary: summary)
+    }
+
+    func openFileToEdit() {
+        guard editableFile.open() else { return }
+        proposedEdit = nil
+    }
+
+    func closeEditableFile() {
+        editableFile.close()
+        proposedEdit = nil
+    }
+
+    func applyProposedEdit() {
+        guard let proposedEdit else { return }
+
+        if editableFile.apply(proposedEdit.contents) {
+            self.proposedEdit = nil
+            phase = .saved("Applied to \(proposedEdit.fileName)")
+        } else {
+            phase = .failed("Couldn't write \(proposedEdit.fileName).")
+        }
+    }
+
+    func discardProposedEdit() {
+        proposedEdit = nil
+    }
+
+    func revertAppliedEdit() {
+        guard editableFile.revert() else {
+            phase = .failed("Couldn't put \(editableFile.name) back.")
+            return
+        }
+        phase = .saved("Reverted \(editableFile.name)")
+    }
+
     func openScreenRecordingSettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         if let url { NSWorkspace.shared.open(url) }
     }
 
-    func submit() {
+    func submit() { submit(isFromPreset: false) }
+
+    private func submit(isFromPreset: Bool) {
         let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
 
         answerTask?.cancel()
-        answer = ""
+        speech.stop()
+        proposedEdit = nil
         phase = .thinking
+
+        // The question moves into the transcript immediately so a follow-up
+        // reads as a conversation rather than as the field having been cleared.
+        let turnID = UUID()
+        turns.append(Turn(id: turnID, question: prompt, isFromPreset: isFromPreset))
+        question = ""
+        refreshReminderSuggestion()
 
         let brain = makeBrain()
         let context = AskContext(
             observation: observation,
             memories: ContextRetriever.promptLines(for: related),
             tasks: taskLines(),
-            includeImage: AppSettings.sendsImage
+            includeImage: AppSettings.sendsImage,
+            // Everything before the turn just added, so the model is not shown
+            // the question it is currently answering twice.
+            history: turns.dropLast(),
+            editableFile: editableFile.context
         )
 
         answerTask = Task {
+            // Accumulated locally rather than in a property: the turn is the
+            // one place an answer lives, and a second copy of it that has to be
+            // kept in step is the sort of thing that silently drifts.
+            var streamed = ""
             do {
                 let stream = brain.answerStream(question: prompt, context: context)
                 for try await chunk in stream {
                     if Task.isCancelled { return }
-                    answer += chunk
+                    streamed += chunk
+                    recordAnswer(streamed, for: turnID)
                     if phase != .answering { phase = .answering }
+                    speech.speakArriving(streamed)
                 }
-                if !Task.isCancelled { phase = .idle }
+                guard !Task.isCancelled else { return }
+
+                speech.finish(streamed)
+                captureProposedEdit(from: streamed)
+                phase = .idle
             } catch {
                 guard !Task.isCancelled else { return }
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Stores what was said about the screen being saved.
+    ///
+    /// Preset turns are kept here even though preset wording may never become
+    /// the *stated reason* — the transcript is a record of what happened, and
+    /// pressing "Explain" is part of what happened. The distinction the app
+    /// protects is about whose words are presented as the user's, and a
+    /// transcript attributes every line to whoever said it.
+    private func attachConversation(to record: SavedContext) {
+        // An in-flight turn has no answer yet. Storing half an exchange would
+        // read later as Max having been asked something and said nothing.
+        let finished = turns.filter { !$0.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !finished.isEmpty else { return }
+
+        for (order, turn) in finished.enumerated() {
+            let stored = ConversationTurn(question: turn.question, answer: turn.answer, order: order)
+            stored.context = record
+            modelContext.insert(stored)
+        }
+    }
+
+    private func recordAnswer(_ text: String, for turnID: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].answer = text
+    }
+
+    /// Clears the conversation but keeps the capture, so the user can start a
+    /// fresh line of questioning about the same screen.
+    func startNewConversation() {
+        answerTask?.cancel()
+        speech.stop()
+        turns = []
+        proposedEdit = nil
+        phase = .idle
+    }
+
+    /// Grabs the screen again while keeping the conversation.
+    ///
+    /// The point of the whole feature: the user does what they were told, the
+    /// screen changes, and they ask "now what?" without losing the thread.
+    func lookAgain(frontmostApp: NSRunningApplication?) {
+        speech.stop()
+        captureScreen(frontmostApp: frontmostApp)
     }
 
     /// Persists the current screen with whatever the user typed as the reason.
@@ -347,8 +564,7 @@ final class CompanionViewModel {
             return
         }
 
-        let raw = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else {
+        guard let raw = savableReason else {
             phase = .failed("Type why this matters, then save.")
             return
         }
@@ -368,6 +584,7 @@ final class CompanionViewModel {
         record.project = currentProject
 
         modelContext.insert(record)
+        attachConversation(to: record)
         do {
             try modelContext.save()
         } catch {
@@ -435,8 +652,7 @@ final class CompanionViewModel {
     /// phrasing: "remind me tomorrow" is part of why they saved it and stays in
     /// the record verbatim.
     private func refreshReminderSuggestion() {
-        let raw = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else {
+        guard let raw = savableReason else {
             reminderSuggestion = nil
             reminderDate = nil
             reminderIsArmed = false
@@ -518,21 +734,77 @@ final class CompanionViewModel {
         Task {
             guard let summary = try? await brain.summarize(intent: intent, screenText: screenText),
                   !summary.isEmpty
-            else { return }
+            else {
+                // Still worth a vector from the user's own words alone.
+                await addEmbedding(to: record)
+                return
+            }
             record.aiSummary = summary
             try? modelContext.save()
+            // Deliberately after the summary lands, since the summary is part
+            // of what gets embedded. Embedding first would mean vectoring a
+            // save without the model's description of what was on screen.
+            await addEmbedding(to: record)
+        }
+    }
+
+    /// Computes the vector for one save, locally.
+    ///
+    /// Failure is silent by design: the model may not be pulled and Ollama may
+    /// not be running, and neither should turn a successful save into a visible
+    /// error. The save is already on disk; the vector is an enhancement that
+    /// the backfill will pick up on a later summon.
+    private func addEmbedding(to record: SavedContext) async {
+        guard AppSettings.semanticEnabled else { return }
+
+        let model = AppSettings.embeddingModel
+        guard record.needsEmbedding(for: model) else { return }
+
+        guard let vector = try? await localBrain().embed(record.embeddingSource, model: model) else {
+            return
+        }
+        record.embeddingData = vector.data
+        record.embeddingModel = model
+        try? modelContext.save()
+    }
+
+    /// Vectors anything saved before the feature was switched on.
+    ///
+    /// Capped per summon rather than run as one long pass: this is background
+    /// work triggered by the user opening a panel, and a library of hundreds
+    /// would otherwise hold the local model busy for a noticeable stretch the
+    /// first time. A few summons catch up instead.
+    private func backfillEmbeddings() {
+        guard AppSettings.semanticEnabled else { return }
+
+        let model = AppSettings.embeddingModel
+        let pending = recentContexts()
+            .filter { $0.needsEmbedding(for: model) }
+            .prefix(8)
+        guard !pending.isEmpty else { return }
+
+        Task {
+            for record in pending {
+                guard !Task.isCancelled else { return }
+                await addEmbedding(to: record)
+            }
         }
     }
 
     func reset() {
         captureTask?.cancel()
         answerTask?.cancel()
+        speech.stop()
         if isListening {
             dictation.stop()
             endListening()
         }
         question = ""
-        answer = ""
+        turns = []
+        proposedEdit = nil
+        // The opened file deliberately survives, because dismissing the panel
+        // between questions about the same file is the normal way to use this
+        // and re-picking it every time through a modal would be absurd.
         observation = nil
         related = []
         phase = .idle
@@ -542,8 +814,10 @@ final class CompanionViewModel {
         reminderIsArmed = false
     }
 
-    /// Falls back to the local model when OpenAI is selected without a key,
-    /// so a missing secret degrades to a worse answer rather than an error.
+    /// Falls back to the local model when OpenAI is selected without a key, so
+    /// a missing secret degrades to a worse answer rather than an error. The
+    /// badge says so — see `AnswerDestination.cloudWithoutKey` — because a
+    /// silent downgrade is indistinguishable from the switch not working.
     private func makeBrain() -> any Brain {
         if AppSettings.provider == .openAI, let key = AppSettings.openAIKey {
             return OpenAIBrain(apiKey: key, model: AppSettings.openAIModel)

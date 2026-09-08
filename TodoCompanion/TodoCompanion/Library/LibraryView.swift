@@ -21,6 +21,13 @@ struct LibraryView: View {
     /// owns that file and can change it while this window is open.
     @State private var work = LinkedWork()
 
+    /// Saves that match the query by meaning. Held as identifiers rather than
+    /// models so a store change cannot leave this holding stale objects.
+    @State private var semanticMatchIDs: [PersistentIdentifier] = []
+
+    /// Whether the detail pane is showing the graph instead of one save.
+    @State private var isShowingGraph = false
+
     /// Which slice of the library the sidebar is showing.
     private enum Scope: Hashable {
         case everything
@@ -39,11 +46,64 @@ struct LibraryView: View {
         }
     }
 
+    /// Literal matches first, then anything that only matches by meaning.
+    ///
+    /// Ordered that way deliberately: a save containing the words the user
+    /// typed is not a guess, and should never be pushed below a resemblance.
+    /// The meaning-only matches are appended and labelled, so the list never
+    /// silently reorders itself around a score nobody can see.
     private var filtered: [SavedContext] {
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return inScope }
-        return inScope.filter {
+
+        let literal = inScope.filter {
             $0.searchHaystack.localizedCaseInsensitiveContains(term)
+        }
+
+        guard !semanticMatchIDs.isEmpty else { return literal }
+
+        let alreadyFound = Set(literal.map(\.persistentModelID))
+        let byMeaning = semanticMatchIDs
+            .filter { !alreadyFound.contains($0) }
+            .compactMap { id in inScope.first { $0.persistentModelID == id } }
+
+        return literal + byMeaning
+    }
+
+    /// True for a row that is only in the list because of what it means.
+    private func isMeaningOnlyMatch(_ context: SavedContext) -> Bool {
+        let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty, semanticMatchIDs.contains(context.persistentModelID) else {
+            return false
+        }
+        return !context.searchHaystack.localizedCaseInsensitiveContains(term)
+    }
+
+    /// Embeds the query and ranks saves against it.
+    ///
+    /// Debounced because this fires per keystroke and each run is a round trip
+    /// to a local model. Short queries are skipped: two or three characters
+    /// embed to something close to nothing in particular, and matching on that
+    /// produces confident-looking nonsense.
+    private func refreshSemanticMatches() async {
+        let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard AppSettings.semanticEnabled, term.count >= 4 else {
+            semanticMatchIDs = []
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(350))
+        guard !Task.isCancelled else { return }
+
+        let brain = OllamaBrain(endpoint: AppSettings.endpoint, model: AppSettings.model)
+        guard let vector = try? await brain.embed(term, model: AppSettings.embeddingModel) else {
+            semanticMatchIDs = []
+            return
+        }
+        guard !Task.isCancelled else { return }
+
+        semanticMatchIDs = ContextRetriever.matching(vector, among: contexts).map {
+            $0.context.persistentModelID
         }
     }
 
@@ -65,7 +125,17 @@ struct LibraryView: View {
             }
             .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         } detail: {
-            if let selection {
+            if isShowingGraph {
+                GraphView(contexts: inScope) { identifier in
+                    // Tapping a save in the graph is a way of navigating to it,
+                    // so it leaves the graph rather than selecting invisibly
+                    // behind it.
+                    if let match = contexts.first(where: { $0.reminderIdentifier == identifier }) {
+                        selection = match
+                        isShowingGraph = false
+                    }
+                }
+            } else if let selection {
                 ContextDetailView(context: selection)
             } else if case let .project(identifier) = scope,
                       let project = projects.first(where: { $0.identifier == identifier }) {
@@ -79,9 +149,18 @@ struct LibraryView: View {
             }
         }
         .task(id: scope) { work = TodoBridge.load() }
+        .task(id: search) { await refreshSemanticMatches() }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")
         .frame(minWidth: 820, minHeight: 520)
         .toolbar {
+            ToolbarItem {
+                Button {
+                    isShowingGraph.toggle()
+                } label: {
+                    Label("Connections", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .help("See how projects, topics and apps connect what you kept")
+            }
             ToolbarItem {
                 Menu {
                     Button("New project…") { isNamingProject = true }
@@ -192,7 +271,8 @@ struct LibraryView: View {
         } else {
             List(filtered, id: \.persistentModelID, selection: $selection) { context in
                 NavigationLink(value: context) {
-                    LibraryRow(context: context)
+                    LibraryRow(context: context,
+                               matchedByMeaningOnly: isMeaningOnlyMatch(context))
                 }
                 .tag(context)
             }
@@ -343,6 +423,11 @@ private struct ProjectOverview: View {
 private struct LibraryRow: View {
     let context: SavedContext
 
+    /// Set when the row is in the list only because of what it means, not
+    /// because it contains the words typed. Said out loud so a result that
+    /// looks unrelated is explained rather than merely puzzling.
+    var matchedByMeaningOnly = false
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             thumbnail
@@ -350,6 +435,11 @@ private struct LibraryRow: View {
                 Text(context.intent)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
+                if matchedByMeaningOnly {
+                    Label("close in meaning", systemImage: "wand.and.sparkles")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 HStack(spacing: DS.Spacing.hair) {
                     if let project = context.project {
                         Label(project.name, systemImage: "folder.fill")
@@ -449,6 +539,27 @@ private struct ContextDetailView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                    }
+                }
+
+                if !context.conversation.isEmpty {
+                    section("What you asked about it") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(context.orderedConversation) { turn in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    // Attributed on both sides, because a
+                                    // transcript is the one place the user's
+                                    // words and the model's sit together.
+                                    Text(turn.question)
+                                        .font(.callout.weight(.medium))
+                                    Text(turn.answer)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
                 }
 

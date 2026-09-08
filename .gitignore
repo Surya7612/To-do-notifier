@@ -52,8 +52,11 @@ builder-effective-config.yaml
 builder-debug.yml
 
 # Xcode (native macOS app)
+# Scoped to the Xcode project rather than a bare `build/`, which also matched
+# the top-level build/ holding electron-builder's icons and entitlements — those
+# are packaging *inputs* and must stay tracked.
 DerivedData/
-build/
+TodoCompanion/build/
 xcuserdata/
 *.xcuserstate
 *.xcscmblueprint

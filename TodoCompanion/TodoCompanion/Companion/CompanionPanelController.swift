@@ -123,6 +123,9 @@ final class CompanionPanelController {
                 },
                 onClearRegion: { [weak self] in
                     self?.viewModel.clearRegion(frontmostApp: self?.previousApp)
+                },
+                onLookAgain: { [weak self] in
+                    self?.viewModel.lookAgain(frontmostApp: self?.previousApp)
                 }
             )
         )

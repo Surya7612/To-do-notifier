@@ -40,6 +40,35 @@ final class Project {
     }
 }
 
+/// One question and its answer, kept because the user kept the screen it was
+/// about.
+///
+/// Conversations are *not* saved automatically. Most summons are throwaway —
+/// read the answer, dismiss — and storing all of them would fill the library
+/// with material nobody chose to keep, which is the opposite of how everything
+/// else here works. A transcript is written only when the user presses ⌘S, so
+/// it inherits the same deliberate act as the screenshot beside it.
+@Model
+final class ConversationTurn {
+    var question: String = ""
+    var answer: String = ""
+
+    /// Position in the exchange.
+    ///
+    /// SwiftData's to-many relationships have no inherent order, so without
+    /// this a two-turn conversation would come back either way round and the
+    /// follow-up would sometimes read before the question it followed.
+    var order: Int = 0
+
+    var context: SavedContext?
+
+    init(question: String, answer: String, order: Int) {
+        self.question = question
+        self.answer = answer
+        self.order = order
+    }
+}
+
 /// One captured thing plus the reason it mattered.
 ///
 /// `intent` and `aiSummary` are deliberately separate fields: the user's own
@@ -67,6 +96,18 @@ final class SavedContext {
     var topics: [String] = []
     var project: Project?
 
+    /// What was said about this screen, if anything was.
+    ///
+    /// Cascades on delete: a transcript is only ever about one save, so leaving
+    /// it behind would orphan it with nothing to read it against.
+    @Relationship(deleteRule: .cascade, inverse: \ConversationTurn.context)
+    var conversation: [ConversationTurn] = []
+
+    /// The transcript in the order it happened.
+    var orderedConversation: [ConversationTurn] {
+        conversation.sorted { $0.order < $1.order }
+    }
+
     /// When the user asked to be brought back to this. Nil means no reminder.
     var remindAt: Date?
 
@@ -81,6 +122,46 @@ final class SavedContext {
     var hasPendingReminder: Bool {
         guard let remindAt else { return false }
         return remindAt > Date()
+    }
+
+    /// Vector for meaning-based matching, generated locally. Nil until it has
+    /// been computed, which it may never be — semantic matching is opt-in and
+    /// needs a model the user has to pull, so everything downstream treats its
+    /// absence as normal rather than as an error.
+    @Attribute(.externalStorage)
+    var embeddingData: Data?
+
+    /// Which model produced `embeddingData`. Vectors from different models are
+    /// not comparable, so changing the model has to invalidate rather than
+    /// silently mix two coordinate systems.
+    var embeddingModel: String = ""
+
+    var embedding: Embedding? {
+        embeddingData.flatMap(Embedding.init(data:))
+    }
+
+    /// The text a vector is computed from.
+    ///
+    /// The user's own reason, their topics, and the model's one-line gloss of
+    /// the screen — but deliberately **not** the raw OCR text. A page of
+    /// incidental interface furniture would swamp a one-sentence reason and
+    /// make every save taken in the same app look alike. Literal search already
+    /// covers the screen text, and covers it better.
+    ///
+    /// The conversation is left out for a second reason on top of that one:
+    /// most of its length is the model's own words. Embedding those would let
+    /// what the model said decide what gets resurfaced, when the whole point of
+    /// this field is that the user's stated reason drives retrieval.
+    var embeddingSource: String {
+        [intent, topics.map { "#\($0)" }.joined(separator: " "), aiSummary]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    /// True when the stored vector is missing or was made by another model.
+    func needsEmbedding(for model: String) -> Bool {
+        guard !embeddingSource.isEmpty else { return false }
+        return embeddingData == nil || embeddingModel != model
     }
 
     init(intent: String,
@@ -107,9 +188,16 @@ final class SavedContext {
     }
 
     /// Everything a plain-text search should look through.
+    ///
+    /// The transcript is included because "I remember discussing this" is a
+    /// real way of looking for something. Safe to widen here in a way it is not
+    /// for `embeddingSource`, since this only ever feeds literal substring
+    /// matching — extra text can add a hit but cannot reorder the results.
     var searchHaystack: String {
         [intent, aiSummary, sourceApp, windowTitle, topics.joined(separator: " "), recognizedText]
             .joined(separator: "\n")
+            + "\n"
+            + orderedConversation.map { "\($0.question)\n\($0.answer)" }.joined(separator: "\n")
     }
 }
 

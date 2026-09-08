@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const api = {
   getData: () => ipcRenderer.invoke("data:get"),
   setData: (data) => ipcRenderer.invoke("data:set", data),
+  companionProjects: () => ipcRenderer.invoke("companion:projects"),
   showMain: () => ipcRenderer.invoke("app:show-main"),
   setPetVisible: (visible) => ipcRenderer.invoke("pet:set-visible", visible),
   setPetHover: (hovering) => ipcRenderer.invoke("pet:hover", hovering),

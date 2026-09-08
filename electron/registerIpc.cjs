@@ -6,6 +6,7 @@ const {
   buildCompanionSystemPrompt,
   EMPTY_TODO_REPLY,
 } = require("./lib/companionChat.cjs");
+const { loadCompanionProjects } = require("./lib/companionProjects.cjs");
 
 /**
  * Every ipcMain handler for the app, wired to the services created in main.cjs.
@@ -57,6 +58,11 @@ function registerIpc(deps) {
   const { ensureOllamaRunning } = ollama;
 
   ipcMain.handle("data:get", () => loadData());
+
+  // Read straight from disk on every call rather than cached: the companion is
+  // a separate process that can create a project at any moment, and there is
+  // no signal from it when that happens.
+  ipcMain.handle("companion:projects", () => loadCompanionProjects());
 
   ipcMain.handle("data:set", (_e, next) => {
     if (!next || typeof next !== "object") {

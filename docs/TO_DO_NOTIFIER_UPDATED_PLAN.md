@@ -104,6 +104,16 @@ enforced by the type system, not by discipline: `summarize` is absent from the
 attached to it. Ollama remains the default, the key lives in the Keychain, and
 the panel carries a standing badge naming who will answer.
 
+That badge is now the control as well as the label. Leaving the choice in
+Settings alone made it effectively permanent: switching meant summoning the
+panel, abandoning the question, opening a window — the click that opens it
+dismisses the panel — changing two settings, and starting over. In practice the
+choice is per-question, since the local model reads text back perfectly well and
+is worth leaving for a diagram or an unfamiliar interface. The menu also carries
+"Send the screenshot", because that is the setting that decides whether a visual
+question can be answered at all: without it OpenAI receives OCR text and guesses
+at anything that is not words, which reads as the cloud model being no better.
+
 **Region selection, which is not the rejected pointing feature.** Clicky has the
 *model* point at UI elements. This has the *user* point, which needs no
 coordinate mapping, no animation, and no multi-monitor arithmetic. It also costs
@@ -694,7 +704,7 @@ Let Xcode manage:
 - [x] Save it inside the existing repository
 - [x] Open the native project folder in Cursor
 - [x] Confirm build/run from Xcode
-- [ ] Create clean Git branch for native work
+- [x] Create clean Git branch for native work (`native-companion`)
 
 Actual path:
 
@@ -774,14 +784,23 @@ Add:
 
 - [x] Push-to-talk (⌘D, or the mic button, toggles a dictation session)
 - [x] Speech-to-text (`SFSpeechRecognizer` forced on-device; the panel says which)
-- [ ] Voice response — not built, and no longer obviously wanted. Reading four
-      sentences aloud is slower than reading them, and the panel is already on
-      screen by the time the answer arrives.
+- [x] Voice response (`AVSpeechSynthesizer`, off by default, sentence at a time).
+      Reversed once conversations arrived: the earlier reasoning was right about
+      a one-shot answer and wrong about a multi-turn one. Being walked through
+      an interface means looking at the interface, not at the panel, and a
+      hosted voice was never on the table — the ban on cloud transcription
+      applies in reverse.
 - [x] Visual listening state (pink ring at the cursor, driven by real input level
       so a muted or wrong input device is visible rather than silent)
 - [x] Stop / cancel control (⌘D again, Esc, or silence)
 
-Do not add wake-word monitoring immediately.
+Do not add wake-word monitoring, now or later. See §13: it means an always-hot
+microphone in an app built on capture being explicit, and the hotkey already
+costs one keystroke.
+
+Half duplex is a requirement rather than a simplification: the synthesizer plays
+through the speakers and the recognizer would transcribe it, so speaking stops
+whenever dictation starts.
 
 Two things worth recording from building this. The audio engine has to be
 recreated per session — a retained `AVAudioEngine` caches a zero-channel input
@@ -802,13 +821,19 @@ The companion should answer:
 
 using:
 
-- Todos
-- Due dates
-- Focus session
-- Notes
-- Current project
+- [x] Todos (`TodoBridge`, read-only through a security-scoped bookmark)
+- [x] Due dates (overdue tasks are labelled as such in the prompt)
+- [x] Notes
+- [x] Current project (narrows the task list to that project's own tasks)
+- [~] Focus session — **dropped, not pending.** It lives in the Electron app's
+      runtime rather than its data file, so there is nothing on disk to read.
+      Getting it would mean an IPC channel between the two apps, which is more
+      coupling than "what should I work on" is worth, and would break the
+      one-way file contract that keeps neither app writing the other's data.
 
-At this stage, begin deciding how old Electron data migrates into the new native store.
+The migration question this phase left open answered itself: nothing migrates.
+The two apps stay separate and exchange one file each, for the reasons in
+"Why the two apps were not merged" below.
 
 ---
 
@@ -818,7 +843,8 @@ Add native capture:
 
 - [x] Manual-save screenshots (⌘S in the companion panel)
 - [x] Quick context bubble (the companion panel doubles as it)
-- [ ] Voice note (waits on Phase 2)
+- [x] Voice note (⌘D dictates straight into the reason field, so speech and
+      typing are one input rather than two kinds of note)
 - [x] Text note (the panel's field is the intent field)
 - [x] Ignore (Esc discards without saving)
 - [x] Topic extraction (`#tags` typed inline — user-authored, not inferred)
@@ -842,10 +868,10 @@ First "magic moment":
 
 And the app retrieves it with the original reason I saved it.
 
-**This now works** via text search in the Saved Context window. It is not yet
-semantic — searching "screen capture" will not match a note that only says
-"display grabbing." Embeddings are deliberately deferred to Phase 5, per the
-plan's own rule about not adding them before structured retrieval works.
+**This now works** via search in the Saved Context window, which since Phase 5
+matches by meaning as well as by words — "screen capture" does now find a note
+that only says "display grabbing". That was deferred until structured retrieval
+worked first, per this plan's own rule, and it was.
 
 ---
 
@@ -853,7 +879,7 @@ plan's own rule about not adding them before structured retrieval works.
 
 Add:
 
-- [ ] Semantic search
+- [x] Semantic search (opt-in, local embeddings via `nomic-embed-text`)
 - [x] Project-aware retrieval (a save in the current project scores 3.5, above
       any single screen signal, and says so: "in Engram")
 - [x] Time-based retrieval (recency weighting, deliberately weak)
@@ -862,9 +888,7 @@ Add:
 - [x] "Why did I save this?" (the intent field, surfaced verbatim)
 - [x] "Show me everything related to X" (text search in the library)
 
-Embeddings can be added here.
-
-Do not add them before basic structured retrieval works.
+Embeddings were added here, after structured retrieval worked and not before.
 
 **Structured retrieval now works.** `ContextRetriever` scores saved items against
 the current screen using signals the user can reason about:
@@ -876,14 +900,32 @@ the current screen using signals the user can reason about:
 | Same window title | 2.5 |
 | Same application | 2.0 |
 | Words shared between the saved reason and the screen | 1.2 each, up to 3.0 |
+| Close in meaning (opt-in) | up to 2.2, scaled from a 0.55 floor |
 | Recency | up to 1.0, decaying over 30 days |
 
 Anything under 2.0 is dropped. Every match carries a human-readable reason
 ("same window", "#engram", "mentions retrieval") which is shown in the panel —
 resurfacing without an explanation is indistinguishable from the app guessing.
 
-That explainability is the reason to keep this stage non-semantic for now.
-Embeddings would improve recall but cannot tell you *why* something came back.
+That explainability was the reason to hold embeddings back, and it became the
+condition on adding them rather than a reason to refuse them forever. Meaning is
+one signal inside the structured score, not a replacement for it: it carries the
+reason "close in meaning", it can only ever add, and it is weighted below "same
+window" on purpose — a shared window title is a fact, a resemblance is not. With
+the feature off, scoring is exactly what it was before. In library search a save
+that literally contains the typed words is never ranked below a resemblance.
+
+The floor is 0.55 because embedding models have a high similarity floor rather
+than a zero one. Measured with `nomic-embed-text`, plainly unrelated pairs score
+0.31–0.40 while related ones score 0.62–0.69, so the threshold sits in that gap
+and the contribution scales from it rather than from zero.
+
+Embedding runs locally and is kept off the `Brain` protocol exactly as
+`summarize` is. It is in fact the worst thing to export, because it runs once per
+save rather than once per question: the volume is the whole library, not one
+deliberate ask. It covers the user's reason, their topics, and the model's
+one-line gloss, but deliberately not the raw OCR text, which would swamp a
+one-sentence reason and make every save from the same editor look alike.
 
 Known rough edge to tune with real use: "same app" alone clears the threshold, so
 once there are many saves from one editor the top three may be dominated by it.
@@ -941,6 +983,36 @@ The goal is:
 
 > **High relevance, low interruption.**
 
+### Decision: stopping here
+
+This phase is **closed at the summon-only form**, not left pending. The reasoning
+is worth keeping, because "make it proactive" is the obvious next idea and it is
+the wrong one for this app.
+
+The trigger has to be free of Accessibility permission, which rules out
+everything on the list above except application activation from `NSWorkspace`.
+Window titles are available only for the frontmost app, and focus sessions live
+in the Electron app's runtime rather than its data file, so they cannot be read
+at all. What is left is "the user switched apps" — a signal that says nothing
+about whether they need anything.
+
+Acting on it then forces a choice with no good side. Matching on a window title
+alone is cheap and nearly always wrong, because a title is a filename. Matching
+on screen contents means capturing without being asked, which contradicts the
+rule that capture is always explicit — the one thing that makes this app
+defensible to run all day.
+
+And the interruption budget is tiny. A companion that is right 30% of the time
+and speaks up unprompted is worse than one that is right 30% of the time when
+asked, because the wrong 70% now costs attention that was being spent elsewhere.
+Being summonable is not a weaker version of being proactive; for this kind of
+tool it is the better product.
+
+Retrieval-on-summon already delivers what the phase was for: relevant past
+material appears next to the answer, explained, at the moment the user has
+demonstrably chosen to pay attention. That is high relevance and zero
+interruption, which beats the stated goal rather than falling short of it.
+
 ---
 
 ## Phase 7 — Remote Reminders
@@ -963,13 +1035,14 @@ is built to avoid.
 it — a field that implied a feature that was not there. Worth noting as a failure
 mode of its own: schema is not behaviour.
 
+- [x] Quiet hours (mirrored from the Electron app rather than reinvented)
+
 What is still genuinely remote-only, and therefore still open:
 
 - [ ] Minimal cloud reminder model
 - [ ] Email channel
 - [ ] Retry logic
 - [ ] Delivery state
-- [ ] Quiet hours
 - [ ] Escalation logic
 - [ ] Optional experimental self-iMessage
 
@@ -1002,6 +1075,38 @@ can hold tasks from the to-do app, with the link stored on this side —
 `Project.linkedTodoIDs` — so the companion never becomes a writer of a file it
 does not own. Completing a task stays where tasks live.
 
+### Making the shared view mutual
+
+- [x] Publish projects for the to-do app to read (`ProjectExport`)
+- [x] Read them there (`electron/lib/companionProjects.cjs`) and label tasks by project
+- [x] Filter the task list by project
+- [x] Tests on both sides of the contract
+
+A grouping only the companion could see was half a feature: the point of putting
+tasks in a project is to look at that project's work, and the to-do list is where
+work actually gets done.
+
+The obvious way to do it — a `project` field on `TodoItem` in `app-data.json` —
+is the one to avoid. That file is owned by a running Electron process that holds
+it in memory and rewrites it whole, with no locking; a sandboxed second writer
+would eventually lose an edit or truncate the file. It also cannot work in
+principle, because a project groups saved screens as well as tasks, and the
+to-do app has no concept of a saved screen to hang the other half on.
+
+So the arrangement is symmetric instead: **each app owns one file and reads the
+other's.** `TodoBridge` reads tasks, notes, and quiet hours in;
+`ProjectExport` writes the project list out. The export lands in the companion's
+own sandbox container, which is the only place it can write unprompted, and the
+Electron app is unsandboxed so it can read there. Republishing is driven off
+`ModelContext.didSave` rather than called from each place that edits a project,
+because those are scattered across the panel and the library, and a new one that
+forgot to publish would leave the other app quietly showing stale names.
+
+The consequence to keep in mind: the to-do app shows project **labels and a
+filter**, and nothing more. It cannot create a project or move a task between
+them, because it does not own the list. That asymmetry is deliberate and should
+stay visible in the UI rather than being smoothed over.
+
 Later:
 
 - [ ] iOS push
@@ -1012,13 +1117,100 @@ Later:
 
 Before a full iOS app:
 
-- [ ] Create "Save to Companion" Shortcut
-- [ ] Share screenshot/link/photo
-- [ ] Dictate/type reason
-- [ ] Send into Companion Inbox
-- [ ] Sync to Mac
+- [x] Create "Save to Companion" Shortcut (the recipe is in the companion's README)
+- [x] Share screenshot/link/photo (share-sheet Shortcut, base64 into one manifest)
+- [x] Dictate/type reason (Ask for Input, which dictation works in)
+- [x] Send into Companion Inbox (a folder, via `InboxImporter`)
+- [x] Sync to Mac (iCloud Drive carries the folder; import on launch and on each summon)
 
 Only build a native iOS client when the Shortcut becomes limiting.
+
+**The inbox is a folder, not an iCloud container.** A container needs an
+entitlement that requires the paid Apple Developer Program, which this project
+does not have. A folder *inside* iCloud Drive needs no entitlement at all and
+syncs identically, so access goes through a user-chosen security-scoped
+bookmark — the same mechanism as the to-do bridge, and the same reason: the user
+picking the folder is what grants a sandboxed app access to it. As a side effect
+the transport also works over Dropbox, Syncthing, or no sync at all.
+
+The image travels base64-encoded inside a single JSON manifest rather than as a
+paired image file. Two files sharing a base name was the obvious alternative and
+is worse over a syncing folder: the halves arrive independently, so a reader can
+see a manifest whose image has not landed yet and cannot distinguish that from
+one that is never coming.
+
+Importing removes what it imported, because the folder is a transport rather
+than storage. A manifest that *fails* to parse is deliberately left in place —
+deleting it would destroy something the user captured, and its staying put is
+the only signal they get that anything went wrong. An item with a reason and no
+image is accepted, since a thought captured on a walk is much of the point. An
+image with no reason is refused: the reason is what this app is built around,
+and supplying one by inference is the exact failure §12 forbids.
+
+---
+
+## Phase 9 — Conversation
+
+The panel was one-shot: ask, read, dismiss. That is fine for "what does this
+error mean" and useless for the thing it should be best at — standing next to an
+unfamiliar interface while you are taken through it.
+
+- [x] Multi-turn conversation, with earlier turns replayed into the prompt
+- [x] Re-capture that keeps the transcript (⌘L), and a fresh start that keeps
+      the capture (⌘K)
+- [x] A named assistant, Max, as tone in the prompt and the UI
+- [x] Spoken answers, local, off by default (see Phase 2)
+- [x] A proposed change to one user-picked file, applied only from a diff
+- [x] Conversations kept with the save they were about (`ConversationTurn`)
+- [x] A graph view of saves, projects, topics and apps, on the existing
+      relationships rather than a graph database
+
+**Conversations are kept, not collected.** §2 always listed conversations among
+the things the context layer should relate, and Phase 9 initially built them as
+panel state that Esc discarded. They are now written by ⌘S and only by ⌘S: most
+summons are throwaway, and saving all of them would fill the library with
+material the user never chose to keep, which inverts the rule the rest of the
+app runs on. The transcript joins literal search but deliberately not the
+embedding source — most of its length is the model's words, and embedding those
+would let what Max said drive what gets resurfaced.
+
+**The graph needed a view, not a store.** §7 says not to introduce Neo4j merely
+because relationships exist, and this is the check on that: the edges were
+already there in SwiftData, so a graph database would have added infrastructure
+and no information. The layout is deterministic so the same library always draws
+the same picture, which is the difference between a diagram you can learn and
+one that is only a demo.
+
+**History is capped.** The screen text already dominates the prompt, so an
+unbounded transcript would push it out of a small local model's context window
+and answers would degrade the longer you talked — precisely backwards.
+
+**Max is not the bundle name.** TCC keys the Screen Recording grant to the
+signature and identifier, the SwiftData container is derived from the identifier,
+and `companionProjects.cjs` hardcodes it. A rename would silently cost the
+permission and the database and break the other app's project labels.
+
+**The persona is fenced.** A warm voice is the standard way grounding rules get
+loosened without anyone deciding to loosen them, so the prompt says outright that
+a persona does not license inventing what is on screen or softening an "I don't
+know". `Prompt.summarySystem` is the same rule inverted: a background gloss is a
+label in a list and gets no persona at all. Summaries went through `answerStream`
+and inherited the teacher's instructions, which measurably worsened them.
+
+**Preset wording can never become a stated reason.** Asking clears the field, so
+⌘S afterwards falls back to the first question the user typed — but never to
+"Explain what this is", which is this app's sentence. `intent` is a promise about
+whose words are in it, and a convenience is exactly where that promise would
+have broken quietly.
+
+**Editing is a proposal, not an action.** Same shape as the reminder parser:
+inference may offer, only the user commits. One file, chosen through a picker, a
+locally-computed diff, and a write that happens on a button press. The model
+returns a whole file rather than a patch because wrong diff line numbers are far
+more common than a mangled file, and a diff computed here from both versions
+cannot misreport what changed. A reply whose fence never closed is refused
+outright — a truncated file written over the user's own is the worst available
+outcome.
 
 ---
 
@@ -1057,7 +1249,20 @@ Do not build:
 - Neo4j infrastructure unless real need appears
 - Complex LangGraph orchestration
 - Continuous screen recording
-- Full autonomous computer-use agent
+- Full autonomous computer-use agent. Narrowed rather than abandoned: Max may
+  propose a change to **one file the user picked**, shown as a diff, applied
+  only by a button press. The reason to stop there is product quality before
+  safety — this app sees a screenshot, has no file tree, and cannot run the
+  tests, so a project-wide agent here would be strictly worse than the editor
+  already open on the same machine. What it uniquely offers is answering about
+  the code currently on screen
+- Wake words and always-listening modes. "Hey Max" needs a hot microphone in an
+  app whose screen capture is explicit and whose mic state is deliberately
+  visible, and the hotkey is already one keystroke with no Accessibility
+  requirement. The Electron app's own wake word ships off by default
+- Cloud speech **synthesis**. Spoken answers are built, using the macOS voices;
+  a hosted voice would export the screen to a vendor that is not answering the
+  question
 - Calendar/email integrations immediately
 - Social features
 - SaaS billing
@@ -1066,7 +1271,11 @@ Do not build:
 - Multi-user authentication unless needed for remote sync
 - Cursor-pointing / element-highlighting overlays (see §2, rejected from Clicky)
 - Anything requiring Accessibility permission
-- Cloud speech-to-text or hosted LLMs
+- Cloud speech-to-text
+- Hosted LLMs doing **background** work — summaries, categorisation, anything
+  unprompted. Answering a question the user explicitly asked is now allowed and
+  opt-in; see the third pass in §2 for why that ban was narrowed rather than
+  kept whole
 - Usage analytics of any kind
 
 This is a **personal project first**.

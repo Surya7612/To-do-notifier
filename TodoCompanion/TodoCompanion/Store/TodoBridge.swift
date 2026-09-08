@@ -112,18 +112,17 @@ enum TodoBridge {
     /// Asks the user to point at the file once. Their choice is what grants the
     /// sandbox access, so this cannot be done silently.
     static func link() -> Bool {
-        let panel = NSOpenPanel()
-        panel.title = "Choose your To-Do Notifier data"
-        panel.message = "Pick app-data.json so the companion can see your tasks and notes."
-        panel.allowedContentTypes = [.json]
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = suggestedLocation.deletingLastPathComponent()
-        // ~/Library is hidden in Finder, and this file lives inside it.
-        panel.showsHiddenFiles = true
-
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        let chosen = FilePicker.choose { panel in
+            panel.title = "Choose your To-Do Notifier data"
+            panel.message = "Pick app-data.json so the companion can see your tasks and notes."
+            panel.allowedContentTypes = [.json]
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = suggestedLocation.deletingLastPathComponent()
+            // ~/Library is hidden in Finder, and this file lives inside it.
+            panel.showsHiddenFiles = true
+        }
+        guard let url = chosen else { return false }
 
         do {
             let bookmark = try url.bookmarkData(options: .withSecurityScope,
