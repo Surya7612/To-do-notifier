@@ -55,7 +55,11 @@ protocol DictationRecognizer: AnyObject {
     /// Begins producing text. Each call replaces the whole field, so a
     /// recognizer must report everything said since `begin`, not just the most
     /// recent phrase.
-    func begin(onTranscript: @escaping (String) -> Void)
+    ///
+    /// - Parameter expecting: Distinctive words currently on screen, which a
+    ///   backend may use to bias recognition towards them. Ignored by a backend
+    ///   with no way to take them.
+    func begin(expecting: [String], onTranscript: @escaping (String) -> Void)
 
     /// Fed from the audio render thread, so this must not touch the main actor
     /// or take a lock the main actor holds.
@@ -89,6 +93,12 @@ final class AppleDictationRecognizer: DictationRecognizer {
     /// appended to it.
     private var settledTranscript = ""
 
+    /// Words from the current screen, reapplied to each segment's request.
+    ///
+    /// Held rather than passed through, because a pause starts a whole new
+    /// request and the hints have to go on that one too.
+    private var expectedPhrases: [String] = []
+
     private(set) var runsOnDevice = true
 
     /// Nothing to load, so there is never a wait worth explaining.
@@ -105,8 +115,9 @@ final class AppleDictationRecognizer: DictationRecognizer {
         settledTranscript = ""
     }
 
-    func begin(onTranscript: @escaping (String) -> Void) {
+    func begin(expecting: [String], onTranscript: @escaping (String) -> Void) {
         isRunning = true
+        expectedPhrases = expecting
         listen(onTranscript: onTranscript)
     }
 
@@ -121,6 +132,7 @@ final class AppleDictationRecognizer: DictationRecognizer {
         task = nil
         inflight.replace(with: nil)
         settledTranscript = ""
+        expectedPhrases = []
     }
 
     /// Starts a recognition task, and starts another whenever one finishes.
@@ -134,6 +146,22 @@ final class AppleDictationRecognizer: DictationRecognizer {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = runsOnDevice
+
+        // Off by default, which is why dictated text arrived as one
+        // unpunctuated run-on. It is not only how the sentence reads: this text
+        // becomes a saved reason and a prompt, and "remind me tomorrow at ten
+        // send the email" is harder for everything downstream than the same
+        // words with a full stop in them.
+        request.addsPunctuation = true
+
+        // Someone talking to an app, rather than a search query or a phrase to
+        // be matched, which is what the recognizer assumes otherwise.
+        request.taskHint = .dictation
+
+        // What is on their screen, so the words they are most likely to say are
+        // the ones a general English model is least likely to get right.
+        request.contextualStrings = expectedPhrases
+
         inflight.replace(with: request)
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in

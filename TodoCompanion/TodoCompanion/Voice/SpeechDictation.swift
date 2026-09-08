@@ -61,7 +61,10 @@ final class SpeechDictation {
         return min(1, CGFloat(level.drainRecentLevel()) * 6)
     }
 
-    func start(onTranscript: @escaping (String) -> Void,
+    /// - Parameter expecting: Distinctive words from the current screen, which
+    ///   a recognizer able to take them biases towards.
+    func start(expecting: [String] = [],
+               onTranscript: @escaping (String) -> Void,
                onSilence: @escaping (String) -> Void) async throws {
         guard !isListening else { return }
 
@@ -118,7 +121,7 @@ final class SpeechDictation {
             onSilence(device)
         }
 
-        recognizer.begin(onTranscript: onTranscript)
+        recognizer.begin(expecting: expecting, onTranscript: onTranscript)
     }
 
     func stop() {

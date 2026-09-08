@@ -316,6 +316,25 @@ buffer is only valid for the duration of the callback, and this backend looks at
 of a second later, on an interval, because the recognizer is an actor and the render thread cannot
 await. Apple's backend escapes this only because `append` copies synchronously.
 
+**The screen is a vocabulary, not just a subject.** The user is dictating a question *about the
+window in front of them*, and OCR has already read it, so the proper nouns they are most likely to say
+are sitting in the capture — and those are exactly the words a general English model gets wrong.
+`SFSpeechAudioBufferRecognitionRequest.contextualStrings` takes them, so `DictationHints` picks the
+distinctive ones and `SpeechDictation.start` passes them down. Only distinctive: `contextualStrings` is
+a small budget that *biases* the model, so spending it on ordinary English both wastes the slot and
+skews the model towards a word it was going to get right anyway. Interior capitals and letter-digit
+mixes (`SwiftData`, `qwen3`) are the whole point — a recognizer hears "Swift data" — and are kept in
+preference to plain capitalised nouns when the list has to be cut, since OCR produces those in bulk
+from every line of UI text. Project names come first and are never truncated away, being the user's own
+coinages by definition. Parakeet's streaming manager takes no vocabulary, so it ignores them rather
+than the caller having to know which backend it holds.
+
+`addsPunctuation` is likewise **off** by default, which is why dictated text arrived as one
+unpunctuated run-on. That is not only how the sentence reads: this text becomes a saved reason, a
+reminder phrase and a prompt, so a missing full stop degrades everything downstream. `taskHint` is set
+to `.dictation` for the same reason — the default assumes a search query. Neither affects where audio
+goes; `requiresOnDeviceRecognition` still decides that.
+
 **A dictation pause starts a new segment from empty.** `SFSpeechRecognizer` finalizes a segment when
 the speaker pauses, and the next result's `bestTranscription` begins again from nothing. Assigning it
 straight to the field erased everything said before the pause. `SpeechDictation` accumulates finalized
@@ -481,7 +500,8 @@ the screen, it is the wrong change.
 | `Voice/VoiceSynthesizer.swift` | ~133 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
 | `Voice/KokoroVoiceSynthesizer.swift` | ~212 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
 | `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
-| `Voice/DictationRecognizer.swift` | ~213 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
+| `Voice/DictationRecognizer.swift` | ~241 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
+| `Voice/DictationHints.swift` | ~96 | Picks the words on screen worth telling the recognizer to expect. Pure. |
 | `Voice/ParakeetDictationRecognizer.swift` | ~148 | The Parakeet backend, on the Neural Engine through FluidAudio. |
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
@@ -569,6 +589,7 @@ What is covered, and why these pieces specifically:
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
+| `DictationHintsTests` | Which on-screen words are offered to the recognizer | Both failure modes are invisible: too few and the feature does nothing, too many and the budget is spent biasing towards words that were never going to be misheard. Pins that ordinary capitalised UI text is dropped and that an identifier survives truncation. Asserts nothing about recognition accuracy, which is Apple's model rather than this logic. |
 | `InboxImporterTests` | Parsing the phone's JSON manifest | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. |
 | `ProjectExportTests` | The published JSON's keys and date format | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
 

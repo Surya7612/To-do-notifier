@@ -43,7 +43,10 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
         }
     }
 
-    func begin(onTranscript: @escaping (String) -> Void) {
+    /// - Parameter expecting: Ignored. The streaming manager takes no
+    ///   vocabulary hints, so there is nowhere to put them. Silently accepting
+    ///   them keeps the caller from having to know which backend it has.
+    func begin(expecting: [String], onTranscript: @escaping (String) -> Void) {
         queue.reset()
 
         drainTask = Task { [manager, queue] in

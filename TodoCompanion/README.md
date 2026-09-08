@@ -50,6 +50,12 @@ anywhere either way.
 Parakeet loads onto the Neural Engine on the first **⌘D** of each run of the app, which takes a few
 seconds and is captioned while it happens. Every press after that opens the microphone immediately.
 
+Because the question is about the screen, Apple's recognizer is told which words to expect: the
+distinctive ones OCR just read off it, plus your project names. It is the difference between "Swift
+data" and `SwiftData`, or "fair light" and Fairlight — the proper nouns you are most likely to say are
+the ones a general English model is least likely to get right, and this app happens to have already
+read them.
+
 ### Keeping asking
 
 The answer is not the end of it. Ask a follow-up and the earlier turns go with it, so "why that one?"

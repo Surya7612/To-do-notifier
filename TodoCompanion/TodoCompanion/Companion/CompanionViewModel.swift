@@ -445,6 +445,14 @@ final class CompanionViewModel {
             onListeningBegan?()
             do {
                 try await dictation.start(
+                    // The question is about the screen, so the words on it are
+                    // the ones most likely to be said and least likely to be
+                    // recognized. Project names come too, being the user's own
+                    // coinages by definition.
+                    expecting: DictationHints.from(
+                        screenText: observation?.recognizedText ?? "",
+                        projectNames: projects.map(\.name)
+                    ),
                     onTranscript: { [weak self] text in
                         self?.question = text
                         self?.dictationHint = ""
