@@ -168,6 +168,19 @@ and names what is answering instead. It is a pure function of the provider and w
 so it is testable without a Keychain, and it is derived from the same two facts as `makeBrain()` so
 the badge cannot name one model while another answers.
 
+**File dialogs need the app to stop being an accessory for a moment.** An
+`LSUIElement` app has no Dock presence and is never a normal foreground application, so macOS
+declines to give it the focus a modal file dialog requires: `NSOpenPanel.runModal()` returns
+`.cancel` without the panel ever appearing, logging nothing and throwing nothing. The button simply
+looks dead. `FilePicker.choose` switches the activation policy to `.regular` for the duration and
+restores it afterwards, which is why every open panel goes through it rather than constructing
+`NSOpenPanel` directly. The cost is a Dock icon visible while the dialog is open — worse-looking than
+this app otherwise is, and strictly better than a control that does nothing.
+
+Consequence for the sandbox: user-selected files are entitled **read-write**, not read-only, because
+`InboxImporter` deletes what it has imported. Read-only would have let the import succeed and the
+delete fail silently, re-importing the same capture on every summon.
+
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
@@ -203,6 +216,7 @@ from the screenshot along with the panel.
 | `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
 | `Support/AppSettings.swift` | ~172 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
 | `Support/DesignSystem.swift` | ~51 | Spacing, radius, alpha, and status colour tokens. |
+| `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
 | `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |

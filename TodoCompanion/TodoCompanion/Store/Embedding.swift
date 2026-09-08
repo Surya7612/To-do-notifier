@@ -4,7 +4,11 @@ import Foundation
 ///
 /// Kept as a value type with no knowledge of Ollama, SwiftData, or retrieval so
 /// the maths can be tested without any of them. Everything here is pure.
-struct Embedding: Equatable, Sendable {
+///
+/// `nonisolated` because the project builds with `SWIFT_DEFAULT_ACTOR_ISOLATION
+/// = MainActor`, which would otherwise pin arithmetic to the main actor and
+/// make it unusable from the background work that produces it.
+nonisolated struct Embedding: Equatable, Sendable {
     /// Normalized on the way in, which makes `similarity` a dot product and
     /// makes two vectors of different magnitude but the same direction compare
     /// as identical — the property we actually want from "close in meaning".
