@@ -168,13 +168,13 @@ enum InboxImporter {
         }
 
         let source = (root["source"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         return InboxItem(
             intent: intent,
             imageData: imageData,
             createdAt: createdAt ?? fallbackDate,
-            source: source?.isEmpty == false ? source! : "iPhone"
+            source: source.isEmpty ? "iPhone" : source
         )
     }
 

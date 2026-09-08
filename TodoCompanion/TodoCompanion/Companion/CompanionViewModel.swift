@@ -37,7 +37,6 @@ final class CompanionViewModel {
     var dictationHint = ""
 
     var phase: Phase = .idle
-    var answer: String = ""
     var contextLabel: String = "Nothing captured yet"
 
     /// The conversation so far, oldest first. The last turn's answer is what
@@ -465,7 +464,6 @@ final class CompanionViewModel {
 
         answerTask?.cancel()
         speech.stop()
-        answer = ""
         proposedEdit = nil
         phase = .thinking
 
@@ -489,19 +487,23 @@ final class CompanionViewModel {
         )
 
         answerTask = Task {
+            // Accumulated locally rather than in a property: the turn is the
+            // one place an answer lives, and a second copy of it that has to be
+            // kept in step is the sort of thing that silently drifts.
+            var streamed = ""
             do {
                 let stream = brain.answerStream(question: prompt, context: context)
                 for try await chunk in stream {
                     if Task.isCancelled { return }
-                    answer += chunk
-                    recordAnswer(answer, for: turnID)
+                    streamed += chunk
+                    recordAnswer(streamed, for: turnID)
                     if phase != .answering { phase = .answering }
-                    speech.speakArriving(answer)
+                    speech.speakArriving(streamed)
                 }
                 guard !Task.isCancelled else { return }
 
-                speech.finish(answer)
-                captureProposedEdit(from: answer)
+                speech.finish(streamed)
+                captureProposedEdit(from: streamed)
                 phase = .idle
             } catch {
                 guard !Task.isCancelled else { return }
@@ -541,7 +543,6 @@ final class CompanionViewModel {
         answerTask?.cancel()
         speech.stop()
         turns = []
-        answer = ""
         proposedEdit = nil
         phase = .idle
     }
@@ -799,7 +800,6 @@ final class CompanionViewModel {
             endListening()
         }
         question = ""
-        answer = ""
         turns = []
         proposedEdit = nil
         // The opened file deliberately survives, because dismissing the panel

@@ -1,8 +1,8 @@
 # To-Do Notifier
 
-**macOS productivity companion with voice chat and local AI tutoring.**
+**Two macOS apps for studying: one that tracks the work, one that remembers the context.**
 
-Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode — with a floating companion pet, tray reminders, and on-demand voice (OpenAI STT + local Ollama).
+An Electron desktop app for todos, focus sessions, and Rubber Duck study mode — plus **TodoCompanion**, a native Swift menu bar app that answers questions about what is on your screen and keeps things with your own stated reason for keeping them. They share a task list and nothing else.
 
 [![CI](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml)
 
@@ -33,7 +33,9 @@ Each owns one file and reads the other's, and **neither writes the other's**. Th
 
 ---
 
-## What it does
+## What the Electron app does
+
+The native companion has [its own README](TodoCompanion/README.md).
 
 | Area | Behavior |
 | --- | --- |
@@ -104,12 +106,15 @@ Main-process code is CommonJS (`.cjs`) for straightforward Electron packaging; t
 - **Storage:** local `app-data.json` under Application Support (not in git)
 - **Quality:** ESLint, Vitest, `npm run check` (typecheck + lint + test + build)
 
+The native companion is Swift 6 + SwiftUI with ScreenCaptureKit, Vision, SwiftData, and Speech,
+tested with Swift Testing. Its [README](TodoCompanion/README.md) covers building it.
+
 ---
 
 ## Requirements
 
 - macOS (Apple Silicon primary)
-- Node.js 18+
+- Node.js 18+ — and Xcode 16+ if you want to build the native companion too
 - [Ollama](https://ollama.com) + a model (`ollama pull llama3.2`)
 - OpenAI API key (listening / STT) — set in **Settings**, not in the repo
 - Optional: ElevenLabs API key + **My Voices** voice ID

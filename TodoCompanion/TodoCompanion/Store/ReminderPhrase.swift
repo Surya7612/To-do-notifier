@@ -20,7 +20,7 @@ struct ReminderSuggestion: Equatable, Sendable {
 ///
 /// Kept free of the notification machinery so the question "does this sentence
 /// ask for a reminder?" can be answered without a permission prompt or a clock.
-enum ReminderPhrase {
+nonisolated enum ReminderPhrase {
     /// Phrasings that mean the user wants this back, independent of any date.
     ///
     /// Deliberately verbs and not time words: "notes from tomorrow's standup"
@@ -36,7 +36,7 @@ enum ReminderPhrase {
     /// When a request has no time in it, morning is the least intrusive guess.
     private static let defaultHour = 9
 
-    nonisolated static func suggestion(in text: String,
+    static func suggestion(in text: String,
                                        now: Date = Date(),
                                        calendar: Calendar = .current) -> ReminderSuggestion? {
         let lowered = text.lowercased()
@@ -65,7 +65,7 @@ enum ReminderPhrase {
     /// Note that `NSDataDetector` takes no reference date: relative words are
     /// always resolved against the system clock, whatever `now` says. `now` is
     /// still honoured for rejecting past dates and for the fallback time.
-    private nonisolated static func firstFutureDate(
+    private static func firstFutureDate(
         in text: String,
         now: Date,
         calendar: Calendar
@@ -94,7 +94,7 @@ enum ReminderPhrase {
     /// midnight — would fire while the user is asleep. `NSTextCheckingResult`
     /// does not expose whether a time was actually stated, so the matched words
     /// are the only evidence available.
-    private nonisolated static func normalizeTimeOfDay(_ date: Date,
+    private static func normalizeTimeOfDay(_ date: Date,
                                                        statedIn matchedText: String,
                                                        calendar: Calendar) -> Date {
         let lowered = matchedText.lowercased()
@@ -111,17 +111,17 @@ enum ReminderPhrase {
     /// Matches a digit next to a colon or an am/pm marker, plus the two named
     /// times of day. Substring checks are not enough: "am" appears inside plenty
     /// of ordinary words.
-    private nonisolated static let clockTime = try? NSRegularExpression(
+    private static let clockTime = try? NSRegularExpression(
         pattern: #"\d\s*(?::\d|[ap]\.?\s?m\.?)|\bnoon\b|\bmidnight\b|o'clock"#,
         options: [.caseInsensitive]
     )
 
-    private nonisolated static func statesAClockTime(_ text: String) -> Bool {
+    private static func statesAClockTime(_ text: String) -> Bool {
         guard let clockTime else { return false }
         return clockTime.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
 
-    private nonisolated static func nextMorning(after now: Date, calendar: Calendar) -> Date? {
+    private static func nextMorning(after now: Date, calendar: Calendar) -> Date? {
         guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) else { return nil }
         return calendar.date(bySettingHour: defaultHour, minute: 0, second: 0, of: tomorrow)
     }
@@ -129,7 +129,7 @@ enum ReminderPhrase {
 
 /// The handful of times worth offering as one tap, for when the guessed time is
 /// not the wanted one.
-enum ReminderPreset: String, CaseIterable, Identifiable, Sendable {
+nonisolated enum ReminderPreset: String, CaseIterable, Identifiable, Sendable {
     case inAnHour = "In an hour"
     case thisEvening = "This evening"
     case tomorrowMorning = "Tomorrow morning"
@@ -137,7 +137,7 @@ enum ReminderPreset: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
-    nonisolated func date(from now: Date = Date(), calendar: Calendar = .current) -> Date? {
+    func date(from now: Date = Date(), calendar: Calendar = .current) -> Date? {
         switch self {
         case .inAnHour:
             return calendar.date(byAdding: .hour, value: 1, to: now)

@@ -825,9 +825,11 @@ using:
 - [x] Due dates (overdue tasks are labelled as such in the prompt)
 - [x] Notes
 - [x] Current project (narrows the task list to that project's own tasks)
-- [ ] Focus session — lives in the Electron app's runtime, not in its data file,
-      so there is nothing to read. Would need an IPC channel between the two
-      apps, which is more coupling than "what should I work on" is worth.
+- [~] Focus session — **dropped, not pending.** It lives in the Electron app's
+      runtime rather than its data file, so there is nothing on disk to read.
+      Getting it would mean an IPC channel between the two apps, which is more
+      coupling than "what should I work on" is worth, and would break the
+      one-way file contract that keeps neither app writing the other's data.
 
 The migration question this phase left open answered itself: nothing migrates.
 The two apps stay separate and exchange one file each, for the reasons in
@@ -841,7 +843,8 @@ Add native capture:
 
 - [x] Manual-save screenshots (⌘S in the companion panel)
 - [x] Quick context bubble (the companion panel doubles as it)
-- [ ] Voice note (waits on Phase 2)
+- [x] Voice note (⌘D dictates straight into the reason field, so speech and
+      typing are one input rather than two kinds of note)
 - [x] Text note (the panel's field is the intent field)
 - [x] Ignore (Esc discards without saving)
 - [x] Topic extraction (`#tags` typed inline — user-authored, not inferred)
@@ -979,6 +982,36 @@ Reasons:
 The goal is:
 
 > **High relevance, low interruption.**
+
+### Decision: stopping here
+
+This phase is **closed at the summon-only form**, not left pending. The reasoning
+is worth keeping, because "make it proactive" is the obvious next idea and it is
+the wrong one for this app.
+
+The trigger has to be free of Accessibility permission, which rules out
+everything on the list above except application activation from `NSWorkspace`.
+Window titles are available only for the frontmost app, and focus sessions live
+in the Electron app's runtime rather than its data file, so they cannot be read
+at all. What is left is "the user switched apps" — a signal that says nothing
+about whether they need anything.
+
+Acting on it then forces a choice with no good side. Matching on a window title
+alone is cheap and nearly always wrong, because a title is a filename. Matching
+on screen contents means capturing without being asked, which contradicts the
+rule that capture is always explicit — the one thing that makes this app
+defensible to run all day.
+
+And the interruption budget is tiny. A companion that is right 30% of the time
+and speaks up unprompted is worse than one that is right 30% of the time when
+asked, because the wrong 70% now costs attention that was being spent elsewhere.
+Being summonable is not a weaker version of being proactive; for this kind of
+tool it is the better product.
+
+Retrieval-on-summon already delivers what the phase was for: relevant past
+material appears next to the answer, explained, at the moment the user has
+demonstrably chosen to pay attention. That is high relevance and zero
+interruption, which beats the stated goal rather than falling short of it.
 
 ---
 

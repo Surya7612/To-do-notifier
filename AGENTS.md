@@ -414,6 +414,10 @@ Keep argument names the same as the variables they came from rather than abbrevi
   proved too weak to explain what is on screen; the ban on *unprompted* export did not change
 - Do not require Accessibility permission
 - Do not add continuous or background screen capture. Capture is always explicit and user-initiated
+- Do not make resurfacing proactive. Related material appears on summon and never otherwise; plan §
+ Phase 6 is **closed at that form**, not pending. Without Accessibility the only free trigger is an
+ app switch, which says nothing about need, and acting on it means either matching a window title
+ (usually wrong) or capturing unasked (contradicts the rule above)
 - Do not present model inference as though the user wrote it
 - Do not add features beyond what was asked
 

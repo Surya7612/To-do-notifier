@@ -346,6 +346,12 @@ only added entitlements.
   you were not shown. See above for why that is a product judgement and not only a cautious one.
 - **Pointing at things on screen.** Clicky flies the cursor to a UI element it names. It needs
   Accessibility permission and was rejected in the plan.
+- **Speaking up on its own.** Related material appears when you summon the panel and never otherwise.
+  Without Accessibility the only free trigger is "the user switched apps", which says nothing about
+  whether they need anything; acting on it would mean either matching on a window title, which is
+  usually wrong, or capturing unasked, which contradicts the rule that makes this safe to leave
+  running. Being summonable is not a weaker version of being proactive — for a tool like this it is
+  the better one.
 - **An iPhone app.** Phone capture is a Shortcut writing to a folder, deliberately, and that is
   expected to stay true for a long time.
 - **Signing and notarization.** `scripts/release-companion.sh` builds a DMG and publishes a release,

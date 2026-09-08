@@ -476,7 +476,7 @@ struct CompanionView: View {
             }
             .scrollIndicators(.never)
             .frame(maxHeight: DS.Size.maxAnswerHeight)
-            .onChange(of: viewModel.answer) {
+            .onChange(of: viewModel.turns.last?.answer) {
                 withAnimation(.easeOut(duration: 0.15)) {
                     scroller.scrollTo(bottomAnchor, anchor: .bottom)
                 }
