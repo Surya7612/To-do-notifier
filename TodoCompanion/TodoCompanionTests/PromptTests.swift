@@ -240,6 +240,52 @@ struct SavableReasonTests {
     }
 }
 
+/// Reaching the app you are asking about means clicking outside this one, which
+/// dismisses the panel. So whether a conversation survives dismissal decides
+/// whether follow-up questions work at all in the situation they exist for.
+@Suite("Resuming a conversation")
+struct ConversationResumeTests {
+    private let now = Date()
+
+    @Test("nothing to resume when there was no conversation")
+    func noConversation() {
+        #expect(!CompanionViewModel.conversationSurvives(lastTurnAt: nil, now: now))
+    }
+
+    @Test("a conversation just dismissed is still live")
+    func recentSurvives() {
+        let justNow = now.addingTimeInterval(-5)
+
+        #expect(CompanionViewModel.conversationSurvives(lastTurnAt: justNow, now: now))
+    }
+
+    /// The point of the window: long enough to go and do the step you were told
+    /// to do, then come back and ask what follows.
+    @Test("a conversation survives long enough to act on the answer")
+    func survivesDoingTheStep() {
+        let twoMinutesAgo = now.addingTimeInterval(-120)
+
+        #expect(CompanionViewModel.conversationSurvives(lastTurnAt: twoMinutesAgo, now: now))
+    }
+
+    @Test("a cold conversation is not resumed")
+    func staleIsDropped() {
+        let anHourAgo = now.addingTimeInterval(-3600)
+
+        #expect(!CompanionViewModel.conversationSurvives(lastTurnAt: anHourAgo, now: now))
+    }
+
+    @Test("the boundary is inclusive, and just past it is not")
+    func boundary() {
+        let window = CompanionViewModel.conversationResumeWindow
+
+        #expect(CompanionViewModel.conversationSurvives(
+            lastTurnAt: now.addingTimeInterval(-window), now: now))
+        #expect(!CompanionViewModel.conversationSurvives(
+            lastTurnAt: now.addingTimeInterval(-window - 1), now: now))
+    }
+}
+
 /// The persona is a tone. It must not become permission to invent, and the
 /// editing instructions must not reach a question that has no file open.
 @Suite("Persona and editing")
