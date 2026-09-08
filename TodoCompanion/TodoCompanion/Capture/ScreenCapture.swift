@@ -8,6 +8,8 @@ struct CapturedDisplay {
     /// 1-based, and only ever used for labelling text sent to the model.
     let index: Int
     var recognizedText: String = ""
+    /// Where each word sat, kept so an answer can point at what it names.
+    var textRegions: [TextRegion] = []
 }
 
 /// Everything captured on one summon, plus the context we know about it.
@@ -23,6 +25,12 @@ struct ScreenObservation {
     /// True once the user has narrowed this to a region they chose. The model
     /// is told, so it answers about the selection rather than the whole screen.
     var isCropped = false
+
+    /// The area of the screen, in global AppKit coordinates, that `image`
+    /// covers: the focused display normally, the dragged-out region after a
+    /// crop. Needed to turn a normalized text box back into a place on screen,
+    /// and nil in tests that never involve a real display.
+    var primaryScreenFrame: CGRect?
 
     /// The focused display. This is the one stored with a saved context; a
     /// second monitor's pixels are rarely what the user meant to keep.
@@ -90,6 +98,9 @@ struct ScreenObservation {
         narrowed.primary = CapturedDisplay(image: cut, index: primary.index)
         narrowed.others = []
         narrowed.isCropped = true
+        // The selection, not the display: text boxes from the re-read of this
+        // crop are normalized against the crop, so that is what they map into.
+        narrowed.primaryScreenFrame = selection
         return narrowed
     }
 }
@@ -174,12 +185,14 @@ enum ScreenCapture {
             captured[offset].map { CapturedDisplay(image: $0, index: offset + 1) }
         }
 
-        return ScreenObservation(
+        var observation = ScreenObservation(
             primary: CapturedDisplay(image: primaryImage, index: 1),
             others: others,
             appName: frontmostApp?.localizedName,
             windowTitle: frontWindowTitle(in: content, for: frontmostApp)
         )
+        observation.primaryScreenFrame = nsScreen(for: focused)?.frame
+        return observation
     }
 
     private static func shoot(_ display: SCDisplay,
@@ -206,12 +219,15 @@ enum ScreenCapture {
         return content.displays.first { $0.displayID == displayID }
     }
 
-    private static func backingScale(for display: SCDisplay) -> Double {
-        let screen = NSScreen.screens.first { screen in
+    private static func nsScreen(for display: SCDisplay) -> NSScreen? {
+        NSScreen.screens.first { screen in
             let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
             return number?.uint32Value == display.displayID
         }
-        return min(2.0, Double(screen?.backingScaleFactor ?? 2.0))
+    }
+
+    private static func backingScale(for display: SCDisplay) -> Double {
+        min(2.0, Double(nsScreen(for: display)?.backingScaleFactor ?? 2.0))
     }
 
     private static func frontWindowTitle(in content: SCShareableContent,

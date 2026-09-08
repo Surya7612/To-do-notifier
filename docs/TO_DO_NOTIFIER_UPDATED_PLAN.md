@@ -520,6 +520,15 @@ Potentially for:
 - Application/window context
 - More intelligent context than raw screenshots alone
 
+**Decision: not used, and now deliberately unnecessary.** The last thing this was wanted for was
+pointing at a control Max had named. That shipped in Phase 10 without it, on the OCR word boxes
+Vision was already producing, and the OCR route turned out to be *better* rather than merely
+permission-free — see that phase for the reasoning. Application and window context comes from
+`NSWorkspace` and ScreenCaptureKit, which need no such grant.
+
+Granting the permission by hand on the developer's own machine does not change this. A grant on one
+machine is not a property of the product; every downloader would still have to be asked.
+
 ### AVFoundation / Speech
 For native voice/audio work.
 
@@ -1211,6 +1220,56 @@ more common than a mangled file, and a diff computed here from both versions
 cannot misreport what changed. A reply whose fence never closed is refused
 outright — a truncated file written over the user's own is the worst available
 outcome.
+
+## Phase 10 — Pointing at the screen
+
+- [x] Per-word OCR boxes kept from Vision, asked for by character range
+- [x] `ScreenTextLocator`, matching a finished answer against them
+- [x] `ScreenHighlight`, a box drawn briefly around the match
+- [x] The prompt asks Max to quote a control's label verbatim
+- [x] Offered on a button that names the match, never drawn automatically
+- [~] Moving the cursor to the control — rejected, see below
+
+Closes the last thing §7 wanted `AXUIElement` for. An answer that says to click
+"Fairlight" now offers a **Show me "Fairlight"** button, and ⌘P boxes those words
+on the actual screen. The box outlives the panel, so the user can press it, click
+into the application, and still see where they were pointed.
+
+**Accessibility was rejected on merit, not only on permissions.** The obvious
+build is Clicky's: traverse the frontmost app's accessibility tree, find the
+element, read its position. It needs the one permission this project has refused
+throughout — and it fails in Qt, Electron, and games, which includes DaVinci
+Resolve, the application that motivated the feature.
+
+The argument that settles it is a symmetry that only becomes visible once the
+model is in the loop: **Max can only name what it can read.** It is shown a
+screenshot, so its words are words Vision already has. An accessibility tree's
+extra coverage is therefore mostly controls Max could never have referred to,
+while its blind spot is the exact application in question. Reading pixels works
+wherever the user can see, which is the only place that matters here.
+
+The owner granting Accessibility to this bundle by hand did not change the
+decision. A grant on one machine is not a property of the product.
+
+**A line box would have been useless.** Vision returns a recognized *line*, and a
+menu bar comes back as one — so the line's box covers half the screen. Words are
+located individually by character range and recombined into multi-word labels,
+which is what makes the box tight enough to mean something.
+
+**Matching would rather find nothing than the wrong thing.** A quoted label wins,
+because the prompt asks Max to quote the label it means and that is the model
+stating its intent rather than us inferring it from prose. An unquoted candidate
+must be long or multi-word and must not be a word Max uses to *describe*
+controls — "menu", "panel", "button" would otherwise point at wherever that word
+happens to be printed. So an unlabelled glyph is unfindable and no button
+appears, which is correct: Max describes those positionally, and a confident box
+over the wrong icon is worse than none.
+
+**It highlights and does not move the pointer.** Same rule as editing and
+reminders, in its third instance: inference may suggest, only the user acts.
+Moving the cursor would also fight anyone mid-drag. And it runs from a button
+rather than after every answer, because most answers are not directions to a
+control, and drawing on the user's screen unasked is the app acting on inference.
 
 ---
 

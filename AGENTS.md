@@ -269,7 +269,34 @@ stutter where an immediate-mode draw does not.
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
-from the screenshot along with the panel.
+from the screenshot along with the panel. `ScreenHighlight` is a second such window.
+
+**Pointing at a control reads pixels, not the accessibility tree.** Clicky flies the cursor to a named
+element through `AXUIElement`, and that route was rejected twice over. It needs the Accessibility
+permission this app declines to require, and it fails in exactly the applications the feature is most
+useful for — Qt, Electron, games, anything drawing its own interface — with DaVinci Resolve, the
+motivating case, among them.
+
+The argument that settles it is a symmetry: **Max can only name what it can read.** It is shown a
+screenshot, so its words are words Vision already has, which means an accessibility tree's extra
+coverage is mostly controls Max could never have referred to. So `TextRecognizer` keeps a per-word
+`TextRegion` — asked of Vision by character range, because a recognized "line" is often a whole menu
+bar and its box would cover half the screen — and `ScreenTextLocator` matches the answer against them.
+Vision normalizes from the bottom left and so does AppKit, so `screenRect` needs **no** vertical flip,
+unlike `cropped(to:)` which targets a `CGImage`; the two conversions look alike and are not.
+
+It highlights rather than moving the pointer, because moving it would be inference *acting* and would
+fight anyone mid-drag, and it runs from a button rather than after every answer. The match is named on
+that button, so the user sees which words will be boxed before anything is drawn on their screen.
+
+Matching is deliberately reluctant: a **quoted** label outranks everything, since `Prompt.system` asks
+Max to quote a control's label character for character, and that is the model stating what it meant
+rather than us inferring it from prose. An unquoted candidate must be six characters or multi-word and
+must not be one of `descriptiveWords` — "menu", "panel", "button" are how Max talks *about* controls, so
+matching them points at whatever unrelated place the word happens to be printed. An unlabelled glyph is
+therefore unfindable, which is the right failure: Max describes those positionally, and a confident box
+over the wrong icon is worse than no box. If a change would let an unexplained or unquoted guess draw on
+the screen, it is the wrong change.
 
 ## Key files — `TodoCompanion/TodoCompanion/`
 
@@ -280,10 +307,12 @@ from the screenshot along with the panel.
 | `App/SettingsView.swift` | ~240 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~605 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~872 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, and proposed file edits. |
-| `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
-| `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
+| `Companion/CompanionView.swift` | ~627 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
+| `Companion/CompanionViewModel.swift` | ~963 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, and the control an answer named. |
+| `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
+| `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
+| `Capture/ScreenTextLocator.swift` | ~165 | Finds the control an answer named among those boxes, and maps one onto the screen. Pure. |
+| `Capture/ScreenHighlight.swift` | ~89 | The box drawn briefly around it. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
 | `Brain/Brain.swift` | ~254 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, and the file-editing rules. |
@@ -356,6 +385,8 @@ What is covered, and why these pieces specifically:
 | `CodeBlockTests` | Pulling the file out of a reply | A model's reply is prose with a file inside it. Extracting wrongly means writing prose, or half a file, over the user's code, so an unterminated fence must yield nothing. |
 | `ContextGraphTests` | Nodes and edges built from saves | A wrong edge is a wrong claim about how the user's material relates, and it is drawn large enough to be believed. Pins that shared tags collapse to one node and that filtering a kind removes its edges too. |
 | `GraphLayoutTests` | Force-directed placement | No assertable "correct" coordinates, so it pins the properties that make it usable: everything placed, nothing off-canvas, connected nodes closer than unconnected, and the same picture every time. |
+| `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
+| `ScreenRectTests` | Normalized box → screen coordinates | Vision and AppKit share a bottom-left origin where `cropped(to:)` needs a flip, so the mistake is a box a mirrored distance up the screen, which looks plausible. Also pins that a cropped capture maps into the *selection*. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
@@ -423,10 +454,16 @@ Keep argument names the same as the variables they came from rather than abbrevi
 - Do not route background or automatic work to a cloud model. Foreground questions only, and only
   when the user has opted in. This rule replaced a blanket ban on hosted models once local vision
   proved too weak to explain what is on screen; the ban on *unprompted* export did not change
-- Do not require Accessibility permission
+- Do not require Accessibility permission. This holds even though the owner has granted it to this
+ bundle by hand: a grant on one machine is not a property of the product, and the permission still
+ has to be earned from everyone who downloads it. Pointing at a control was built on OCR boxes for
+ this reason, and `AXUIElement` stays out of the source
+- Do not draw on the user's screen unasked, or move their pointer at all. `ScreenHighlight` runs from
+ a button press and names its match beforehand; a highlight after every answer would be the app
+ acting on inference, which is the same rule that governs file edits
 - Do not add continuous or background screen capture. Capture is always explicit and user-initiated
 - Do not make resurfacing proactive. Related material appears on summon and never otherwise; plan §
- Phase 6 is **closed at that form**, not pending. Without Accessibility the only free trigger is an
+ Phase 6 is **closed at that form**, not pending. Without Accessibility the only trigger left is an
  app switch, which says nothing about need, and acting on it means either matching a window title
  (usually wrong) or capturing unasked (contradicts the rule above)
 - Do not present model inference as though the user wrote it

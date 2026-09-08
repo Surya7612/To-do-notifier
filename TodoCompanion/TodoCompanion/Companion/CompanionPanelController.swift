@@ -13,6 +13,7 @@ final class CompanionPanelController {
     private weak var previousApp: NSRunningApplication?
 
     private let indicator = CaptureIndicator()
+    private let highlight = ScreenHighlight()
     private var outsideClickMonitor: Any?
 
     init(modelContext: ModelContext) {
@@ -23,6 +24,7 @@ final class CompanionPanelController {
             self?.indicator.show(.listening, level: { [weak self] in self?.viewModel.currentInputLevel ?? 0 })
         }
         viewModel.onListeningEnded = { [weak self] in self?.indicator.hide() }
+        viewModel.onHighlight = { [weak self] rect in self?.highlight.show(rect) }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }

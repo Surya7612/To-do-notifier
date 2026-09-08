@@ -313,6 +313,19 @@ struct PersonaPromptTests {
         #expect(Prompt.system.contains("single next action"))
     }
 
+    /// `ScreenTextLocator` searches the screen for the words Max quoted, and
+    /// believes a quoted label over an unquoted guess. Without this instruction
+    /// the feature still works but finds far less, so the two are one design and
+    /// this is the half that lives in another file.
+    @Test("controls are to be quoted verbatim, so they can be found on screen")
+    func asksForVerbatimLabels() {
+        #expect(Prompt.system.contains("double quotes"))
+        #expect(Prompt.system.contains("character for character"))
+        // And says what to do when there is no label to quote, rather than
+        // leaving the model to invent one that matches nothing.
+        #expect(Prompt.system.contains("quote nothing"))
+    }
+
     /// A question about the screen must never arrive with instructions about
     /// rewriting files attached.
     @Test("editing instructions appear only when a file is open")

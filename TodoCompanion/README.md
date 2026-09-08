@@ -26,7 +26,7 @@ Related things you saved before are scored against the screen
    ↓
 Question + screen + those memories + your open tasks go to the model
    ↓
-Answer streams into the panel
+Answer streams into the panel · ⌘P boxes the control it named, on screen
 ```
 
 Press **⌘R** to drag out one region and ask about that instead. It crops the screenshot already in
@@ -95,6 +95,29 @@ numbers wrong far more often than they mangle an entire file, and the diff you s
 from the two versions, so it cannot be wrong about what changed. A reply whose code block was cut off
 is refused rather than applied. **Revert my last applied change** puts the file back as it was before
 the conversation touched it, which is a convenience and not a substitute for version control.
+
+### Showing you where
+
+When an answer names a control that is on screen, a **Show me "Fairlight"** button appears under it.
+Press it, or **⌘P**, and a box is drawn around those words on your actual screen for a couple of
+seconds. The panel does not need to stay open, so you can press it, click into the application, and
+still see where you were pointed.
+
+It finds things by reading pixels — the words Vision already recognized, with each word's position
+kept — rather than by asking the application through the accessibility tree. That sounds like the
+lesser option and is not, for one reason: **Max can only name what it can read.** It is shown a
+screenshot, so the words it uses are words the OCR has. An accessibility tree mostly knows about
+controls Max could never have referred to, needs a permission this app declines to require, and is
+thin or missing in precisely the applications this helps with most — DaVinci Resolve, Blender, games,
+anything drawing its own interface. Reading pixels works wherever you can see.
+
+It would rather show you nothing than the wrong thing. Max is asked to quote a control's label
+exactly, and a quoted label beats any unquoted guess; an unquoted one has to be long or multi-word,
+and words Max uses to *describe* controls — "menu", "panel", "button" — can never match. So an
+unlabelled icon is not findable, and the button simply does not appear. That is deliberate: Max
+describes those by position, and a confident box over the wrong icon is worse than no box at all.
+
+Your pointer is never moved. The box shows you where to look, and your hands stay yours.
 
 ### Who answers
 
@@ -306,7 +329,7 @@ put is the only signal anything went wrong.
 |------|------|
 | `App/` | `NSApplicationDelegate`, activation policy, hotkey wiring, Settings UI |
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
-| `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator |
+| `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
 | `Voice/` | On-device dictation, input level metering, and spoken answers |
 | `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
@@ -338,6 +361,10 @@ There is no wake word and no always-listening mode: the microphone opens when yo
 Max can write to exactly one file, chosen by you through a file dialog, and only when you press Apply
 on a diff. Inference never writes to disk on its own.
 
+Nothing is drawn over your screen unless you ask for it, and your pointer is never moved. No
+Accessibility permission is requested or used — the global hotkey, the click-outside dismissal, and
+the on-screen highlight were each built to avoid needing it.
+
 The App Sandbox is enabled, with outgoing network, microphone, and user-selected file access as the
 only added entitlements.
 
@@ -351,10 +378,10 @@ only added entitlements.
   and ships it off by default, which is the evidence rather than the counter-example.
 - **Editing more than one file.** No project-wide agent, no running your tests, no applying a change
   you were not shown. See above for why that is a product judgement and not only a cautious one.
-- **Pointing at things on screen.** Clicky flies the cursor to a UI element it names. It needs
-  Accessibility permission and was rejected in the plan.
+- **Moving your cursor for you.** Clicky flies the pointer to the element it names. Max draws a box
+  around it instead and leaves your hands alone — see "Showing you where" above.
 - **Speaking up on its own.** Related material appears when you summon the panel and never otherwise.
-  Without Accessibility the only free trigger is "the user switched apps", which says nothing about
+  Without Accessibility the only trigger left is "the user switched apps", which says nothing about
   whether they need anything; acting on it would mean either matching on a window title, which is
   usually wrong, or capturing unasked, which contradicts the rule that makes this safe to leave
   running. Being summonable is not a weaker version of being proactive — for a tool like this it is

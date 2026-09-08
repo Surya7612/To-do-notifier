@@ -21,6 +21,8 @@ final class CompanionViewModel {
     var onCaptureEnded: (() -> Void)?
     var onListeningBegan: (() -> Void)?
     var onListeningEnded: (() -> Void)?
+    /// Draws a box around a place on screen, in global AppKit coordinates.
+    var onHighlight: ((CGRect) -> Void)?
 
     private let dictation = SpeechDictation()
     private let regionSelector = RegionSelector()
@@ -186,6 +188,8 @@ final class CompanionViewModel {
     func captureScreen(frontmostApp: NSRunningApplication?) {
         captureTask?.cancel()
         phase = .reading
+        // The boxes it was resolved against belong to the screen being replaced.
+        pointerTarget = nil
         onCaptureBegan?()
         // A key may have been added in Settings since the last summon.
         refreshCloudKey()
@@ -197,9 +201,14 @@ final class CompanionViewModel {
             defer { onCaptureEnded?() }
             do {
                 var fresh = try await ScreenCapture.captureAllDisplays(frontmostApp: frontmostApp)
-                fresh.primary.recognizedText = await Self.readText(in: fresh.primary.image)
+                let read = await Self.readText(in: fresh.primary.image)
+                fresh.primary.recognizedText = read.text
+                fresh.primary.textRegions = read.regions
                 for index in fresh.others.indices {
-                    fresh.others[index].recognizedText = await Self.readText(in: fresh.others[index].image)
+                    // Boxes are kept for the focused display only: pointing at
+                    // a monitor the user is not looking at would move their
+                    // attention rather than direct it.
+                    fresh.others[index].recognizedText = await Self.readText(in: fresh.others[index].image).text
                 }
                 guard !Task.isCancelled else { return }
                 observation = fresh
@@ -258,7 +267,7 @@ final class CompanionViewModel {
 
     /// Vision is CPU-heavy enough to stall the panel's appearance if it runs
     /// inline, so each display is recognized off the main actor.
-    private static func readText(in image: CGImage) async -> String {
+    private static func readText(in image: CGImage) async -> RecognizedScreen {
         await Task.detached { TextRecognizer.recognize(in: image) }.value
     }
 
@@ -335,8 +344,11 @@ final class CompanionViewModel {
             }
 
             var updated = narrowed
-            updated.primary.recognizedText = await Self.readText(in: narrowed.primary.image)
+            let read = await Self.readText(in: narrowed.primary.image)
+            updated.primary.recognizedText = read.text
+            updated.primary.textRegions = read.regions
             observation = updated
+            pointerTarget = nil
             contextLabel = "Selected region of \(updated.contextLabel)"
             if phase == .failed("") || phase == .idle { phase = .idle }
         }
@@ -465,6 +477,7 @@ final class CompanionViewModel {
         answerTask?.cancel()
         speech.stop()
         proposedEdit = nil
+        pointerTarget = nil
         phase = .thinking
 
         // The question moves into the transcript immediately so a follow-up
@@ -504,6 +517,7 @@ final class CompanionViewModel {
 
                 speech.finish(streamed)
                 captureProposedEdit(from: streamed)
+                findPointerTarget(in: streamed)
                 lastTurnAt = Date()
                 phase = .idle
             } catch {
@@ -533,6 +547,34 @@ final class CompanionViewModel {
         }
     }
 
+    /// The control the finished answer named, if it named one that is on screen.
+    ///
+    /// Resolved once the answer is complete rather than per streamed chunk: the
+    /// search runs over every word Vision found, and a half-arrived sentence
+    /// would match on words the answer is still in the middle of writing.
+    private(set) var pointerTarget: ScreenTextLocator.Match?
+
+    private func findPointerTarget(in answer: String) {
+        guard let observation, observation.primaryScreenFrame != nil else {
+            pointerTarget = nil
+            return
+        }
+        pointerTarget = ScreenTextLocator.locate(named: answer, in: observation.primary.textRegions)
+    }
+
+    /// Draws a box around what the answer named.
+    ///
+    /// Deliberately a button press rather than something that happens on its
+    /// own: drawing over the user's screen after every answer would be the app
+    /// acting unasked, and most answers are not directions to a control.
+    func showPointerTarget() {
+        guard let pointerTarget,
+              let frame = observation?.primaryScreenFrame
+        else { return }
+
+        onHighlight?(ScreenTextLocator.screenRect(for: pointerTarget.boundingBox, in: frame))
+    }
+
     private func recordAnswer(_ text: String, for turnID: UUID) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].answer = text
@@ -546,6 +588,7 @@ final class CompanionViewModel {
         turns = []
         lastTurnAt = nil
         proposedEdit = nil
+        pointerTarget = nil
         phase = .idle
     }
 
@@ -820,6 +863,7 @@ final class CompanionViewModel {
 
         question = ""
         proposedEdit = nil
+        pointerTarget = nil
         // The opened file deliberately survives, because dismissing the panel
         // between questions about the same file is the normal way to use this
         // and re-picking it every time through a modal would be absurd.
