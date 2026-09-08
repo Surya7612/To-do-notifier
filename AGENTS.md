@@ -144,6 +144,16 @@ app that owns notification preferences. `QuietHours.contains` deliberately repro
 the disagreement is invisible. A reminder landing inside the window moves to the end of it, and the panel
 shows the moved time rather than the requested one.
 
+**An explicit reminder instruction is carried out, not asked about.** `CompanionViewModel.submit`
+routes to the save path when `isReminderInstruction` holds, which needs an explicit cue *and* a time
+stated in the sentence, with the offered reminder still armed. "Remind me to text voice bugs at 10 AM
+today" was otherwise sent to the model, which replied by explaining how to create a reminder in some
+other application — the app declining to do the one thing it had plainly been told to do. This is not
+the parser acting on inference; it is the user's own instruction, which is why a stated time is required
+rather than `ReminderPhrase`'s fallback guess of tomorrow morning. "Remind me what a closure is" names
+no time and stays a question, and switching the offered reminder off makes the sentence a question
+again. Preset wording can never qualify.
+
 **A reminder is set by the user, never by the parser.** `ReminderPhrase` reads a saved reason and may
 *offer* a time, but it only arms the reminder by default when the user actually used words like "remind
 me". A date noticed in passing — "notes from tomorrow's standup" — is offered switched off. The chosen
@@ -218,6 +228,28 @@ would otherwise refuse with the field looking empty for no visible reason. Prese
 **ineligible**: "Explain what this is, in plain language" is this app's sentence, and storing it as the
 user's reason for keeping something would break precisely the stated-versus-inferred distinction the
 app exists to maintain. That is what `Turn.isFromPreset` is for; the model never sees it.
+
+**`stopSpeaking` on an idle synthesizer wedges it.** `AVSpeechSynthesizer.stopSpeaking(at:)` called
+when nothing is being spoken leaves the instance in a state where every later `speak` is accepted and
+silently never heard. `SpeechPlayback.stop()` runs at the top of every question, so the unconditional
+version meant answers were *never* read aloud and the setting looked inert. It now returns early unless
+the synthesizer is actually speaking, and replaces the instance after a real stop rather than reusing
+it, since recovery is undocumented and evidently version-dependent. `isSpeaking` is driven by a delegate
+rather than set on enqueue, or the stop button stays lit after the answer ends.
+
+**A dictation pause starts a new segment from empty.** `SFSpeechRecognizer` finalizes a segment when
+the speaker pauses, and the next result's `bestTranscription` begins again from nothing. Assigning it
+straight to the field erased everything said before the pause. `SpeechDictation` accumulates finalized
+segments in `settledTranscript` and appends the in-progress one. A finished segment also used to end
+the whole session, which made dictating anything with a pause in it impossible — stopping to think
+stopped the recording — so a new task is started instead, and only the user ends it. The audio tap keeps
+feeding buffers across that swap, so the live request is held behind a lock in `RequestHolder`.
+
+**A crop is measured against the area currently shown, not the display.** `ScreenObservation`
+records `primaryScreenFrame`, and `cropped(to:on:)` uses it in preference to `screen.frame`. Selecting a
+second region measured the new selection against the whole display while the image was already a crop,
+scaling by the wrong factor and offsetting by the first crop's origin — so re-selecting after a mis-drag
+cropped somewhere unrelated or failed as "too small to read".
 
 **Speech out is local, like speech in.** `AVSpeechSynthesizer` rather than a hosted voice. The ban on
 cloud transcription applies in reverse — routing every answer through a speech vendor would export the

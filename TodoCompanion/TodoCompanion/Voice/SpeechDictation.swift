@@ -37,9 +37,22 @@ final class SpeechDictation {
     /// permission existed caches an input node with a zero-channel format and
     /// never recovers, which silently produces no audio at all.
     private var engine: AVAudioEngine?
-    private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var recognizer: SFSpeechRecognizer?
+
+    /// The live request, reachable from the audio thread.
+    ///
+    /// Held in a lock rather than as a plain property because the tap keeps
+    /// feeding buffers while a pause swaps the request underneath it.
+    private let inflight = RequestHolder()
+
+    /// Text from segments the recognizer has already finalized.
+    ///
+    /// The recognizer ends a segment at a pause and the next one starts its
+    /// transcription over from empty, so reporting only the current segment
+    /// erased everything said before the pause. Finalized text accumulates here
+    /// and the in-progress segment is appended to it.
+    private var settledTranscript = ""
 
     private(set) var isListening = false
     /// False means Apple's servers are transcribing; the UI says so.
@@ -73,11 +86,8 @@ final class SpeechDictation {
         guard let recognizer, recognizer.isAvailable else { throw Failure.recognizerUnavailable }
         self.recognizer = recognizer
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
         isOnDevice = recognizer.supportsOnDeviceRecognition
-        request.requiresOnDeviceRecognition = isOnDevice
-        self.request = request
+        settledTranscript = ""
 
         let engine = AVAudioEngine()
         self.engine = engine
@@ -93,8 +103,8 @@ final class SpeechDictation {
         inputDeviceName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "unknown input"
         level.reset()
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level] buffer, _ in
-            request.append(buffer)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level, inflight] buffer, _ in
+            inflight.append(buffer)
             level.record(buffer)
         }
 
@@ -117,26 +127,61 @@ final class SpeechDictation {
             onSilence(device)
         }
 
+        listen(onTranscript: onTranscript, onEnd: onEnd)
+    }
+
+    /// Starts a recognition task, and starts another whenever one finishes.
+    ///
+    /// A finished segment used to end the whole session, which made dictating
+    /// anything with a pause in it impossible: stopping to think ended the
+    /// recording. This is push-to-talk, so only the user decides when it ends.
+    private func listen(onTranscript: @escaping (String) -> Void,
+                        onEnd: @escaping () -> Void) {
+        guard let recognizer, isListening || engine != nil else { return }
+
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = isOnDevice
+        inflight.replace(with: request)
+
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            if let text = result?.bestTranscription.formattedString, !text.isEmpty {
-                Task { @MainActor in onTranscript(text) }
-            }
-            if let error {
-                NSLog("[Dictation] recognition error: \(error.localizedDescription)")
-            }
-            if error != nil || result?.isFinal == true {
-                Task { @MainActor in
-                    self?.stop()
-                    onEnd()
+            Task { @MainActor in
+                guard let self, self.isListening else { return }
+
+                if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
+                    onTranscript(self.joined(with: segment))
                 }
+
+                if let error {
+                    // A segment that ends on silence reports an error rather
+                    // than a result, which is ordinary here and not a failure.
+                    NSLog("[Dictation] recognition ended: \(error.localizedDescription)")
+                }
+
+                guard error != nil || result?.isFinal == true else { return }
+
+                // Commit the finished segment before the next one starts from
+                // empty, or the pause would take those words with it.
+                if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
+                    self.settledTranscript = self.joined(with: segment)
+                }
+
+                self.task = nil
+                self.listen(onTranscript: onTranscript, onEnd: onEnd)
             }
         }
     }
 
+    private func joined(with segment: String) -> String {
+        settledTranscript.isEmpty ? segment : settledTranscript + " " + segment
+    }
+
     func stop() {
         guard isListening else { return }
+        // Cleared first so the recognition callback, which may already be in
+        // flight, does not start another segment on the way out.
         isListening = false
-        request?.endAudio()
+        inflight.finish()
         task?.cancel()
         cleanUp()
     }
@@ -149,8 +194,33 @@ final class SpeechDictation {
             if engine.isRunning { engine.stop() }
         }
         engine = nil
-        request = nil
+        inflight.replace(with: nil)
         task = nil
+        settledTranscript = ""
+    }
+
+    /// Holds the recognition request the audio tap is feeding.
+    ///
+    /// The tap runs on a render thread and the request is swapped from the main
+    /// actor at every pause, so the handoff is locked.
+    private final class RequestHolder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var request: SFSpeechAudioBufferRecognitionRequest?
+
+        func replace(with request: SFSpeechAudioBufferRecognitionRequest?) {
+            lock.withLock {
+                self.request?.endAudio()
+                self.request = request
+            }
+        }
+
+        func finish() {
+            lock.withLock { request?.endAudio() }
+        }
+
+        func append(_ buffer: AVAudioPCMBuffer) {
+            lock.withLock { request?.append(buffer) }
+        }
     }
 
     /// Tracks whether any non-silent audio arrived. Written from the audio

@@ -111,6 +111,26 @@ final class CompanionViewModel {
         return linkedWork.quietHours.contains(reminderDate)
     }
 
+    /// Whether what the user typed is a reminder *instruction* rather than a
+    /// question about one.
+    ///
+    /// "Remind me to text voice bugs at 10 AM today" was being sent to the
+    /// model, which answered by explaining how to set a reminder in some other
+    /// application — the app declining to do the one thing it was plainly told
+    /// to do. This is not the parser overreaching: it requires the words "remind
+    /// me" (or another explicit cue) *and* a time actually stated in the
+    /// sentence, so it is the user's own instruction being carried out.
+    ///
+    /// Both halves matter. "Remind me what a closure is" names no time and
+    /// stays a question, which is why a stated time is required rather than the
+    /// parser's fallback guess of tomorrow morning.
+    /// Switching the offered reminder off is also an instruction, so the
+    /// sentence goes back to being an ordinary question.
+    var isReminderInstruction: Bool {
+        guard let suggestion = reminderSuggestion, reminderIsArmed else { return false }
+        return suggestion.wasExplicitlyRequested && suggestion.matchedText != nil
+    }
+
     /// Every project, for the picker.
     private(set) var projects: [Project] = []
 
@@ -473,6 +493,14 @@ final class CompanionViewModel {
     private func submit(isFromPreset: Bool) {
         let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
+
+        // A typed instruction to set a reminder is carried out rather than
+        // asked about. Never for a preset, whose wording is this app's own and
+        // could not be asking for anything.
+        if !isFromPreset, isReminderInstruction {
+            saveCurrentContext()
+            return
+        }
 
         answerTask?.cancel()
         speech.stop()

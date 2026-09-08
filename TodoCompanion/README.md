@@ -159,6 +159,21 @@ the time it read, next to the words it read it from. It only arms itself by defa
 asked to be reminded — a date merely mentioned, as in "notes from tomorrow's standup", is offered
 switched off. Tapping the notification opens the library at the thing it is about.
 
+You do not have to press ⌘S for that. When what you typed is plainly an instruction — an explicit
+"remind me" **and** a time stated in the sentence — pressing Return sets it, rather than asking Max
+about it:
+
+```text
+⌃⌥Space → "remind me to text voice bugs at 10 AM today" → Return
+        → "Saved · reminder today at 10:00 AM"
+```
+
+Both halves are required, so "remind me what a closure is" names no time and is still answered as the
+question it is. Switching the offered reminder off before you press Return also makes it a question
+again.
+
+Reminders are local notifications, so they need this Mac awake when they fire.
+
 Reminders respect the quiet hours you configured in the To-Do Notifier, and a reminder landing inside
 that window shows the moved time rather than the one you asked for.
 
