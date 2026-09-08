@@ -17,6 +17,10 @@ struct LibraryView: View {
     @State private var isRenamingProject = false
     @State private var projectName = ""
 
+    /// The other app's tasks, re-read whenever the shown project changes. It
+    /// owns that file and can change it while this window is open.
+    @State private var work = LinkedWork()
+
     /// Which slice of the library the sidebar is showing.
     private enum Scope: Hashable {
         case everything
@@ -63,6 +67,9 @@ struct LibraryView: View {
         } detail: {
             if let selection {
                 ContextDetailView(context: selection)
+            } else if case let .project(identifier) = scope,
+                      let project = projects.first(where: { $0.identifier == identifier }) {
+                ProjectOverview(project: project, work: work)
             } else {
                 ContentUnavailableView(
                     "Nothing selected",
@@ -71,6 +78,7 @@ struct LibraryView: View {
                 )
             }
         }
+        .task(id: scope) { work = TodoBridge.load() }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")
         .frame(minWidth: 820, minHeight: 520)
         .toolbar {
@@ -191,6 +199,144 @@ struct LibraryView: View {
             .listStyle(.sidebar)
             .navigationDestination(for: SavedContext.self) { ContextDetailView(context: $0) }
         }
+    }
+}
+
+/// A project seen whole: what the user kept, and what they still have to do.
+///
+/// The tasks come from the To-Do Notifier and are only ever read. Which tasks
+/// belong to a project is this app's own idea, so it is stored here rather than
+/// written back into a file another app owns.
+private struct ProjectOverview: View {
+    let project: Project
+    let work: LinkedWork
+
+    @Environment(\.modelContext) private var modelContext
+    @State private var isPickingTasks = false
+
+    private var linked: [LinkedTodo] { work.todos(withIDs: project.linkedTodoIDs) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(project.name)
+                    .font(.largeTitle.weight(.semibold))
+
+                tasksSection
+                keptSection
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var tasksSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Still to do")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .textCase(.uppercase)
+                Spacer()
+                Button("Choose tasks…") { isPickingTasks = true }
+                    .font(.caption)
+                    .disabled(work.todos.isEmpty)
+            }
+
+            if !TodoBridge.isLinked {
+                Text("Link your To-Do Notifier data in Settings to see tasks here.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if linked.isEmpty {
+                Text("No tasks assigned to this project yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(linked) { todo in
+                    HStack(spacing: 8) {
+                        Image(systemName: todo.isDone ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(todo.isDone ? Color.secondary : DS.Status.ready)
+                        Text(todo.title)
+                            .strikethrough(todo.isDone)
+                            .foregroundStyle(todo.isDone ? .secondary : .primary)
+                        if let due = todo.dueAt {
+                            Text(due.formatted(.relative(presentation: .named)))
+                                .font(.caption)
+                                .foregroundStyle(todo.isOverdue ? DS.Status.problem : Color.secondary)
+                        }
+                    }
+                    .font(.callout)
+                }
+
+                // Completing a task belongs in the app that owns tasks.
+                Text("Tick these off in the To-Do Notifier — this view only reads them.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .popover(isPresented: $isPickingTasks, arrowEdge: .bottom) {
+            taskPicker
+        }
+    }
+
+    private var taskPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tasks in \(project.name)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(work.todos) { todo in
+                        Toggle(isOn: binding(for: todo)) {
+                            Text(todo.title).lineLimit(1)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+            }
+            .frame(width: 320, height: 260)
+        }
+        .padding(DS.Spacing.normal)
+    }
+
+    private func binding(for todo: LinkedTodo) -> Binding<Bool> {
+        Binding(
+            get: { project.linkedTodoIDs.contains(todo.id) },
+            set: { isOn in
+                if isOn {
+                    guard !project.linkedTodoIDs.contains(todo.id) else { return }
+                    project.linkedTodoIDs.append(todo.id)
+                } else {
+                    project.linkedTodoIDs.removeAll { $0 == todo.id }
+                }
+                try? modelContext.save()
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var keptSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Kept for this project")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+
+            if project.contexts.isEmpty {
+                Text("Choose this project in the panel before saving a screen.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(project.contexts.sorted { $0.createdAt > $1.createdAt },
+                        id: \.persistentModelID) { context in
+                    LibraryRow(context: context)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

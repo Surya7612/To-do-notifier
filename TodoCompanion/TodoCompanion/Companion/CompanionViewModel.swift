@@ -61,6 +61,19 @@ final class CompanionViewModel {
     /// inference is the one thing this app does not do.
     var reminderIsArmed = false
 
+    /// When a reminder would land inside the do-not-disturb window the user set
+    /// in the to-do app, it is pushed to the end of it — and the panel shows the
+    /// moved time, because a reminder that fires an hour later than it claimed
+    /// is its own small betrayal.
+    var effectiveReminderDate: Date? {
+        reminderDate.map { linkedWork.quietHours.firstMomentAfter($0) }
+    }
+
+    var reminderIsDeferredByQuietHours: Bool {
+        guard let reminderDate else { return false }
+        return linkedWork.quietHours.contains(reminderDate)
+    }
+
     /// Every project, for the picker.
     private(set) var projects: [Project] = []
 
@@ -350,7 +363,7 @@ final class CompanionViewModel {
             topics: topics
         )
 
-        let reminder = reminderIsArmed ? reminderDate : nil
+        let reminder = reminderIsArmed ? effectiveReminderDate : nil
         record.remindAt = reminder
         record.project = currentProject
 
@@ -546,7 +559,18 @@ final class CompanionViewModel {
     /// A compact view of what the user still has to do, so questions like
     /// "what should I work on" have something real to answer from.
     private func taskLines() -> [String] {
-        let open = linkedWork.openTodos.sorted { lhs, rhs in
+        // A chosen project narrows this to its own tasks. Answering "what next"
+        // with everything on the list would bury the work the user just said
+        // they were doing.
+        let candidates: [LinkedTodo]
+        if let currentProject, !currentProject.linkedTodoIDs.isEmpty {
+            let scoped = linkedWork.todos(withIDs: currentProject.linkedTodoIDs).filter { !$0.isDone }
+            candidates = scoped.isEmpty ? linkedWork.openTodos : scoped
+        } else {
+            candidates = linkedWork.openTodos
+        }
+
+        let open = candidates.sorted { lhs, rhs in
             switch (lhs.dueAt, rhs.dueAt) {
             case let (left?, right?): return left < right
             case (nil, _?): return false

@@ -23,12 +23,56 @@ struct LinkedNote: Identifiable, Hashable {
     let updatedAt: Date
 }
 
+/// The hours the user already told the other app not to disturb them.
+///
+/// Mirrored rather than reinvented: they configured this once, in the app that
+/// owns notification preferences, and a second reminder system that ignored it
+/// would make the setting a lie.
+struct QuietHours: Equatable, Sendable {
+    var isEnabled = false
+    var startHour = 22
+    var endHour = 7
+
+    /// Matches `inQuietHours` in `electron/lib/dataMerge.cjs`, including its
+    /// treatment of an equal start and end as "never quiet" rather than
+    /// "always quiet".
+    func contains(_ date: Date, calendar: Calendar = .current) -> Bool {
+        guard isEnabled, startHour != endHour else { return false }
+
+        let hour = calendar.component(.hour, from: date)
+        return startHour < endHour
+            ? hour >= startHour && hour < endHour
+            : hour >= startHour || hour < endHour
+    }
+
+    /// The first moment at or after `date` that is not inside quiet hours.
+    func firstMomentAfter(_ date: Date, calendar: Calendar = .current) -> Date {
+        guard contains(date, calendar: calendar) else { return date }
+
+        // Quiet hours are whole hours, so the end boundary is always reachable
+        // by advancing to the next occurrence of endHour.
+        var candidate = calendar.date(bySettingHour: endHour, minute: 0, second: 0, of: date) ?? date
+        if candidate <= date {
+            candidate = calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+        }
+        return candidate
+    }
+}
+
 struct LinkedWork {
     var todos: [LinkedTodo] = []
     var notes: [LinkedNote] = []
+    var quietHours = QuietHours()
 
     var isEmpty: Bool { todos.isEmpty && notes.isEmpty }
     var openTodos: [LinkedTodo] { todos.filter { !$0.isDone } }
+
+    func todos(withIDs identifiers: [String]) -> [LinkedTodo] {
+        // Preserves the todo app's own ordering, and quietly skips anything
+        // deleted over there since it was linked.
+        let wanted = Set(identifiers)
+        return todos.filter { wanted.contains($0.id) }
+    }
 }
 
 /// Reads the Electron app's `app-data.json` so the companion can answer using
@@ -178,6 +222,19 @@ enum TodoBridge {
                               updatedAt: date(item["updatedAt"]) ?? .distantPast)
         }
 
-        return LinkedWork(todos: todos, notes: notes)
+        return LinkedWork(todos: todos, notes: notes, quietHours: quietHours(in: root))
+    }
+
+    /// Only the do-not-disturb window is read out of `settings`. The rest of
+    /// that dictionary is the other app's business, and one of its keys is an
+    /// API key that must never end up near prompt data.
+    private static func quietHours(in root: [String: Any]) -> QuietHours {
+        guard let settings = root["settings"] as? [String: Any] else { return QuietHours() }
+
+        var hours = QuietHours()
+        hours.isEnabled = settings["quietHoursEnabled"] as? Bool ?? false
+        if let start = settings["quietHoursStart"] as? Int { hours.startHour = start }
+        if let end = settings["quietHoursEnd"] as? Int { hours.endHour = end }
+        return hours
     }
 }

@@ -39,7 +39,10 @@ enum Reminders {
 
     /// - Returns: whether the reminder was actually scheduled, so the caller can
     ///   tell the user when it was not instead of silently dropping it.
-    static func schedule(id: String, at date: Date, intent: String, sourceApp: String) async -> Bool {
+    static func schedule(id: String,
+                         at date: Date,
+                         intent: String,
+                         sourceApp: String) async -> Bool {
         guard date > Date(), await requestAuthorization() else { return false }
 
         let content = UNMutableNotificationContent()

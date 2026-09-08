@@ -125,6 +125,23 @@ struct TodoBridgeTests {
         #expect(work.todos.count == 1)
     }
 
+    @Test("quiet hours are read from the other app's settings")
+    func readsQuietHours() {
+        let work = parse("""
+        {"settings": {"quietHoursEnabled": true, "quietHoursStart": 21, "quietHoursEnd": 8}}
+        """)
+
+        #expect(work.quietHours.isEnabled)
+        #expect(work.quietHours.startHour == 21)
+        #expect(work.quietHours.endHour == 8)
+    }
+
+    @Test("missing quiet-hours settings fall back to disabled, not to a guess")
+    func quietHoursDefaultToOff() {
+        #expect(parse("{}").quietHours.isEnabled == false)
+        #expect(parse(#"{"settings": {}}"#).quietHours.isEnabled == false)
+    }
+
     /// The Electron app keeps an OpenAI key in this same file. `LinkedWork`
     /// feeds the model prompt, so a key appearing anywhere in it would be one
     /// careless `joined()` away from being sent to a third party. Importing the

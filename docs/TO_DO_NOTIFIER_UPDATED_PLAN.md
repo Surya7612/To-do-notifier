@@ -977,6 +977,31 @@ The honest limitation of the local version: a reminder needs this Mac awake at
 the time it fires. That is the one thing a hosted scheduler would actually buy,
 and it is the reason to build one eventually rather than now.
 
+Native reminders respect the quiet hours already configured in the Electron app,
+read through the same read-only bridge. Two notification systems disagreeing
+about one do-not-disturb setting is worse than one of them ignoring it, because
+the disagreement is invisible until a reminder fires at 2am.
+
+### Why the two apps were not merged
+
+Folding the Electron app into the native one was considered once projects existed
+on one side and tasks on the other. Measured, it is ~3,100 lines in `electron/`
+and ~4,400 in `src/`: more than twice the native app's size, to arrive at feature
+parity with something that already works.
+
+Worse, about a third of it should not be ported at all. The pet is ~1,300 lines
+built on copyrighted art that cannot ship, and the voice stack is ~950 lines
+using cloud TTS that section 12 forbids. And the real boundary is not the
+runtime, it is the product: the Electron app is a gamified study companion
+(pet, streaks, flashcards, Socratic tutoring, pomodoro) and the native one is a
+context and memory tool. Merging them yields a split personality rather than one
+coherent app.
+
+What they genuinely share is a task list, so that is what is shared. A project
+can hold tasks from the to-do app, with the link stored on this side —
+`Project.linkedTodoIDs` — so the companion never becomes a writer of a file it
+does not own. Completing a task stays where tasks live.
+
 Later:
 
 - [ ] iOS push

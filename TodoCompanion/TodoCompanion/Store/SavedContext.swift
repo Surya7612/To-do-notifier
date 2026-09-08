@@ -19,6 +19,14 @@ final class Project {
     @Relationship(deleteRule: .nullify, inverse: \SavedContext.project)
     var contexts: [SavedContext] = []
 
+    /// Tasks from the To-Do Notifier that belong to this project.
+    ///
+    /// Stored as that app's own identifiers, on this side of the boundary. The
+    /// grouping is this app's idea, so this app keeps it; writing a project
+    /// field back into `app-data.json` would make the companion a writer of a
+    /// file it does not own. A task deleted over there simply stops resolving.
+    var linkedTodoIDs: [String] = []
+
     init(name: String) {
         self.name = Self.normalize(name)
         self.createdAt = Date()

@@ -15,8 +15,27 @@ so it can be resurfaced later when related material is on screen.
 
 **Everything else** (`electron/`, `src/`, `*.html`) is the original Electron + Vite + React to-do and
 reminder app. It still runs and is not deprecated, but new feature work is happening in the native app.
-The companion reads its `app-data.json` read-only through `TodoBridge`, so open tasks and notes become
-context for answers. It never writes to it.
+The companion reads its `app-data.json` read-only through `TodoBridge`, so open tasks, notes, and the
+quiet-hours setting become context for answers. It never writes to it.
+
+### Which app owns what
+
+The dividing line is **not** Electron versus native. It is *study and motivation* versus *context and
+memory*, and the two share exactly one thing: a task list.
+
+The Electron app owns tasks, notes, due dates, flashcards, streaks, the pomodoro timer, the pet, and
+notification preferences. It is where work is **created and completed**. The companion owns saved screen
+context, projects, and retrieval. It is where context is **captured and connected**.
+
+Full migration of the Electron app into the native one was considered and rejected. It is ~7,500 lines
+of working code, of which ~1,300 is a pet built on copyrighted art that cannot be shipped and ~950 is a
+voice stack using cloud TTS that this app's own rules forbid. Porting it would buy feature parity with
+something that already works, and would give one app a split personality. Plan §9 says the same thing.
+
+The consequence for anything that spans the two: **the companion stores the link, not the other app.**
+`Project.linkedTodoIDs` holds the to-do app's identifiers on this side of the boundary, because the
+grouping is this app's idea. A task deleted over there simply stops resolving. Completing a task stays in
+the app that owns tasks, and the library says so rather than offering a checkbox that would not work.
 
 The governing design document is `docs/TO_DO_NOTIFIER_UPDATED_PLAN.md`. Read it before proposing
 architecture; it records what was deliberately rejected and why.
@@ -84,6 +103,13 @@ than something read off the pixels, it outscores every individual screen signal 
 names itself in the reason — "in Engram". Deleting a project nullifies rather than cascades, so its
 saves are unfiled instead of destroyed.
 
+**Quiet hours are mirrored, not reinvented.** The user configured a do-not-disturb window once, in the
+app that owns notification preferences. `QuietHours.contains` deliberately reproduces `inQuietHours` in
+`electron/lib/dataMerge.cjs`, down to treating an equal start and end as *never* quiet rather than always
+— two notification systems disagreeing about one setting is worse than one of them ignoring it, because
+the disagreement is invisible. A reminder landing inside the window moves to the end of it, and the panel
+shows the moved time rather than the requested one.
+
 **A reminder is set by the user, never by the parser.** `ReminderPhrase` reads a saved reason and may
 *offer* a time, but it only arms the reminder by default when the user actually used words like "remind
 me". A date noticed in passing — "notes from tomorrow's standup" — is offered switched off. The chosen
@@ -106,8 +132,8 @@ from the screenshot along with the panel.
 | `App/SettingsView.swift` | ~131 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
 | `Companion/CompanionPanelController.swift` | ~157 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~358 | Panel UI: status header, ask field, dictation and save buttons, related-context strip, answer area. |
-| `Companion/CompanionViewModel.swift` | ~574 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
+| `Companion/CompanionView.swift` | ~365 | Panel UI: status header, ask field, dictation and save buttons, related-context strip, answer area. |
+| `Companion/CompanionViewModel.swift` | ~600 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
 | `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
@@ -116,19 +142,19 @@ from the screenshot along with the panel.
 | `Brain/OllamaBrain.swift` | ~84 | Streaming Ollama client. Also the only place summaries are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
-| `Store/SavedContext.swift` | ~127 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
+| `Store/SavedContext.swift` | ~140 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
 | `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextRetriever.swift` | ~115 | Explainable relevance scoring against the current screen. |
-| `Store/TodoBridge.swift` | ~183 | Read-only bridge to the Electron app's `app-data.json` via a security-scoped bookmark. |
+| `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Support/AppSettings.swift` | ~97 | `UserDefaults` keys, defaults, and the provider choice. |
 | `Support/DesignSystem.swift` | ~51 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
 | `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |
 | `Hotkey/HotkeyChoice.swift` | ~45 | The vetted list of non-reserved shortcuts. |
-| `Library/LibraryView.swift` | ~399 | Browse by project, search, reassign, rename, and delete saved contexts. |
+| `Library/LibraryView.swift` | ~545 | Browse by project, search, reassign, rename, and delete saved contexts. Project overview pairs what was kept with the project's open tasks. |
 
 ## Build & run
 
@@ -163,6 +189,7 @@ What is covered, and why these pieces specifically:
 | `ScreenObservationTests` | Region crop coordinate math | Converts AppKit's bottom-left origin to CoreGraphics' top-left with a pixel scale factor. A flipped crop still returns a correctly sized image of the wrong thing, so the fixtures assert on **pixels**, not geometry. |
 | `ContextRetrieverTests` | Relevance scoring and stated reasons | Decides what the app volunteers unprompted. Weights are unassertable by eye, and the failure modes are silent. |
 | `TodoBridgeTests` | Parsing the Electron app's `app-data.json` | Another app owns that file and can change or truncate it. Also pins that the OpenAI key in the same file never reaches prompt data. |
+| `QuietHoursTests` | The do-not-disturb window, and project↔task links | Must match the Electron implementation exactly; a silent disagreement between two notification systems is the failure mode. Also covers a task deleted in the other app leaving a dangling link. |
 | `PromptTests` | Prompt construction | Where the "user intent outranks inference" rule actually lives. Regressions here surface as subtly worse answers, not errors. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |

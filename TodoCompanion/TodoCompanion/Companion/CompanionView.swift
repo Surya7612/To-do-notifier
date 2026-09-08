@@ -178,7 +178,7 @@ struct CompanionView: View {
     /// suggest but not to act.
     @ViewBuilder
     private var reminderControls: some View {
-        if let suggestion = viewModel.reminderSuggestion, let date = viewModel.reminderDate {
+        if let suggestion = viewModel.reminderSuggestion, let date = viewModel.effectiveReminderDate {
             Toggle(isOn: $viewModel.reminderIsArmed) {
                 Label(
                     CompanionViewModel.reminderFormat(date),
@@ -189,7 +189,12 @@ struct CompanionView: View {
             .fixedSize()
             .help("Set a reminder for this when you save it")
 
-            if let matched = suggestion.matchedText, !matched.isEmpty {
+            if viewModel.reminderIsDeferredByQuietHours {
+                Text("after quiet hours")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            } else if let matched = suggestion.matchedText, !matched.isEmpty {
                 // Says which words produced the time, so an odd guess is
                 // traceable to what was typed instead of looking arbitrary.
                 Text("from “\(matched)”")
