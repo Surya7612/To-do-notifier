@@ -435,7 +435,6 @@ final class CompanionViewModel {
                         self?.question = text
                         self?.dictationHint = ""
                     },
-                    onEnd: { [weak self] in self?.endListening() },
                     onSilence: { [weak self] device in
                         self?.dictationHint =
                             "No sound from “\(device)”. Pick a different mic in System Settings → Sound → Input."

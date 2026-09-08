@@ -41,6 +41,12 @@ thing as pressing Return.
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.
 
+Two recognizers are available under Settings → Dictation, and both run on this Mac. **Apple** is the
+default and needs nothing downloaded, but it ends a phrase at every pause. **Parakeet** runs on the
+Neural Engine and keeps up across pauses, at the cost of fetching a model of a little over a hundred
+megabytes the first time you use it. The choice is quality against disk space; your voice is not sent
+anywhere either way.
+
 ### Keeping asking
 
 The answer is not the end of it. Ask a follow-up and the earlier turns go with it, so "why that one?"
@@ -355,7 +361,7 @@ put is the only signal anything went wrong.
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
-| `Voice/` | On-device dictation, input level metering, and spoken answers |
+| `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and spoken answers |
 | `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, graph, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |

@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		FA00000000000000000000A2 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = FA00000000000000000000A1 /* FluidAudio */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		D87D6B01304CDC270045C50A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -39,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FA00000000000000000000A2 /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -98,6 +103,7 @@
 			);
 			name = TodoCompanion;
 			packageProductDependencies = (
+				FA00000000000000000000A1 /* FluidAudio */,
 			);
 			productName = TodoCompanion;
 			productReference = D87D6A27304CDC270045C50A /* TodoCompanion.app */;
@@ -154,6 +160,9 @@
 			);
 			mainGroup = D87D6A1E304CDC270045C50A;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				FA00000000000000000000A3 /* XCRemoteSwiftPackageReference "FluidAudio" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D87D6A28304CDC270045C50A /* Products */;
 			projectDirPath = "";
@@ -467,6 +476,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		FA00000000000000000000A3 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.15.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FA00000000000000000000A1 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA00000000000000000000A3 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = D87D6A1F304CDC270045C50A /* Project object */;
 }

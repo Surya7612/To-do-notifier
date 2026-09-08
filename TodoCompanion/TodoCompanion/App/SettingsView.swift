@@ -13,6 +13,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.embeddingModel) private var embeddingModel = AppSettings.defaultEmbeddingModel
     @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
     @AppStorage(AppSettings.Key.voiceIdentifier) private var voiceIdentifier = ""
+    @AppStorage(AppSettings.Key.dictationEngine) private var dictationEngine =
+        AppSettings.DictationEngine.apple.rawValue
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
@@ -80,6 +82,22 @@ struct SettingsView: View {
             Section("On this Mac") {
                 TextField("Ollama endpoint", text: $endpoint)
                 TextField("Model", text: $model)
+            }
+
+            Section("Dictation") {
+                Picker("Recognizer", selection: $dictationEngine) {
+                    ForEach(AppSettings.DictationEngine.allCases) { engine in
+                        Text(engine.displayName).tag(engine.rawValue)
+                    }
+                }
+
+                Text(AppSettings.DictationEngine(rawValue: dictationEngine)?.detail ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("Both run on this Mac. Your voice is never sent anywhere.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Reading answers aloud") {

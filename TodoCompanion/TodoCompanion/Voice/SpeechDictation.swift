@@ -1,61 +1,32 @@
 import AVFoundation
 import Foundation
-import Speech
 
-/// Push-to-talk dictation using Apple's on-device recognizer.
+/// Push-to-talk dictation.
 ///
-/// Deliberately not Whisper or any hosted STT: those would ship your voice off
-/// the machine for a feature whose whole point is convenience, and the plan's
-/// privacy principles put local-first ahead of accuracy here. `Speech` can run
-/// fully on-device, so nothing leaves the Mac.
+/// Owns the microphone — opening it, metering it, naming it and watching it for
+/// silence — and hands the audio to whichever `DictationRecognizer` the user has
+/// chosen. That split exists because the microphone half was the fiddly part and
+/// is identical either way, while the recognizers differ in everything else.
+///
+/// Both recognizers run on this Mac. Nothing here may be swapped for a hosted
+/// transcription service: shipping the user's voice off the machine for a
+/// convenience feature is the thing the privacy rules exist to prevent.
 @MainActor
 final class SpeechDictation {
-    enum Failure: LocalizedError {
-        case micDenied
-        case speechDenied
-        case recognizerUnavailable
-        case noInputDevice
-        case engineFailed(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .micDenied:
-                "Microphone access is off. Enable it in System Settings → Privacy & Security → Microphone."
-            case .speechDenied:
-                "Speech Recognition is off. Enable it in System Settings → Privacy & Security → Speech Recognition."
-            case .recognizerUnavailable:
-                "Speech recognition isn't available for this language right now."
-            case .noInputDevice:
-                "No microphone input available. Check Sound settings for an input device."
-            case let .engineFailed(detail):
-                "Couldn't start the microphone: \(detail)"
-            }
-        }
-    }
+    typealias Failure = DictationFailure
 
     /// Rebuilt per session on purpose. An engine created before the microphone
     /// permission existed caches an input node with a zero-channel format and
     /// never recovers, which silently produces no audio at all.
     private var engine: AVAudioEngine?
-    private var task: SFSpeechRecognitionTask?
-    private var recognizer: SFSpeechRecognizer?
 
-    /// The live request, reachable from the audio thread.
-    ///
-    /// Held in a lock rather than as a plain property because the tap keeps
-    /// feeding buffers while a pause swaps the request underneath it.
-    private let inflight = RequestHolder()
-
-    /// Text from segments the recognizer has already finalized.
-    ///
-    /// The recognizer ends a segment at a pause and the next one starts its
-    /// transcription over from empty, so reporting only the current segment
-    /// erased everything said before the pause. Finalized text accumulates here
-    /// and the in-progress segment is appended to it.
-    private var settledTranscript = ""
+    private var recognizer: (any DictationRecognizer)?
 
     private(set) var isListening = false
-    /// False means Apple's servers are transcribing; the UI says so.
+
+    /// False means something other than this Mac is transcribing; the UI says
+    /// so. Only Apple's recognizer can report false, and only when its
+    /// on-device model is missing for the language.
     private(set) var isOnDevice = true
 
     /// Named in the UI because the system default input is often not the one the
@@ -74,20 +45,18 @@ final class SpeechDictation {
     }
 
     func start(onTranscript: @escaping (String) -> Void,
-               onEnd: @escaping () -> Void,
                onSilence: @escaping (String) -> Void) async throws {
         guard !isListening else { return }
 
-        guard await Self.authorizeSpeech() else { throw Failure.speechDenied }
-        guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure.micDenied }
-
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-            ?? SFSpeechRecognizer()
-        guard let recognizer, recognizer.isAvailable else { throw Failure.recognizerUnavailable }
+        // Prepared before the microphone opens, because this is where a
+        // permission prompt or a first-run model download happens and neither
+        // should run with the input device held open.
+        let recognizer = AppSettings.dictationEngine.makeRecognizer()
+        try await recognizer.prepare()
         self.recognizer = recognizer
+        isOnDevice = recognizer.runsOnDevice
 
-        isOnDevice = recognizer.supportsOnDeviceRecognition
-        settledTranscript = ""
+        guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure.micDenied }
 
         let engine = AVAudioEngine()
         self.engine = engine
@@ -103,8 +72,8 @@ final class SpeechDictation {
         inputDeviceName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "unknown input"
         level.reset()
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level, inflight] buffer, _ in
-            inflight.append(buffer)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level, recognizer] buffer, _ in
+            recognizer.receive(buffer)
             level.record(buffer)
         }
 
@@ -127,62 +96,15 @@ final class SpeechDictation {
             onSilence(device)
         }
 
-        listen(onTranscript: onTranscript, onEnd: onEnd)
-    }
-
-    /// Starts a recognition task, and starts another whenever one finishes.
-    ///
-    /// A finished segment used to end the whole session, which made dictating
-    /// anything with a pause in it impossible: stopping to think ended the
-    /// recording. This is push-to-talk, so only the user decides when it ends.
-    private func listen(onTranscript: @escaping (String) -> Void,
-                        onEnd: @escaping () -> Void) {
-        guard let recognizer, isListening || engine != nil else { return }
-
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = isOnDevice
-        inflight.replace(with: request)
-
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in
-                guard let self, self.isListening else { return }
-
-                if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
-                    onTranscript(self.joined(with: segment))
-                }
-
-                if let error {
-                    // A segment that ends on silence reports an error rather
-                    // than a result, which is ordinary here and not a failure.
-                    NSLog("[Dictation] recognition ended: \(error.localizedDescription)")
-                }
-
-                guard error != nil || result?.isFinal == true else { return }
-
-                // Commit the finished segment before the next one starts from
-                // empty, or the pause would take those words with it.
-                if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
-                    self.settledTranscript = self.joined(with: segment)
-                }
-
-                self.task = nil
-                self.listen(onTranscript: onTranscript, onEnd: onEnd)
-            }
-        }
-    }
-
-    private func joined(with segment: String) -> String {
-        settledTranscript.isEmpty ? segment : settledTranscript + " " + segment
+        recognizer.begin(onTranscript: onTranscript)
     }
 
     func stop() {
         guard isListening else { return }
-        // Cleared first so the recognition callback, which may already be in
-        // flight, does not start another segment on the way out.
+        // Cleared first so a recognition callback already in flight does not
+        // start another segment on the way out.
         isListening = false
-        inflight.finish()
-        task?.cancel()
+        recognizer?.end()
         cleanUp()
     }
 
@@ -194,33 +116,7 @@ final class SpeechDictation {
             if engine.isRunning { engine.stop() }
         }
         engine = nil
-        inflight.replace(with: nil)
-        task = nil
-        settledTranscript = ""
-    }
-
-    /// Holds the recognition request the audio tap is feeding.
-    ///
-    /// The tap runs on a render thread and the request is swapped from the main
-    /// actor at every pause, so the handoff is locked.
-    private final class RequestHolder: @unchecked Sendable {
-        private let lock = NSLock()
-        private var request: SFSpeechAudioBufferRecognitionRequest?
-
-        func replace(with request: SFSpeechAudioBufferRecognitionRequest?) {
-            lock.withLock {
-                self.request?.endAudio()
-                self.request = request
-            }
-        }
-
-        func finish() {
-            lock.withLock { request?.endAudio() }
-        }
-
-        func append(_ buffer: AVAudioPCMBuffer) {
-            lock.withLock { request?.append(buffer) }
-        }
+        recognizer = nil
     }
 
     /// Tracks whether any non-silent audio arrived. Written from the audio
@@ -266,23 +162,6 @@ final class SpeechDictation {
                 sessionPeak = max(sessionPeak, frameMax)
                 unreadPeak = max(unreadPeak, frameMax)
             }
-        }
-    }
-
-    private static func authorizeSpeech() async -> Bool {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized:
-            return true
-        case .denied, .restricted:
-            return false
-        case .notDetermined:
-            return await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { status in
-                    continuation.resume(returning: status == .authorized)
-                }
-            }
-        @unknown default:
-            return false
         }
     }
 }

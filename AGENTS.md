@@ -76,7 +76,8 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
 - **OCR**: Vision `VNRecognizeTextRequest`, on device
 - **AI**: local Ollama by default; OpenAI as an opt-in for questions only. The key lives in the
   Keychain, never in `UserDefaults`. The panel always states which one will answer
-- **Speech**: `AVAudioEngine` + `SFSpeechRecognizer` with `requiresOnDeviceRecognition` when supported
+- **Speech**: `AVAudioEngine` feeding either `SFSpeechRecognizer` with `requiresOnDeviceRecognition`
+ or Parakeet on the Neural Engine via FluidAudio. Both on device
 - **Persistence**: SwiftData, with screenshots in `.externalStorage`
 - **Cross-app**: the Electron store is reached through a security-scoped bookmark from a user-chosen
   file, which is what keeps the sandbox intact
@@ -274,6 +275,22 @@ the synthesizer is actually speaking, and replaces the instance after a real sto
 it, since recovery is undocumented and evidently version-dependent. `isSpeaking` is driven by a delegate
 rather than set on enqueue, or the stop button stays lit after the answer ends.
 
+**The microphone is shared; the recognizer is swappable.** Opening the input device, metering it,
+naming it and watching it for silence is identical whoever transcribes, and it was the fiddly part to
+get right, so `SpeechDictation` keeps all of it and hands buffers to a `DictationRecognizer`. Apple's
+backend stays the default because it needs nothing downloaded — asking for a hundred megabytes before
+anyone has tried the feature is the wrong trade for a default — and `AppSettings.DictationEngine`
+switches to Parakeet, which runs on the Neural Engine through FluidAudio, this project's first and
+only Swift package dependency. Both run on this Mac; the choice is quality against disk space, never
+privacy, and neither may be swapped for a hosted service.
+
+Parakeet's transcript is **cumulative**: the model keeps its own accumulated tokens across pauses, so
+the problem described next is absent by construction there rather than stitched back together. Its
+audio is *copied* rather than its buffer retained, which is not an optimization detail — a tap's
+buffer is only valid for the duration of the callback, and this backend looks at the audio a fraction
+of a second later, on an interval, because the recognizer is an actor and the render thread cannot
+await. Apple's backend escapes this only because `append` copies synchronously.
+
 **A dictation pause starts a new segment from empty.** `SFSpeechRecognizer` finalizes a segment when
 the speaker pauses, and the next result's `bestTranscription` begins again from nothing. Assigning it
 straight to the field erased everything said before the pause. `SpeechDictation` accumulates finalized
@@ -389,7 +406,9 @@ the screen, it is the wrong change.
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
 | `Voice/SpeechPlayback.swift` | ~116 | Reads answers aloud with `AVSpeechSynthesizer`, sentence by sentence, on device. |
-| `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
+| `Voice/SpeechDictation.swift` | ~167 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition. |
+| `Voice/DictationRecognizer.swift` | ~206 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
+| `Voice/ParakeetDictationRecognizer.swift` | ~146 | The Parakeet backend, on the Neural Engine through FluidAudio. |
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
