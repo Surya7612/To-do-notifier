@@ -27,9 +27,17 @@ Each owns one file and reads the other's, and **neither writes the other's**. Th
 
 ## Screenshots
 
-**TodoCompanion** — the library, where what you kept is paired with why you kept it. The reason is
-yours, verbatim; the model's reading of the screen sits below it under its own heading, never
-substituted for your words.
+**TodoCompanion** — summoned by a hotkey over whatever you are looking at. Under **You kept this
+before** it volunteers what you already saved that relates to this screen, and every item states
+*why* it surfaced: `same window`, `mentions one, send`, `close in meaning`. Nothing reaches that list
+carrying a score it cannot explain, which is the constraint the embedding signal had to be fitted
+into rather than around — a vector distance may only *contribute* to a score it can also justify.
+
+![The companion panel, with related saves and the reason each one surfaced](docs/screenshots/companion-panel.png)
+
+The library is the other half — what you kept, paired with why you kept it. Your reason is verbatim
+under **Why I kept this**; the model's reading of the screen sits below it under its own heading,
+labelled as inference and never substituted for your words.
 
 ![The companion's library](docs/screenshots/companion-library.png)
 
