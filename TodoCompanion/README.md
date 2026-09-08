@@ -354,7 +354,7 @@ only added entitlements.
 - **Pointing at things on screen.** Clicky flies the cursor to a UI element it names. It needs
   Accessibility permission and was rejected in the plan.
 - **Speaking up on its own.** Related material appears when you summon the panel and never otherwise.
-  Without Accessibility the only free trigger is "the user switched apps", which says nothing about
+  Without Accessibility the only trigger left is "the user switched apps", which says nothing about
   whether they need anything; acting on it would mean either matching on a window title, which is
   usually wrong, or capturing unasked, which contradicts the rule that makes this safe to leave
   running. Being summonable is not a weaker version of being proactive — for a tool like this it is
