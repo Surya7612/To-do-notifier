@@ -4,6 +4,8 @@
 
 An Electron desktop app for todos, focus sessions, and Rubber Duck study mode — plus **TodoCompanion**, a native Swift menu bar app that answers questions about what is on your screen and keeps things with your own stated reason for keeping them. They share a task list and nothing else.
 
+The rule the second app is built around: **what you said and what a model inferred are never allowed to blur.** Your reason for keeping something is stored verbatim and never overwritten; a model's summary is always labelled as one; and every resurfaced item explains itself — `same window`, `#tag`, `close in meaning`. That single constraint decides most of the architecture below, including the parts that were rejected.
+
 [![CI](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml)
 
 > `"private": true` in `package.json` means the package is **not published to npm**. The app source is public under MIT (see [License](#license)).
@@ -25,6 +27,15 @@ Each owns one file and reads the other's, and **neither writes the other's**. Th
 
 ## Screenshots
 
+**TodoCompanion** — the library, where what you kept is paired with why you kept it. The reason is
+yours, verbatim; the model's reading of the screen sits below it under its own heading, never
+substituted for your words.
+
+![The companion's library](docs/screenshots/companion-library.png)
+
+**The Electron app** — todos with lead-time and overdue nags, the pomodoro timer, and Rubber Duck
+voice tutoring.
+
 | Todos & reminders | Focus (Pomodoro) |
 | --- | --- |
 | ![Todos](docs/screenshots/todos.png) | ![Focus](docs/screenshots/focus.png) |
@@ -35,7 +46,8 @@ Each owns one file and reads the other's, and **neither writes the other's**. Th
 
 ## What the Electron app does
 
-The native companion has [its own README](TodoCompanion/README.md).
+The native companion has [its own README](TodoCompanion/README.md), which covers the panel, capture,
+retrieval, voice, and building it.
 
 | Area | Behavior |
 | --- | --- |
@@ -182,7 +194,7 @@ tested with Swift Testing. Its [README](TodoCompanion/README.md) covers building
 
 ---
 
-## Install
+## Install the Electron app
 
 ```bash
 npm install
@@ -190,6 +202,10 @@ npm run install:app   # packs, ad-hoc signs, installs to /Applications
 ```
 
 DMG: `npm run dist` → open `release/*.dmg`.
+
+The companion is a separate Xcode build and is not produced by any of these scripts —
+see [its README](TodoCompanion/README.md#running-it). Everything from here to
+[Development](#development) is the Electron app; the two do not share a toolchain.
 
 ### First launch
 
@@ -200,7 +216,10 @@ DMG: `npm run dist` → open `release/*.dmg`.
 
 ---
 
-## Voice modes
+## Voice modes (Electron app)
+
+The companion's voice is separate and stricter — both dictation and speech stay on the machine there,
+where this app uses hosted transcription. See [its README](TodoCompanion/README.md).
 
 | Mode | Enter | Exit | Role |
 | --- | --- | --- | --- |
