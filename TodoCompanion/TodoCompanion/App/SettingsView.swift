@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.embeddingModel) private var embeddingModel = AppSettings.defaultEmbeddingModel
     @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
     @AppStorage(AppSettings.Key.voiceIdentifier) private var voiceIdentifier = ""
+    @AppStorage(AppSettings.Key.voiceEngine) private var voiceEngine = AppSettings.VoiceEngine.system.rawValue
     @AppStorage(AppSettings.Key.dictationEngine) private var dictationEngine =
         AppSettings.DictationEngine.apple.rawValue
 
@@ -104,15 +105,34 @@ struct SettingsView: View {
                 Toggle("Have \(Prompt.assistantName) read answers out loud", isOn: $speaksAnswers)
 
                 if speaksAnswers {
-                    Picker("Voice", selection: $voiceIdentifier) {
-                        Text("System default").tag("")
-                        ForEach(SpeechPlayback.availableVoices, id: \.identifier) { voice in
-                            Text(voice.name).tag(voice.identifier)
+                    Picker("Voice", selection: $voiceEngine) {
+                        ForEach(AppSettings.VoiceEngine.allCases) { engine in
+                            Text(engine.displayName).tag(engine.rawValue)
                         }
+                    }
+
+                    Text(AppSettings.VoiceEngine(rawValue: voiceEngine)?.detail ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if voiceEngine == AppSettings.VoiceEngine.system.rawValue {
+                        Picker("System voice", selection: $voiceIdentifier) {
+                            Text("System default").tag("")
+                            ForEach(SpeechPlayback.availableVoices, id: \.identifier) { voice in
+                                Text(voice.name).tag(voice.identifier)
+                            }
+                        }
+                    } else if !KokoroVoiceSynthesizer.isSupportedBySystem {
+                        // Stated here rather than only on failure, since the
+                        // alternative is a setting that looks fine and produces
+                        // silence at the moment an answer arrives.
+                        Text("Needs macOS 26.6 or later. On this Mac the system voice will be used.")
+                            .font(.caption)
+                            .foregroundStyle(DS.Status.problem)
                     }
                 }
 
-                Text("Uses the speech voices built into macOS, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")
+                Text("Both voices run on this Mac, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

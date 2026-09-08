@@ -280,9 +280,10 @@ naming it and watching it for silence is identical whoever transcribes, and it w
 get right, so `SpeechDictation` keeps all of it and hands buffers to a `DictationRecognizer`. Apple's
 backend stays the default because it needs nothing downloaded — asking for a hundred megabytes before
 anyone has tried the feature is the wrong trade for a default — and `AppSettings.DictationEngine`
-switches to Parakeet, which runs on the Neural Engine through FluidAudio, this project's first and
-only Swift package dependency. Both run on this Mac; the choice is quality against disk space, never
-privacy, and neither may be swapped for a hosted service.
+switches to Parakeet, which runs on the Neural Engine through FluidAudio, this project's only Swift
+package dependency — it later earned its place twice over by also supplying the Kokoro voice. Both run
+on this Mac; the choice is quality against disk space, never privacy, and neither may be swapped for a
+hosted service.
 
 The recognizer is **kept between sessions**, and rebuilt only when the setting changes. Parakeet's
 models take tens of seconds to load onto the Neural Engine, so constructing one per session paid that
@@ -311,15 +312,44 @@ second region measured the new selection against the whole display while the ima
 scaling by the wrong factor and offsetting by the first crop's origin — so re-selecting after a mis-drag
 cropped somewhere unrelated or failed as "too small to read".
 
-**Speech out is local, like speech in.** `AVSpeechSynthesizer` rather than a hosted voice. The ban on
-cloud transcription applies in reverse — routing every answer through a speech vendor would export the
-contents of the user's screen to a third party that is not even answering the question. It speaks a
-sentence at a time so playback starts about a second in, rather than per word, which the synthesizer
-renders as a stilted list because its prosody needs a full clause. It is off by default, stops on
-`.immediate`, and stops when dictation starts: the synthesizer plays through the speakers and the mic
-would transcribe it, so Max would otherwise dictate to itself. Markup is stripped before speaking, and
-a fenced block is announced rather than read, since reading code aloud character by character is both
-unbearable and too long to interrupt.
+**Speech out is local, like speech in.** The ban on cloud transcription applies in reverse — routing
+every answer through a speech vendor would export the contents of the user's screen to a third party
+that is not even answering the question. So the picker has two entries rather than three, and
+`VoiceEngineTests` pins that neither describes a hosted service. It speaks a sentence at a time so
+playback starts about a second in, rather than per word, which comes out as a stilted list because
+prosody needs a full clause. It is off by default, stops on `.immediate`, and stops when dictation
+starts: the voice plays through the speakers and the mic would transcribe it, so Max would otherwise
+dictate to itself. Markup is stripped before speaking, and a fenced block is announced rather than
+read, since reading code aloud character by character is both unbearable and too long to interrupt.
+
+`SpeechPlayback` decides *what* is spoken and when; a `VoiceSynthesizer` says it, on the same split as
+dictation and for the same reason — clause-breaking and markup-stripping are identical whoever talks.
+The system voices stay the default because they need nothing downloaded, and **Kokoro-82M** is the
+answer to their being audibly robotic. It is reached through **FluidAudio**, which is already here for
+Parakeet, so the better voice costs no new dependency. The two Swift ports of Kokoro that look like the
+obvious choice were both tried and rejected: their manifests declare local path dependencies, which SPM
+rejects in a remote package, and the grapheme-to-phoneme engine underneath them (`MisakiSwift`, for its
+out-of-vocabulary fallback network) pulls in MLX, which needs a Metal toolchain that Xcode no longer
+ships by default. That would have put a multi-gigabyte toolchain download between a clone and a build.
+FluidAudio runs the same model with its own CoreML phonemizer and none of that.
+
+The clause is also the unit of work: Kokoro synthesizes one at a time on the Neural Engine, so one
+sentence is generated while the previous plays, and audio is queued through an `AVAudioPlayerNode`
+because scheduling buffers keeps them in order for free. `isSpeaking` only clears when the queue is
+empty *and* nothing is still playing — the worker finishes generating well before the sound ends, so
+the obvious version turned the stop button off mid-sentence.
+
+**Kokoro is refused outright on macOS 26.4 and 26.5.** Those releases carry an Apple bug that crashes
+Kokoro synthesis inside libBNNS *intermittently*, whatever the compute units are set to; 26.6 fixes it.
+FluidAudio only logs a warning. A wrong answer here does not look like a broken voice, it looks like the
+app vanishing once in a while, which is a far worse outcome than a plainer voice — so
+`isSupportedBySystem` decides for itself, Settings says so before the switch is flipped, and the
+deployment target being lower than 26.6 is exactly why the check has to exist.
+
+No Kokoro **voice** picker, though, unlike the OpenAI model list: voice packs are fetched individually
+and nothing in the app can see which ones the downloaded bundle actually carries, so a list would be
+offering choices that may not resolve — and a voice that fails to resolve drops the clause silently.
+The bundle's own default is used until that is verifiable.
 
 **Max may propose a file edit; only the user writes one.** This is deliberately *not* the autonomous
 computer-use agent the plan rejects, and the argument is about product quality as much as safety: this
@@ -411,10 +441,12 @@ the screen, it is the wrong change.
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
-| `Voice/SpeechPlayback.swift` | ~116 | Reads answers aloud with `AVSpeechSynthesizer`, sentence by sentence, on device. |
-| `Voice/SpeechDictation.swift` | ~167 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition. |
-| `Voice/DictationRecognizer.swift` | ~206 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
-| `Voice/ParakeetDictationRecognizer.swift` | ~146 | The Parakeet backend, on the Neural Engine through FluidAudio. |
+| `Voice/SpeechPlayback.swift` | ~160 | Decides what of a streaming answer gets read aloud, and when. Strips markup, breaks clauses. |
+| `Voice/VoiceSynthesizer.swift` | ~133 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
+| `Voice/KokoroVoiceSynthesizer.swift` | ~175 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
+| `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
+| `Voice/DictationRecognizer.swift` | ~213 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
+| `Voice/ParakeetDictationRecognizer.swift` | ~148 | The Parakeet backend, on the Neural Engine through FluidAudio. |
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
@@ -497,6 +529,7 @@ What is covered, and why these pieces specifically:
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
+| `VoiceEngineTests` | Which systems the Kokoro voice will run on | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. Asserts against stated versions rather than the running one, and pins that neither offered voice is a hosted service. |
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |

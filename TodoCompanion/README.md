@@ -47,6 +47,9 @@ Neural Engine and keeps up across pauses, at the cost of fetching a model of a l
 megabytes the first time you use it. The choice is quality against disk space; your voice is not sent
 anywhere either way.
 
+Parakeet loads onto the Neural Engine on the first **⌘D** of each run of the app, which takes a few
+seconds and is captioned while it happens. Every press after that opens the microphone immediately.
+
 ### Keeping asking
 
 The answer is not the end of it. Ask a follow-up and the earlier turns go with it, so "why that one?"
@@ -81,9 +84,16 @@ already make.
 ### Hearing it
 
 Turn on **Have Max read answers out loud** in Settings and answers are spoken as they arrive, a
-sentence at a time, using the speech voices built into macOS. Nothing is sent anywhere for this —
-the ban on cloud transcription applies just as much in reverse, since a hosted voice would export
-whatever is on your screen to a company that is not even answering the question.
+sentence at a time. Nothing is sent anywhere for this — the ban on cloud transcription applies just as
+much in reverse, since a hosted voice would export whatever is on your screen to a company that is not
+even answering the question.
+
+Two voices are offered, and both run on this Mac. **System** is the default and uses the voices built
+into macOS: nothing to download, and audibly robotic even on the premium ones. **Kokoro** runs
+Kokoro-82M on the Neural Engine and sounds markedly more natural, at the cost of fetching about 174 MB
+of model the first time you use it. It needs **macOS 26.6 or later**: earlier releases in that line
+carry an Apple bug that crashes this kind of synthesis intermittently, so on 26.4 and 26.5 the app
+refuses it and says so in Settings rather than risking taking itself down mid-sentence.
 
 It is off by default, stops the moment you dictate, ask something else, or close the panel, and there
 is a button in the panel header to stop it mid-sentence. Code blocks are announced rather than read
@@ -366,7 +376,7 @@ put is the only signal anything went wrong.
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
-| `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and spoken answers |
+| `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and the system and Kokoro voices |
 | `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, graph, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |

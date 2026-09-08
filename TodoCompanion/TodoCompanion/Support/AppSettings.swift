@@ -15,6 +15,7 @@ enum AppSettings {
         static let speaksAnswers = "speaksAnswers"
         static let voiceIdentifier = "voiceIdentifier"
         static let dictationEngine = "dictationEngine"
+        static let voiceEngine = "voiceEngine"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -38,6 +39,48 @@ enum AppSettings {
             case .openAI: "OpenAI"
             }
         }
+    }
+
+    /// Which voice reads an answer aloud.
+    ///
+    /// Both run on this Mac. The system voice is the default because it needs
+    /// nothing downloaded and works everywhere; Kokoro sounds markedly less
+    /// synthetic but fetches a model on first use and needs macOS 26.6, which
+    /// `KokoroVoiceSynthesizer` checks rather than risking Apple's BNNS crash.
+    enum VoiceEngine: String, CaseIterable, Identifiable {
+        case system
+        case kokoro
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .system: "System"
+            case .kokoro: "Kokoro"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .system:
+                "The voices built into macOS. Nothing to download, and noticeably synthetic."
+            case .kokoro:
+                "Kokoro-82M on the Neural Engine. Much more natural. Downloads a model the first time."
+            }
+        }
+
+        @MainActor
+        func makeSynthesizer() -> any VoiceSynthesizer {
+            switch self {
+            case .system: SystemVoiceSynthesizer()
+            case .kokoro: KokoroVoiceSynthesizer()
+            }
+        }
+    }
+
+    static var voiceEngine: VoiceEngine {
+        let raw = UserDefaults.standard.string(forKey: Key.voiceEngine) ?? ""
+        return VoiceEngine(rawValue: raw) ?? .system
     }
 
     /// Which recognizer turns speech into text.

@@ -193,6 +193,11 @@ final class CompanionViewModel {
                 ? "Listening via \(mic) (on-device)"
                 : "Listening via \(mic) (Apple servers)"
         }
+        // A voice that could not load is stated rather than left as silence,
+        // for the same reason the badge names a provider with no key: the user
+        // switched something on and nothing happened.
+        if let voiceFailure = speech.failure, phase == .idle { return voiceFailure }
+
         switch phase {
         case .idle: return contextLabel
         case .reading: return "Reading your screen…"
