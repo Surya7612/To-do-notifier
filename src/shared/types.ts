@@ -91,6 +91,20 @@ export interface AppSettings {
   petBehaviorVersion?: number;
 }
 
+/**
+ * A project the macOS companion keeps, as published in its own file.
+ *
+ * Read-only here. The companion groups saved screens as well as tasks, so it
+ * owns the grouping; this app owns the tasks and only resolves `todoIDs`
+ * against them. Neither writes the other's file.
+ */
+export interface CompanionProject {
+  id: string;
+  name: string;
+  todoIDs: string[];
+  savedContextCount: number;
+}
+
 export interface DayPlan {
   date: string;
   lines: string[];

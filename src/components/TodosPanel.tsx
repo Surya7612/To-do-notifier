@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import type { AppData, TodoItem } from "../shared/types";
 import { bumpTraining } from "../shared/types";
 import { playSfx } from "../lib/sound";
+import { useCompanionProjects } from "../hooks/useCompanionProjects";
 
 function dueBadge(todo: TodoItem, leadMinutes: number) {
   if (todo.status === "done") return null;
@@ -24,6 +25,9 @@ function formatDue(iso: string) {
   });
 }
 
+const ALL_PROJECTS = "all";
+const NO_PROJECT = "none";
+
 function defaultDueLocal() {
   const d = new Date();
   d.setHours(d.getHours() + 2, 0, 0, 0);
@@ -40,7 +44,9 @@ export function TodosPanel({
 }) {
   const [title, setTitle] = useState("");
   const [dueLocal, setDueLocal] = useState(defaultDueLocal);
+  const [projectFilter, setProjectFilter] = useState<string>(ALL_PROJECTS);
   const lead = data.settings.reminderLeadMinutes || 60;
+  const { projects, projectByTodoId } = useCompanionProjects();
 
   const sorted = useMemo(() => {
     return [...data.todos].sort((a, b) => {
@@ -48,6 +54,19 @@ export function TodosPanel({
       return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
     });
   }, [data.todos]);
+
+  const visible = useMemo(() => {
+    if (projectFilter === ALL_PROJECTS) return sorted;
+    if (projectFilter === NO_PROJECT) {
+      return sorted.filter((t) => !projectByTodoId.has(t.id));
+    }
+    return sorted.filter((t) => projectByTodoId.get(t.id)?.id === projectFilter);
+  }, [sorted, projectFilter, projectByTodoId]);
+
+  // A project whose tasks were all deleted here would otherwise leave the list
+  // filtered to nothing with no obvious way back.
+  const filterName =
+    projects.find((p) => p.id === projectFilter)?.name ?? projectFilter;
 
   async function onAdd(e: FormEvent) {
     e.preventDefault();
@@ -158,12 +177,57 @@ export function TodosPanel({
         </div>
       </form>
 
+      {projects.length > 0 && (
+        <div className="panel stack" style={{ gap: "0.5rem" }}>
+          <div className="row" style={{ gap: "0.4rem", flexWrap: "wrap" }}>
+            <button
+              className={`btn ${projectFilter === ALL_PROJECTS ? "" : "ghost"}`}
+              type="button"
+              onClick={() => setProjectFilter(ALL_PROJECTS)}
+            >
+              All ({sorted.length})
+            </button>
+            {projects.map((project) => {
+              const count = sorted.filter(
+                (t) => projectByTodoId.get(t.id)?.id === project.id
+              ).length;
+              return (
+                <button
+                  key={project.id}
+                  className={`btn ${projectFilter === project.id ? "" : "ghost"}`}
+                  type="button"
+                  onClick={() => setProjectFilter(project.id)}
+                >
+                  {project.name} ({count})
+                </button>
+              );
+            })}
+            <button
+              className={`btn ${projectFilter === NO_PROJECT ? "" : "ghost"}`}
+              type="button"
+              onClick={() => setProjectFilter(NO_PROJECT)}
+            >
+              No project
+            </button>
+          </div>
+          <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+            Projects come from the macOS companion, which is where they are
+            created and where tasks are put in them. Tasks themselves stay here.
+          </p>
+        </div>
+      )}
+
       <div className="panel">
         {sorted.length === 0 ? (
           <div className="empty">No tasks yet.</div>
+        ) : visible.length === 0 ? (
+          <div className="empty">
+            Nothing in {filterName}. Add tasks to it from the companion&rsquo;s
+            library.
+          </div>
         ) : (
           <ul className="todo-list">
-            {sorted.map((todo) => (
+            {visible.map((todo) => (
               <li
                 key={todo.id}
                 className={`todo-item ${todo.status === "done" ? "done" : ""}`}
@@ -179,6 +243,11 @@ export function TodosPanel({
                   <div className="todo-meta row" style={{ gap: "0.5rem" }}>
                     <span>{formatDue(todo.dueAt)}</span>
                     {dueBadge(todo, lead)}
+                    {projectByTodoId.get(todo.id) && (
+                      <span className="badge project">
+                        {projectByTodoId.get(todo.id)?.name}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <button

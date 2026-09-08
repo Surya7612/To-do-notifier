@@ -1,8 +1,12 @@
-import type { AppData } from "./shared/types";
+import type { AppData, CompanionProject } from "./shared/types";
 
 export interface TodoApi {
   getData: () => Promise<AppData>;
   setData: (data: AppData) => Promise<AppData>;
+  companionProjects: () => Promise<{
+    projects: CompanionProject[];
+    updatedAt: string | null;
+  }>;
   showMain: () => Promise<void>;
   setPetVisible: (visible: boolean) => Promise<AppData>;
   setPetHover: (hovering: boolean) => Promise<void>;

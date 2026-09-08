@@ -247,6 +247,13 @@ button {
   border-color: rgba(255, 93, 108, 0.45);
 }
 
+/* Grouping owned by the companion, so it reads as a label rather than as
+   status this app can act on. */
+.badge.project {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
 .timer-display {
   font-size: 4rem;
   font-weight: 700;

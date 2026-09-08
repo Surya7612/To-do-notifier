@@ -37,6 +37,14 @@ The consequence for anything that spans the two: **the companion stores the link
 grouping is this app's idea. A task deleted over there simply stops resolving. Completing a task stays in
 the app that owns tasks, and the library says so rather than offering a checkbox that would not work.
 
+That grouping is nonetheless **visible in both**, through a second file going the other way.
+`ProjectExport` publishes the project list into the companion's own container; the Electron app reads it
+through `electron/lib/companionProjects.cjs` and uses it to label and filter its task list. So each app
+owns one file and reads the other's, and **neither ever writes the other's**. Making projects a field on
+the to-do app's own tasks was the alternative and is the thing to avoid: it would put the companion in
+the position of writing `app-data.json`, a file another process holds in memory and rewrites wholesale,
+with no locking between them.
+
 The governing design document is `docs/TO_DO_NOTIFIER_UPDATED_PLAN.md`. Read it before proposing
 architecture; it records what was deliberately rejected and why.
 
@@ -118,6 +126,15 @@ applied silently. This is the core principle applied to scheduling: inference ma
 Note that `NSDataDetector` takes no reference date and always resolves relative words against the system
 clock, which is why the tests assert relative facts instead of fixed timestamps.
 
+**Who answers is switchable from the panel, not only from Settings.** The badge in the panel header is a
+menu, because the choice is per-question in practice: the local model reads text back fine and is worth
+leaving for a diagram or an unfamiliar interface. It also carries the "Send the screenshot" toggle, which
+is the setting that decides whether a visual question can be answered *at all* — OpenAI sees the screen
+only if the screenshot goes with it, and otherwise receives OCR text and guesses at anything that is not
+words. Both were previously only reachable through a settings window, which the click that opens it
+dismisses. A provider selected with no key in the Keychain falls back to local and the menu says so,
+because the badge would otherwise read "Local" with no explanation.
+
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
@@ -128,11 +145,11 @@ from the screenshot along with the panel.
 | File | Lines | Purpose |
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
-| `App/AppDelegate.swift` | ~52 | Lifecycle. Registers the global hotkey and owns the panel controller. |
+| `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
 | `App/SettingsView.swift` | ~131 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
 | `Companion/CompanionPanelController.swift` | ~157 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~365 | Panel UI: status header, ask field, dictation and save buttons, related-context strip, answer area. |
+| `Companion/CompanionView.swift` | ~416 | Panel UI: status header with the who-answers menu, ask field, dictation and save buttons, save options, related-context strip, answer area. |
 | `Companion/CompanionViewModel.swift` | ~600 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
 | `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
@@ -148,6 +165,7 @@ from the screenshot along with the panel.
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextRetriever.swift` | ~115 | Explainable relevance scoring against the current screen. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
+| `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
 | `Support/AppSettings.swift` | ~97 | `UserDefaults` keys, defaults, and the provider choice. |
 | `Support/DesignSystem.swift` | ~51 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
@@ -193,6 +211,11 @@ What is covered, and why these pieces specifically:
 | `PromptTests` | Prompt construction | Where the "user intent outranks inference" rule actually lives. Regressions here surface as subtly worse answers, not errors. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
+| `ProjectExportTests` | The published JSON's keys and date format | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
+
+The Electron side has its own suite, run with `npm test` (vitest), and
+`electron/lib/companionProjects.test.ts` is the other half of that same contract: it pins that every
+shape of bad or absent input lands on "no projects" rather than breaking the task list.
 
 Two conventions worth keeping:
 

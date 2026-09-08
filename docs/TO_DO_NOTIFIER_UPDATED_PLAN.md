@@ -104,6 +104,16 @@ enforced by the type system, not by discipline: `summarize` is absent from the
 attached to it. Ollama remains the default, the key lives in the Keychain, and
 the panel carries a standing badge naming who will answer.
 
+That badge is now the control as well as the label. Leaving the choice in
+Settings alone made it effectively permanent: switching meant summoning the
+panel, abandoning the question, opening a window — the click that opens it
+dismisses the panel — changing two settings, and starting over. In practice the
+choice is per-question, since the local model reads text back perfectly well and
+is worth leaving for a diagram or an unfamiliar interface. The menu also carries
+"Send the screenshot", because that is the setting that decides whether a visual
+question can be answered at all: without it OpenAI receives OCR text and guesses
+at anything that is not words, which reads as the cloud model being no better.
+
 **Region selection, which is not the rejected pointing feature.** Clicky has the
 *model* point at UI elements. This has the *user* point, which needs no
 coordinate mapping, no animation, and no multi-monitor arithmetic. It also costs
@@ -1001,6 +1011,38 @@ What they genuinely share is a task list, so that is what is shared. A project
 can hold tasks from the to-do app, with the link stored on this side —
 `Project.linkedTodoIDs` — so the companion never becomes a writer of a file it
 does not own. Completing a task stays where tasks live.
+
+### Making the shared view mutual
+
+- [x] Publish projects for the to-do app to read (`ProjectExport`)
+- [x] Read them there (`electron/lib/companionProjects.cjs`) and label tasks by project
+- [x] Filter the task list by project
+- [x] Tests on both sides of the contract
+
+A grouping only the companion could see was half a feature: the point of putting
+tasks in a project is to look at that project's work, and the to-do list is where
+work actually gets done.
+
+The obvious way to do it — a `project` field on `TodoItem` in `app-data.json` —
+is the one to avoid. That file is owned by a running Electron process that holds
+it in memory and rewrites it whole, with no locking; a sandboxed second writer
+would eventually lose an edit or truncate the file. It also cannot work in
+principle, because a project groups saved screens as well as tasks, and the
+to-do app has no concept of a saved screen to hang the other half on.
+
+So the arrangement is symmetric instead: **each app owns one file and reads the
+other's.** `TodoBridge` reads tasks, notes, and quiet hours in;
+`ProjectExport` writes the project list out. The export lands in the companion's
+own sandbox container, which is the only place it can write unprompted, and the
+Electron app is unsandboxed so it can read there. Republishing is driven off
+`ModelContext.didSave` rather than called from each place that edits a project,
+because those are scattered across the panel and the library, and a new one that
+forgot to publish would leave the other app quietly showing stale names.
+
+The consequence to keep in mind: the to-do app shows project **labels and a
+filter**, and nothing more. It cannot create a project or move a task between
+them, because it does not own the list. That asymmetry is deliberate and should
+stay visible in the UI rather than being smoothed over.
 
 Later:
 
