@@ -80,7 +80,10 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
  or Parakeet on the Neural Engine via FluidAudio. Both on device
 - **Persistence**: SwiftData, with screenshots in `.externalStorage`
 - **Cross-app**: the Electron store is reached through a security-scoped bookmark from a user-chosen
-  file, which is what keeps the sandbox intact
+ file, which is what keeps the sandbox intact
+- **Off-Mac delivery**: EventKit, publishing dated tasks into an iCloud Reminders list so Apple can
+ alert a phone this Mac cannot. Opt-in, write-only, and the only thing here that leaves the machine
+ without a question having been asked — which is why it is a switch the user throws, not a default
 
 ### Key architecture decisions
 
@@ -190,6 +193,36 @@ task through `TodoBridge` and then cancelled its own notification: it worked, bu
 delivery depend on whether a second app had run yet, which is a lot of machinery to decide something
 the user has an opinion about anyway. Ownership stated once, in the app that took the request, is the
 simpler answer.
+
+**A reminder that has to arrive off this Mac is written into Apple Reminders.** This is the one thing
+`UNUserNotificationCenter` cannot do — it needs this machine awake at the due time, which plan §Phase 7
+admits outright and earmarks a hosted scheduler to fix. Apple already runs that scheduler: a reminder in
+an **iCloud** list is delivered to the phone and the watch with no server, no push certificate, and no
+paid developer programme. `ReminderMirror` decides what belongs there and `AppleReminders` writes it, on
+the same publish-only footing as `ProjectExport` — completion is never read back, because that would
+make Reminders a second source of truth for what is done. Off by default, since it is the only feature
+here that puts the user's task titles into another company's sync.
+
+Four things about it are load-bearing. **Only tasks still ahead of us are copied**: an `EKAlarm` whose
+date has passed is delivered as soon as it syncs, so mirroring a backlog would fire every overdue task
+at once on every device the moment the switch was flipped. **Withdrawal keys on the task leaving the
+to-do app's open list, not on it ceasing to be mirrorable** — a task simply falling due drops out of
+`mirrorable`, and treating that as withdrawal deletes each reminder at the moment it was worth having.
+**The list is created in a syncing source**, preferring iCloud, because `defaultCalendarForNewReminders`
+may sit in the *local* account, where every part of this works and the phone never hears about any of
+it; `Destination.thisMacOnly` is its own state and Settings says so. And **Max stands down for a
+mirrored reminder of its own**, but only once `sync` confirms it, since standing down for something that
+turned out not to be mirrored loses the reminder altogether. That is not the local hand-over the plan
+rejected: this one swaps a Mac-only notification for delivery to every device, where that one swapped
+one Mac notifier for another.
+
+The permission needs a **hand-written entitlements file**, which is why `TodoCompanion.entitlements`
+exists at all. Xcode's generated entitlements cover Calendars (`ENABLE_RESOURCE_ACCESS_CALENDARS`) and
+have no Reminders equivalent, and without `com.apple.security.personal-information.reminders` macOS
+refuses even to *show* the prompt — tccd logs that `kTCCServiceReminders` requires the entitlement and
+denies access silently, so the feature reads as broken rather than unpermitted. Because that file now
+replaces generation, the keys the `ENABLE_*` settings used to produce are restated in it and have to be
+kept in step; a mismatch surfaces as a sandbox violation at runtime, not as a build failure.
 
 **Quiet hours are mirrored, not reinvented.** The user configured a do-not-disturb window once, in the
 app that owns notification preferences. `QuietHours.contains` deliberately reproduces `inQuietHours` in
@@ -524,11 +557,11 @@ the screen, it is the wrong change.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~274 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `App/SettingsView.swift` | ~389 | Hotkey, provider choice, Ollama and OpenAI settings, the to-do app link, and the Apple Reminders mirror. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
 | `Companion/CompanionView.swift` | ~640 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~1046 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, and the control an answer named. |
+| `Companion/CompanionViewModel.swift` | ~1088 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, and the control an answer named. |
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
 | `Capture/ScreenTextLocator.swift` | ~165 | Finds the control an answer named among those boxes, and maps one onto the screen. Pure. |
@@ -550,7 +583,9 @@ the screen, it is the wrong change.
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
 | `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
+| `Store/ReminderMirror.swift` | ~140 | Which of the to-do app's tasks belong in Apple Reminders, and what to withdraw. Pure. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
+| `Support/AppleReminders.swift` | ~200 | Writes that list through EventKit, into a syncing account so it reaches the phone. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
@@ -625,6 +660,7 @@ What is covered, and why these pieces specifically:
 | `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
 | `ScreenRectTests` | Normalized box → screen coordinates | Vision and AppKit share a bottom-left origin where `cropped(to:)` needs a flip, so the mistake is a box a mirrored distance up the screen, which looks plausible. Also pins that a cropped capture maps into the *selection*. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
+| `ReminderMirrorTests` | What is copied into Apple Reminders, and what is taken back | The only place this app writes into something Apple syncs, so every failure lands in the user's pocket rather than on screen. Pins that a backlog is *not* copied, since an alarm already past is delivered on sync and would alert for everything at once, and that a task merely falling due is not mistaken for one that was finished. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |

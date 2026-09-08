@@ -16,6 +16,7 @@ enum AppSettings {
         static let voiceIdentifier = "voiceIdentifier"
         static let dictationEngine = "dictationEngine"
         static let voiceEngine = "voiceEngine"
+        static let mirrorsToAppleReminders = "mirrorsToAppleReminders"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -201,6 +202,17 @@ enum AppSettings {
             // panel is often summoned in a meeting.
             Key.speaksAnswers: false,
         ])
+    }
+
+    /// Whether dated tasks are copied into Apple Reminders so iCloud can alert
+    /// the user away from this Mac.
+    ///
+    /// Off by default, and not only out of caution about a new permission: this
+    /// is the one feature here that puts the user's task titles into another
+    /// company's sync, which is a decision to make deliberately rather than to
+    /// find already made.
+    static var mirrorsToAppleReminders: Bool {
+        UserDefaults.standard.bool(forKey: Key.mirrorsToAppleReminders)
     }
 
     /// Whether answers are read aloud, always by the system voice on this Mac.

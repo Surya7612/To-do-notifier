@@ -1046,6 +1046,9 @@ mode of its own: schema is not behaviour.
 
 - [x] Quiet hours (mirrored from the Electron app rather than reinvented)
 
+- [x] Delivery to other devices, by writing dated tasks into an iCloud
+      Reminders list (`ReminderMirror`, `AppleReminders`)
+
 What is still genuinely remote-only, and therefore still open:
 
 - [ ] Minimal cloud reminder model
@@ -1055,9 +1058,31 @@ What is still genuinely remote-only, and therefore still open:
 - [ ] Escalation logic
 - [ ] Optional experimental self-iMessage
 
-The honest limitation of the local version: a reminder needs this Mac awake at
-the time it fires. That is the one thing a hosted scheduler would actually buy,
-and it is the reason to build one eventually rather than now.
+The honest limitation of a local notification is that it needs this Mac awake at
+the time it fires, and that was named here as the one thing a hosted scheduler
+would actually buy. Most of what it would buy turns out to be purchasable for
+nothing: Apple runs a scheduler already, and a reminder written into an iCloud
+list is delivered to the phone and the watch with no server, no push
+certificate, and no paid developer programme. So the away-from-Mac case is now
+covered by a publish into Apple Reminders, on the same footing as
+`ProjectExport` — one-way, never read back as truth.
+
+That does not close the rest of this phase, and it is worth being clear about
+what it does not buy. There is no delivery state, so nothing here knows whether
+an alert was seen; there is no escalation and no retry; and the mirror is only
+as current as the last time the app was summoned, because this app reads the
+task list on summon rather than polling. A hosted scheduler is still the answer
+to those. It is no longer the answer to "I am not at my Mac", which was the only
+part of it the user actually felt.
+
+Two consequences worth recording, because both are the kind of thing that reads
+as a broken feature rather than a refused one. Only tasks **still ahead** are
+copied: an `EKAlarm` whose date has passed is delivered as soon as it syncs, so
+mirroring a backlog would set off every overdue task at once, on every device,
+the moment the switch was flipped. And the list must be created in a **syncing**
+source — `defaultCalendarForNewReminders` may sit in the local account, where
+everything here works and nothing ever reaches the phone, so that state is named
+in Settings instead of discovered later.
 
 Native reminders respect the quiet hours already configured in the Electron app,
 read through the same read-only bridge. Two notification systems disagreeing

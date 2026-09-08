@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Hand-written rather than generated from build settings, which is the only
+	  reason this file exists at all. Xcode's automatic entitlements cover
+	  Calendars (ENABLE_RESOURCE_ACCESS_CALENDARS) and have no equivalent for
+	  Reminders, and without the key below macOS refuses even to *show* the
+	  permission prompt: tccd logs that kTCCServiceReminders requires the
+	  entitlement and denies access silently, so the feature looks broken rather
+	  than unpermitted.
+
+	  The keys Xcode used to generate are restated here because this file
+	  replaces that generation. Keep them in step with the ENABLE_* settings in
+	  the project, since a mismatch shows up as a sandbox violation at runtime
+	  rather than as a build failure.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.personal-information.reminders</key>
+	<true/>
+</dict>
+</plist>

@@ -134,6 +134,20 @@ enum ProjectExport {
         )
     }
 
+    /// Which of these to-do app task ids came from a reminder set here.
+    ///
+    /// Reads the id scheme back the other way. Used when Apple Reminders has
+    /// taken on announcing a task, so this app can stop announcing it too —
+    /// a prefix match rather than a loose `contains`, or an unrelated task
+    /// happening to carry the word would silence a reminder Apple never got.
+    static func reminderIdentifiers(inTaskIDs identifiers: [String]) -> [String] {
+        identifiers.compactMap { identifier in
+            guard identifier.hasPrefix(importedTaskPrefix) else { return nil }
+            let reminderIdentifier = String(identifier.dropFirst(importedTaskPrefix.count))
+            return reminderIdentifier.isEmpty ? nil : reminderIdentifier
+        }
+    }
+
     static func encode(_ payload: Payload) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

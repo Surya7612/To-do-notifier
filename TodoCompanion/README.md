@@ -222,6 +222,30 @@ The To-Do Notifier picks up new requests when it starts and every half minute af
 have to be open at the time. A reminder whose time has already passed still becomes a task — overdue,
 which is how that list already talks about anything you missed.
 
+### Getting reminded away from this Mac
+
+A local notification needs this Mac awake when it fires. If you are out and a task comes due, nothing
+happens — which is the honest limit of doing this without a server.
+
+Turn on **Copy dated tasks into Apple Reminders** in Settings and Apple delivers them instead. Tasks
+with a due time are written into a "To-Do Notifier" list in your iCloud account, so your iPhone and
+Watch alert you at the right moment whether this Mac is asleep, shut, or somewhere else. There is no
+server involved, nothing to pay for, and no account beyond the iCloud one you already have.
+
+Worth knowing:
+
+- **Only tasks still ahead of them are copied.** An alarm set to a time already gone is delivered the
+  moment it syncs, so copying a backlog would set off every overdue task at once on every device.
+- **Reminders has to be on iCloud.** If it is using a local account, Settings says so rather than
+  leaving you to discover that nothing reached your phone.
+- **Ticking one off on your phone silences that alert and leaves the task open here.** Reminders is a
+  way of delivering the alert, not a second copy of your list.
+- **The list is only as fresh as the last time you summoned Max.** Anything already
+  copied keeps its alarm regardless, since Apple takes it from there.
+- Reminders it copies are ones **it** stops announcing, so one thing still pings once. Your own tasks
+  keep being nagged about by the To-Do Notifier as before.
+- Turning the switch off takes back everything it added and leaves anything you wrote yourself alone.
+
 ### Projects
 
 A project is a named thing you are working on. You pick the current one in the panel before saving,

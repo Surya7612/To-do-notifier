@@ -87,6 +87,11 @@ identical and could not have been ticked off. The announcing stays with the comp
 a notification when the reminder was set, so this app's nag sweep skips those tasks and one thing pings
 once.
 
+Both apps notify locally, which means a due task needs this Mac awake to reach you. The companion can
+optionally copy dated tasks into an **iCloud Reminders list**, and Apple then delivers them to an
+iPhone or Watch whether the Mac is on or not — no server, nothing to pay for. Off by default; see the
+companion's README for what it does and does not promise.
+
 ### Inside the Electron app
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and IPC.

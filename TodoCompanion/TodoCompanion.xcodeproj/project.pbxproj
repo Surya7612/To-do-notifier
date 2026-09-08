@@ -348,6 +348,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 72285WRA34;
+				CODE_SIGN_ENTITLEMENTS = TodoCompanion/TodoCompanion.entitlements;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
@@ -357,6 +358,7 @@
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictate what you want to ask or remember, instead of typing it.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Tasks with a due time are copied into a Reminders list so iCloud can alert you when you are away from this Mac.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech is transcribed on this Mac so your dictation stays local.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -384,6 +386,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 72285WRA34;
+				CODE_SIGN_ENTITLEMENTS = TodoCompanion/TodoCompanion.entitlements;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
@@ -393,6 +396,7 @@
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictate what you want to ask or remember, instead of typing it.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Tasks with a due time are copied into a Reminders list so iCloud can alert you when you are away from this Mac.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech is transcribed on this Mac so your dictation stays local.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
