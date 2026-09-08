@@ -26,6 +26,14 @@ nonisolated struct RecognizedScreen: Equatable, Sendable {
 
 /// On-device OCR so the default path never uploads a screenshot anywhere.
 enum TextRecognizer {
+    /// Ceiling on per-word box lookups, which cost a Vision call each.
+    ///
+    /// This runs on every summon and the panel waits for it, so a dense screen
+    /// must not turn a fast capture into a slow one. Well past the number of
+    /// words any answer would name, and the text itself is unaffected — only
+    /// the ability to point at something beyond the cutoff.
+    nonisolated static let regionLimit = 1200
+
     nonisolated static func recognize(in image: CGImage, limit: Int = 6000) -> RecognizedScreen {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
@@ -44,7 +52,9 @@ enum TextRecognizer {
 
         for observation in request.results ?? [] {
             guard let candidate = observation.topCandidates(1).first else { continue }
-            regions.append(contentsOf: words(in: candidate, line: lines.count))
+            if regions.count < regionLimit {
+                regions.append(contentsOf: words(in: candidate, line: lines.count))
+            }
             lines.append(candidate.string)
         }
 

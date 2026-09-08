@@ -11,7 +11,11 @@ import Foundation
 /// says plainly whenever this brain is active.
 struct OpenAIBrain: Brain {
     static let keychainAccount = "openai-api-key"
-    static let defaultModel = "gpt-4o-mini"
+    /// Only reaches a fresh install; an existing one has its own stored choice.
+    /// The mid tier rather than the cheapest, because the question this app asks
+    /// is "what is on this screen and what should I do next", which a nano-class
+    /// model reads back accurately and then advises badly on.
+    static let defaultModel = "gpt-5.6-terra"
 
     let apiKey: String
     let model: String

@@ -12,13 +12,28 @@ import Foundation
 @MainActor
 @Observable
 final class SpeechPlayback {
-    private let synthesizer = AVSpeechSynthesizer()
+    /// Replaced rather than reused after being stopped. See `stop()`.
+    private var synthesizer = AVSpeechSynthesizer()
+
+    /// Retained across synthesizers, since `delegate` is weak and a monitor
+    /// owned only by the synthesizer would deallocate on replacement.
+    private let monitor = UtteranceMonitor()
 
     private(set) var isSpeaking = false
 
     /// Text already handed to the synthesizer, so streaming can enqueue only
     /// what is new.
     private var spokenPrefixLength = 0
+
+    init() {
+        monitor.onQueueDrained = { [weak self] in
+            guard let self else { return }
+            // Asks the synthesizer rather than assuming: sentences are enqueued
+            // as they stream, so one utterance finishing does not mean silence.
+            isSpeaking = synthesizer.isSpeaking
+        }
+        synthesizer.delegate = monitor
+    }
 
     /// Enqueues any complete sentences that have arrived since the last call.
     ///
@@ -48,12 +63,25 @@ final class SpeechPlayback {
     }
 
     func stop() {
+        spokenPrefixLength = 0
+        isSpeaking = false
+
+        // Stopping an *idle* synthesizer wedges it: every later `speak` is
+        // accepted and silently never heard. This is called at the top of every
+        // question, so the unconditional version meant answers were never
+        // spoken at all — the setting appeared to do nothing.
+        guard synthesizer.isSpeaking || synthesizer.isPaused else { return }
+
         // `.immediate` rather than `.word`: this is called when the user asks
         // something new or starts dictating, and finishing the current word
         // would talk over them.
         synthesizer.stopSpeaking(at: .immediate)
-        isSpeaking = false
-        spokenPrefixLength = 0
+
+        // A stopped synthesizer is replaced rather than reused. Whether it
+        // recovers is undocumented and evidently version-dependent, and a fresh
+        // one costs nothing next to an answer that is never read out.
+        synthesizer = AVSpeechSynthesizer()
+        synthesizer.delegate = monitor
     }
 
     private func enqueue(_ text: String) {
@@ -67,6 +95,30 @@ final class SpeechPlayback {
         }
         synthesizer.speak(utterance)
         isSpeaking = true
+    }
+
+    /// Reports when the synthesizer stops having anything to say.
+    ///
+    /// Without it `isSpeaking` only ever went true, so the stop button in the
+    /// panel header stayed lit after the answer had finished being read.
+    private final class UtteranceMonitor: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
+        var onQueueDrained: (@MainActor () -> Void)?
+
+        func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                               didFinish utterance: AVSpeechUtterance) {
+            report()
+        }
+
+        func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                               didCancel utterance: AVSpeechUtterance) {
+            report()
+        }
+
+        /// The delegate makes no promise about which queue it calls on.
+        private func report() {
+            let callback = onQueueDrained
+            Task { @MainActor in callback?() }
+        }
     }
 
     /// Strips markup that is meant to be read with the eyes.

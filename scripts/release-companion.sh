@@ -19,6 +19,15 @@ export PATH="/opt/homebrew/bin:$PATH"
 #   script says so in the release notes rather than shipping a download that
 #   fails in a way users cannot diagnose.
 #
+#   The archive is Apple Silicon only, and the architecture has to be forced on
+#   the command line rather than set in the project. FluidAudio does not build
+#   for x86_64 — it reaches for Float16, which the standard library marks
+#   unavailable there — and Xcode compiles a Swift package for every
+#   architecture in the build request, ignoring ARCHS and EXCLUDED_ARCHS set on
+#   the project that depends on it. Only a build-request-level override reaches
+#   the package. Debug builds escape this because ONLY_ACTIVE_ARCH is already
+#   YES for them.
+#
 #   Once a paid membership exists, the missing steps are:
 #     xcodebuild -exportArchive with method=developer-id
 #     xcrun notarytool submit "$DMG" --keychain-profile AC_PASSWORD --wait
@@ -106,6 +115,8 @@ xcodebuild archive \
     -archivePath "${ARCHIVE_PATH}" \
     MARKETING_VERSION="${VERSION}" \
     CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
+    ARCHS=arm64 \
+    EXCLUDED_ARCHS=x86_64 \
     2>&1 | tail -3
 
 # A free account cannot export for developer-id, so take the app straight out

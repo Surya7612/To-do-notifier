@@ -288,6 +288,43 @@ struct ConversationResumeTests {
 
 /// The persona is a tone. It must not become permission to invent, and the
 /// editing instructions must not reach a question that has no file open.
+/// A preset button used to assign its own wording over the field, which threw
+/// away anything the user had typed or dictated. That is the app discarding the
+/// user's own words, and it also fed the wrong sentence to `savableReason`.
+@Suite("What a preset button asks")
+struct PresetAskTests {
+    @Test("with an empty field, the preset's own wording is used")
+    func emptyFieldUsesThePreset() {
+        let asked = CompanionViewModel.presetAsk(typed: "", preset: .explain)
+
+        #expect(asked.question == CompanionViewModel.Preset.explain.question)
+        #expect(asked.isFromPreset, "so it can never become a stated reason")
+    }
+
+    @Test("whitespace alone still counts as empty")
+    func whitespaceIsEmpty() {
+        #expect(CompanionViewModel.presetAsk(typed: "   \n ", preset: .nextStep).isFromPreset)
+    }
+
+    @Test("typed words are asked instead of the preset, and are the user's own")
+    func typedTextWins() {
+        let asked = CompanionViewModel.presetAsk(typed: "why is this clip red?", preset: .explain)
+
+        #expect(asked.question == "why is this clip red?")
+        // Not from a preset, so ⌘S may file the save under these words — they
+        // are the user's, which is the whole point of keeping them.
+        #expect(!asked.isFromPreset)
+    }
+
+    @Test("both presets do the same thing once something has been typed")
+    func presetChoiceStopsMatteringWithText() {
+        let explain = CompanionViewModel.presetAsk(typed: "what is this?", preset: .explain)
+        let next = CompanionViewModel.presetAsk(typed: "what is this?", preset: .nextStep)
+
+        #expect(explain == next)
+    }
+}
+
 @Suite("Persona and editing")
 struct PersonaPromptTests {
     @Test("the assistant is named, and it is not the bundle name")

@@ -30,11 +30,22 @@ Answer streams into the panel · ⌘P boxes the control it named, on screen
 ```
 
 Press **⌘R** to drag out one region and ask about that instead. It crops the screenshot already in
-memory rather than capturing again. **Explain** and **Next step** are the two questions worth a
-button.
+memory rather than capturing again. The region stays selected across follow-ups, so you can keep
+asking about the same rectangle.
+
+**Explain** and **Next step** are the two questions worth a button, and they are shortcuts for when
+you have nothing specific to ask. If you have already typed or dictated something, that is what gets
+asked — a preset never overwrites your own words, so with text in the field both buttons do the same
+thing as pressing Return.
 
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.
+
+Two recognizers are available under Settings → Dictation, and both run on this Mac. **Apple** is the
+default and needs nothing downloaded, but it ends a phrase at every pause. **Parakeet** runs on the
+Neural Engine and keeps up across pauses, at the cost of fetching a model of a little over a hundred
+megabytes the first time you use it. The choice is quality against disk space; your voice is not sent
+anywhere either way.
 
 ### Keeping asking
 
@@ -134,10 +145,14 @@ leaving for a diagram or an interface it has never seen.
 
 The same menu carries **Send the screenshot**, which decides whether a visual question can be
 answered at all — without it OpenAI receives only the recognized text and guesses at anything that is
-not words. Locally it needs a vision model (`llava`, `qwen2.5vl`) to be worth turning on.
+not words. Locally it needs a vision model (`qwen3-vl`) to be worth turning on.
 
 Selecting OpenAI without saving a key falls back to the local model, and the badge says so rather
 than quietly reading "Local".
+
+Which OpenAI model answers is chosen in Settings, from a short list with a note on what each is good
+for. The list is fixed rather than read from your account, so it is useful before a key is saved;
+pick **Custom…** to name a model released after this build.
 
 ## Remembering
 
@@ -158,6 +173,21 @@ If your reason says something like "remind me tomorrow at 4", the panel offers a
 the time it read, next to the words it read it from. It only arms itself by default when you actually
 asked to be reminded — a date merely mentioned, as in "notes from tomorrow's standup", is offered
 switched off. Tapping the notification opens the library at the thing it is about.
+
+You do not have to press ⌘S for that. When what you typed is plainly an instruction — an explicit
+"remind me" **and** a time stated in the sentence — pressing Return sets it, rather than asking Max
+about it:
+
+```text
+⌃⌥Space → "remind me to text voice bugs at 10 AM today" → Return
+        → "Saved · reminder today at 10:00 AM"
+```
+
+Both halves are required, so "remind me what a closure is" names no time and is still answered as the
+question it is. Switching the offered reminder off before you press Return also makes it a question
+again.
+
+Reminders are local notifications, so they need this Mac awake when they fire.
 
 Reminders respect the quiet hours you configured in the To-Do Notifier, and a reminder landing inside
 that window shows the moved time rather than the one you asked for.
@@ -239,6 +269,11 @@ Open `TodoCompanion.xcodeproj` and press ⌘R, or build from the command line:
 xcodebuild -project TodoCompanion.xcodeproj -scheme TodoCompanion \
   -configuration Debug -destination 'platform=macOS' build
 ```
+
+This is an Apple Silicon app. A **Release** build additionally needs `ARCHS=arm64 EXCLUDED_ARCHS=x86_64`
+on the command line, because FluidAudio has no x86_64 support and Xcode compiles a Swift package for
+every architecture in the build request regardless of what the depending project asks for. Debug builds
+only the active architecture already, so they need nothing extra.
 
 Tests:
 
@@ -331,7 +366,7 @@ put is the only signal anything went wrong.
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
-| `Voice/` | On-device dictation, input level metering, and spoken answers |
+| `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and spoken answers |
 | `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, graph, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |

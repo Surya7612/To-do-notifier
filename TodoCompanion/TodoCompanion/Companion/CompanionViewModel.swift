@@ -37,6 +37,8 @@ final class CompanionViewModel {
     var currentInputLevel: CGFloat { dictation.currentLevel }
     /// Surfaced when the chosen input is producing no audio at all.
     var dictationHint = ""
+    /// True while a recognizer loads its model, which the status line explains.
+    var isLoadingDictationModel = false
 
     var phase: Phase = .idle
     var contextLabel: String = "Nothing captured yet"
@@ -111,6 +113,26 @@ final class CompanionViewModel {
         return linkedWork.quietHours.contains(reminderDate)
     }
 
+    /// Whether what the user typed is a reminder *instruction* rather than a
+    /// question about one.
+    ///
+    /// "Remind me to text voice bugs at 10 AM today" was being sent to the
+    /// model, which answered by explaining how to set a reminder in some other
+    /// application — the app declining to do the one thing it was plainly told
+    /// to do. This is not the parser overreaching: it requires the words "remind
+    /// me" (or another explicit cue) *and* a time actually stated in the
+    /// sentence, so it is the user's own instruction being carried out.
+    ///
+    /// Both halves matter. "Remind me what a closure is" names no time and
+    /// stays a question, which is why a stated time is required rather than the
+    /// parser's fallback guess of tomorrow morning.
+    /// Switching the offered reminder off is also an instruction, so the
+    /// sentence goes back to being an ordinary question.
+    var isReminderInstruction: Bool {
+        guard let suggestion = reminderSuggestion, reminderIsArmed else { return false }
+        return suggestion.wasExplicitlyRequested && suggestion.matchedText != nil
+    }
+
     /// Every project, for the picker.
     private(set) var projects: [Project] = []
 
@@ -174,7 +196,13 @@ final class CompanionViewModel {
         switch phase {
         case .idle: return contextLabel
         case .reading: return "Reading your screen…"
-        case .startingDictation: return "Turning the microphone on…"
+        case .startingDictation:
+            // Loading Parakeet onto the Neural Engine takes tens of seconds the
+            // first time in a session, and an unexplained wait on a key press
+            // reads as the key having been ignored.
+            return isLoadingDictationModel
+                ? "Loading the Parakeet model — first time only…"
+                : "Turning the microphone on…"
         case .thinking: return "Thinking…"
         case .answering: return "Answering…"
         case let .saved(message): return message
@@ -252,7 +280,9 @@ final class CompanionViewModel {
             .joined(separator: "\n")
         guard !query.isEmpty else { return }
 
-        guard let vector = try? await localBrain().embed(query, model: AppSettings.embeddingModel) else {
+        let embeddingModel = AppSettings.embeddingModel
+        let prepared = Embedding.prepared(query, as: .query, for: embeddingModel)
+        guard let vector = try? await localBrain().embed(prepared, model: embeddingModel) else {
             return
         }
         guard !Task.isCancelled, observation.contextLabel == self.observation?.contextLabel else {
@@ -279,7 +309,10 @@ final class CompanionViewModel {
 
     /// Ready-made questions for the two things worth asking about a region.
     /// Typing "explain this" every time is friction on the most common action.
-    enum Preset: String, CaseIterable, Identifiable {
+    ///
+    /// `nonisolated` because it is pure data read from `presetAsk`, which is
+    /// itself nonisolated so the choice can be tested without a container.
+    nonisolated enum Preset: String, CaseIterable, Identifiable {
         case explain
         case nextStep
 
@@ -311,9 +344,35 @@ final class CompanionViewModel {
         }
     }
 
+    /// What pressing a preset button should actually ask.
+    ///
+    /// A preset is wording for the case where the user has nothing specific to
+    /// ask — "Explain" is a shortcut past typing "explain this" every time.
+    /// Once they have typed or dictated a question, that *is* the question, and
+    /// overwriting the field with this app's sentence threw their words away
+    /// silently. Discarding the user's own words is the one thing this app must
+    /// not do, and it is worse here than anywhere: dictating a sentence and
+    /// watching it vanish gives no hint that a button was the cause.
+    ///
+    /// Pure so the decision is testable without a model container.
+    nonisolated static func presetAsk(typed: String,
+                                      preset: Preset) -> (question: String, isFromPreset: Bool) {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty else { return (trimmed, false) }
+        return (preset.question, true)
+    }
+
     func ask(_ preset: Preset) {
-        question = preset.question
-        submit(isFromPreset: true)
+        let asked = Self.presetAsk(typed: question, preset: preset)
+        question = asked.question
+        submit(isFromPreset: asked.isFromPreset)
+    }
+
+    /// Whether the preset buttons would ask the user's own words instead.
+    /// The buttons say so, since otherwise both would appear to do the same
+    /// thing once something has been typed.
+    var presetWouldAskTypedText: Bool {
+        !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Narrows the capture to a rectangle the user drags out.
@@ -374,6 +433,7 @@ final class CompanionViewModel {
 
         // Stated before anything can go wrong, so a failure that arrives later
         // replaces a visible "starting" rather than appearing out of nowhere.
+        isLoadingDictationModel = dictation.willLoadModel
         phase = .startingDictation
 
         Task {
@@ -384,18 +444,19 @@ final class CompanionViewModel {
                         self?.question = text
                         self?.dictationHint = ""
                     },
-                    onEnd: { [weak self] in self?.endListening() },
                     onSilence: { [weak self] device in
                         self?.dictationHint =
                             "No sound from “\(device)”. Pick a different mic in System Settings → Sound → Input."
                     }
                 )
+                isLoadingDictationModel = false
                 isListening = dictation.isListening
                 dictationIsOnDevice = dictation.isOnDevice
                 inputDeviceName = dictation.inputDeviceName
                 if phase == .startingDictation { phase = .idle }
                 if !isListening { endListening() }
             } catch {
+                isLoadingDictationModel = false
                 endListening()
                 phase = .failed(error.localizedDescription)
             }
@@ -473,6 +534,14 @@ final class CompanionViewModel {
     private func submit(isFromPreset: Bool) {
         let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
+
+        // A typed instruction to set a reminder is carried out rather than
+        // asked about. Never for a preset, whose wording is this app's own and
+        // could not be asking for anything.
+        if !isFromPreset, isReminderInstruction {
+            saveCurrentContext()
+            return
+        }
 
         answerTask?.cancel()
         speech.stop()
@@ -803,13 +872,14 @@ final class CompanionViewModel {
         guard AppSettings.semanticEnabled else { return }
 
         let model = AppSettings.embeddingModel
-        guard record.needsEmbedding(for: model) else { return }
+        guard record.needsEmbedding(for: Embedding.identifier(for: model)) else { return }
 
-        guard let vector = try? await localBrain().embed(record.embeddingSource, model: model) else {
+        let prepared = Embedding.prepared(record.embeddingSource, as: .document, for: model)
+        guard let vector = try? await localBrain().embed(prepared, model: model) else {
             return
         }
         record.embeddingData = vector.data
-        record.embeddingModel = model
+        record.embeddingModel = Embedding.identifier(for: model)
         try? modelContext.save()
     }
 
@@ -822,9 +892,9 @@ final class CompanionViewModel {
     private func backfillEmbeddings() {
         guard AppSettings.semanticEnabled else { return }
 
-        let model = AppSettings.embeddingModel
+        let identifier = Embedding.identifier(for: AppSettings.embeddingModel)
         let pending = recentContexts()
-            .filter { $0.needsEmbedding(for: model) }
+            .filter { $0.needsEmbedding(for: identifier) }
             .prefix(8)
         guard !pending.isEmpty else { return }
 

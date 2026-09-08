@@ -76,7 +76,8 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
 - **OCR**: Vision `VNRecognizeTextRequest`, on device
 - **AI**: local Ollama by default; OpenAI as an opt-in for questions only. The key lives in the
   Keychain, never in `UserDefaults`. The panel always states which one will answer
-- **Speech**: `AVAudioEngine` + `SFSpeechRecognizer` with `requiresOnDeviceRecognition` when supported
+- **Speech**: `AVAudioEngine` feeding either `SFSpeechRecognizer` with `requiresOnDeviceRecognition`
+ or Parakeet on the Neural Engine via FluidAudio. Both on device
 - **Persistence**: SwiftData, with screenshots in `.externalStorage`
 - **Cross-app**: the Electron store is reached through a security-scoped bookmark from a user-chosen
   file, which is what keeps the sandbox intact
@@ -107,6 +108,16 @@ weighted below "same window" deliberately — a shared window title is a fact, a
 and in library search a literal match is never ranked below a resemblance. With the feature off,
 scoring is byte-for-byte what it was before. If a change would let an unexplained score reorder the
 list, it is the wrong change.
+
+**A stored item and a search for it are prepared differently.** `nomic-embed-text` was trained with
+asymmetric `search_document:` and `search_query:` prefixes, and Ollama's `/api/embed` passes input
+through untouched, so nothing adds them unless `Embedding.prepared` does. They are applied by model
+name rather than always: to a model not trained on them those words are simply content, and every
+vector in the library would begin with the same phrase. Because changing how text is prepared changes
+the vector, the scheme is part of the recorded identity — `Embedding.identifier` appends
+`+task-prefix`, `needsEmbedding` sees the difference, and `backfillEmbeddings` re-embeds over a few
+summons. Without that, prefixed queries would be compared against unprefixed documents, which is worse
+than doing neither.
 
 The similarity floor is 0.55 because embedding models have a high similarity floor rather than a
 zero one: measured with `nomic-embed-text`, plainly unrelated pairs score 0.31–0.40 and related pairs
@@ -144,13 +155,25 @@ app that owns notification preferences. `QuietHours.contains` deliberately repro
 the disagreement is invisible. A reminder landing inside the window moves to the end of it, and the panel
 shows the moved time rather than the requested one.
 
+**An explicit reminder instruction is carried out, not asked about.** `CompanionViewModel.submit`
+routes to the save path when `isReminderInstruction` holds, which needs an explicit cue *and* a time
+stated in the sentence, with the offered reminder still armed. "Remind me to text voice bugs at 10 AM
+today" was otherwise sent to the model, which replied by explaining how to create a reminder in some
+other application — the app declining to do the one thing it had plainly been told to do. This is not
+the parser acting on inference; it is the user's own instruction, which is why a stated time is required
+rather than `ReminderPhrase`'s fallback guess of tomorrow morning. "Remind me what a closure is" names
+no time and stays a question, and switching the offered reminder off makes the sentence a question
+again. Preset wording can never qualify.
+
 **A reminder is set by the user, never by the parser.** `ReminderPhrase` reads a saved reason and may
 *offer* a time, but it only arms the reminder by default when the user actually used words like "remind
 me". A date noticed in passing — "notes from tomorrow's standup" — is offered switched off. The chosen
 time is always displayed, along with the words it came from, so the app's reading is visible rather than
 applied silently. This is the core principle applied to scheduling: inference may suggest, not act.
 Note that `NSDataDetector` takes no reference date and always resolves relative words against the system
-clock, which is why the tests assert relative facts instead of fixed timestamps.
+clock, which is why the tests assert relative facts instead of fixed timestamps. A fixture that states a
+clock time has to state a future day alongside it for the same reason: a stated hour already gone is
+rejected by design, so `"at 10 AM today"` made the suite pass every morning and fail every afternoon.
 
 **Who answers is switchable from the panel, not only from Settings.** The badge in the panel header is a
 menu, because the choice is per-question in practice: the local model reads text back fine and is worth
@@ -181,6 +204,22 @@ this app otherwise is, and strictly better than a control that does nothing.
 Consequence for the sandbox: user-selected files are entitled **read-write**, not read-only, because
 `InboxImporter` deletes what it has imported. Read-only would have let the import succeed and the
 delete fail silently, re-importing the same capture on every summon.
+
+The same rule reaches ordinary windows, which is subtler because they look fine. An accessory app is
+never frontmost, so macOS gives its windows no key focus: they draw correctly and they take mouse
+clicks, so toggles, buttons and pickers all work, and only **text fields** are dead — they accept the
+click, show no caret, and silently swallow typing. `SettingsView` therefore activates on appear, as
+`LibraryMenuButton` already did. A window where every control works except the ones needing a keyboard
+is this bug, not a SwiftUI binding problem.
+
+**The OpenAI model is picked from a list, not typed.** `OpenAIModelChoice.all` is fixed rather than
+fetched from `/v1/models`, because that endpoint only answers for a key that already works — the
+picker would be empty in exactly the state a new user is in — and it returns every model the key can
+reach, including embedding, audio and image models this app cannot call, so most of the list would be
+wrong answers presented as choices. `Selection.custom` keeps a model newer than the build reachable
+without an update, and the legacy default is listed so an existing setting shows as itself rather than
+as something the user typed. The blurbs describe the tier and deliberately quote **no prices**: these
+rates were cut twice in one quarter, and a stale number in the UI is worse than none.
 
 **A question is a conversation, not a lookup.** Every summon used to be one-shot, which made the panel
 useless for the thing it is best at: standing next to an unfamiliar interface and being asked "now
@@ -218,6 +257,59 @@ would otherwise refuse with the field looking empty for no visible reason. Prese
 **ineligible**: "Explain what this is, in plain language" is this app's sentence, and storing it as the
 user's reason for keeping something would break precisely the stated-versus-inferred distinction the
 app exists to maintain. That is what `Turn.isFromPreset` is for; the model never sees it.
+
+**A preset never overwrites what the user typed.** `presetAsk` returns the typed text when there is
+any, and the preset's wording only when the field is empty — a preset is a shortcut past typing
+"explain this", not a replacement for a question already asked. Assigning `preset.question` over the
+field discarded the user's own words, and did so most damagingly right after dictation, where a
+sentence vanishing gives no hint that a button caused it. It also mislabelled the turn as
+`isFromPreset`, which put the wrong sentence in front of `savableReason`. Consequence: with text in
+the field both presets do the same thing, so the buttons say as much in their tooltip rather than
+appearing to offer a choice that no longer exists.
+
+**`stopSpeaking` on an idle synthesizer wedges it.** `AVSpeechSynthesizer.stopSpeaking(at:)` called
+when nothing is being spoken leaves the instance in a state where every later `speak` is accepted and
+silently never heard. `SpeechPlayback.stop()` runs at the top of every question, so the unconditional
+version meant answers were *never* read aloud and the setting looked inert. It now returns early unless
+the synthesizer is actually speaking, and replaces the instance after a real stop rather than reusing
+it, since recovery is undocumented and evidently version-dependent. `isSpeaking` is driven by a delegate
+rather than set on enqueue, or the stop button stays lit after the answer ends.
+
+**The microphone is shared; the recognizer is swappable.** Opening the input device, metering it,
+naming it and watching it for silence is identical whoever transcribes, and it was the fiddly part to
+get right, so `SpeechDictation` keeps all of it and hands buffers to a `DictationRecognizer`. Apple's
+backend stays the default because it needs nothing downloaded — asking for a hundred megabytes before
+anyone has tried the feature is the wrong trade for a default — and `AppSettings.DictationEngine`
+switches to Parakeet, which runs on the Neural Engine through FluidAudio, this project's first and
+only Swift package dependency. Both run on this Mac; the choice is quality against disk space, never
+privacy, and neither may be swapped for a hosted service.
+
+The recognizer is **kept between sessions**, and rebuilt only when the setting changes. Parakeet's
+models take tens of seconds to load onto the Neural Engine, so constructing one per session paid that
+on every single press of the dictation key and made its own `modelsLoaded` guard unreachable — the
+object never survived to read it. `willLoadModel` exists so the first press of a session can say what
+the wait is, since an unexplained pause on a key press reads as the key having been ignored.
+
+Parakeet's transcript is **cumulative**: the model keeps its own accumulated tokens across pauses, so
+the problem described next is absent by construction there rather than stitched back together. Its
+audio is *copied* rather than its buffer retained, which is not an optimization detail — a tap's
+buffer is only valid for the duration of the callback, and this backend looks at the audio a fraction
+of a second later, on an interval, because the recognizer is an actor and the render thread cannot
+await. Apple's backend escapes this only because `append` copies synchronously.
+
+**A dictation pause starts a new segment from empty.** `SFSpeechRecognizer` finalizes a segment when
+the speaker pauses, and the next result's `bestTranscription` begins again from nothing. Assigning it
+straight to the field erased everything said before the pause. `SpeechDictation` accumulates finalized
+segments in `settledTranscript` and appends the in-progress one. A finished segment also used to end
+the whole session, which made dictating anything with a pause in it impossible — stopping to think
+stopped the recording — so a new task is started instead, and only the user ends it. The audio tap keeps
+feeding buffers across that swap, so the live request is held behind a lock in `RequestHolder`.
+
+**A crop is measured against the area currently shown, not the display.** `ScreenObservation`
+records `primaryScreenFrame`, and `cropped(to:on:)` uses it in preference to `screen.frame`. Selecting a
+second region measured the new selection against the whole display while the image was already a crop,
+scaling by the wrong factor and offsetting by the first crop's origin — so re-selecting after a mis-drag
+cropped somewhere unrelated or failed as "too small to read".
 
 **Speech out is local, like speech in.** `AVSpeechSynthesizer` rather than a hosted voice. The ban on
 cloud transcription applies in reverse — routing every answer through a speech vendor would export the
@@ -304,10 +396,10 @@ the screen, it is the wrong change.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~240 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `App/SettingsView.swift` | ~274 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~627 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
+| `Companion/CompanionView.swift` | ~640 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
 | `Companion/CompanionViewModel.swift` | ~963 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, and the control an answer named. |
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
@@ -318,8 +410,11 @@ the screen, it is the wrong change.
 | `Brain/Brain.swift` | ~254 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, and the file-editing rules. |
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
+| `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
 | `Voice/SpeechPlayback.swift` | ~116 | Reads answers aloud with `AVSpeechSynthesizer`, sentence by sentence, on device. |
-| `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
+| `Voice/SpeechDictation.swift` | ~167 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition. |
+| `Voice/DictationRecognizer.swift` | ~206 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
+| `Voice/ParakeetDictationRecognizer.swift` | ~146 | The Parakeet backend, on the Neural Engine through FluidAudio. |
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
@@ -328,7 +423,7 @@ the screen, it is the wrong change.
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
-| `Store/Embedding.swift` | ~58 | Normalized vector, cosine similarity, and blob storage. Pure. |
+| `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
@@ -345,10 +440,11 @@ the screen, it is the wrong change.
 ## Build & run
 
 ```bash
-# Native companion
+# Native companion. The architecture override is required for Release — see below.
 cd TodoCompanion
 xcodebuild -project TodoCompanion.xcodeproj -scheme TodoCompanion \
-           -configuration Release -destination 'platform=macOS' build
+ -configuration Release -destination 'platform=macOS' \
+ ARCHS=arm64 EXCLUDED_ARCHS=x86_64 build
 
 # Electron app
 npm install
@@ -357,6 +453,16 @@ npm run dev
 
 Terminal builds are safe here — see the TCC note above. Ollama must be running (`ollama serve`) for the
 companion to answer anything.
+
+**Release builds are Apple Silicon only, and the architecture must be forced on the command line.**
+FluidAudio does not compile for x86_64 — it reaches for `Float16`, which the standard library marks
+unavailable there — so the app is arm64-only now, which the project states through `ARCHS` and
+`EXCLUDED_ARCHS`. Those settings do *not* reach the package: Xcode builds a Swift package for every
+architecture in the build request and ignores the arch settings of the project depending on it, which
+was verified against `ARCHS`, `EXCLUDED_ARCHS` and `ONLY_ACTIVE_ARCH` at project level and a
+`arch=arm64` destination, all of which still produced an x86_64 compile of FluidAudio. Only a
+build-request-level override works. Debug escapes this because `ONLY_ACTIVE_ARCH` is already `YES`,
+which is why `xcodebuild test` needs no override.
 
 ## Tests
 
@@ -389,7 +495,9 @@ What is covered, and why these pieces specifically:
 | `ScreenRectTests` | Normalized box → screen coordinates | Vision and AppKit share a bottom-left origin where `cropped(to:)` needs a flip, so the mistake is a box a mirrored distance up the screen, which looks plausible. Also pins that a cropped capture maps into the *selection*. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
+| `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
+| `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
 | `InboxImporterTests` | Parsing the phone's JSON manifest | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. |

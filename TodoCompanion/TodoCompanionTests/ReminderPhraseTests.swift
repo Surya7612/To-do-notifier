@@ -24,6 +24,33 @@ struct ReminderPhraseTests {
         ReminderPhrase.suggestion(in: text, now: now, calendar: calendar)
     }
 
+    /// Whether pressing Return carries the instruction out instead of asking the
+    /// model about it. `CompanionViewModel.isReminderInstruction` is the same
+    /// two conditions, and this covers the parser's half of it.
+    ///
+    /// Typing "Remind me to text voice bugs at 10 AM today" used to be answered
+    /// by the model explaining how to create a reminder in some other app — the
+    /// app declining to do what it had plainly been told. The line is drawn at
+    /// an explicit cue *and* a stated time, so a question that happens to
+    /// contain "remind me" is still a question.
+    ///
+    /// The reported sentence said "today", and the test deliberately does not:
+    /// a stated hour that has already passed is rejected by design, so the
+    /// original wording made this pass before 10 AM and fail after it. What is
+    /// under test is a stated clock time, not which day it lands on.
+    @Test("an explicit cue with a stated time is an instruction")
+    func instructionNeedsBothCueAndTime() throws {
+        let instruction = try #require(suggestion("remind me to text voice bugs tomorrow at 10 AM"))
+        #expect(instruction.wasExplicitlyRequested)
+        #expect(instruction.matchedText != nil, "the time has to come from the sentence")
+
+        // No time stated, so the parser falls back to a guess. That guess may
+        // be offered, but it must not be treated as a command.
+        let question = try #require(suggestion("remind me what a closure is"))
+        #expect(question.wasExplicitlyRequested)
+        #expect(question.matchedText == nil, "a fallback time is not a stated one")
+    }
+
     @Test("asking to be reminded, with a day, is an explicit request")
     func explicitRequestWithDate() throws {
         let result = try #require(suggestion("remind me to follow up on this tomorrow"))

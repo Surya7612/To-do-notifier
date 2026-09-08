@@ -1,48 +1,49 @@
 import AVFoundation
 import Foundation
-import Speech
 
-/// Push-to-talk dictation using Apple's on-device recognizer.
+/// Push-to-talk dictation.
 ///
-/// Deliberately not Whisper or any hosted STT: those would ship your voice off
-/// the machine for a feature whose whole point is convenience, and the plan's
-/// privacy principles put local-first ahead of accuracy here. `Speech` can run
-/// fully on-device, so nothing leaves the Mac.
+/// Owns the microphone — opening it, metering it, naming it and watching it for
+/// silence — and hands the audio to whichever `DictationRecognizer` the user has
+/// chosen. That split exists because the microphone half was the fiddly part and
+/// is identical either way, while the recognizers differ in everything else.
+///
+/// Both recognizers run on this Mac. Nothing here may be swapped for a hosted
+/// transcription service: shipping the user's voice off the machine for a
+/// convenience feature is the thing the privacy rules exist to prevent.
 @MainActor
 final class SpeechDictation {
-    enum Failure: LocalizedError {
-        case micDenied
-        case speechDenied
-        case recognizerUnavailable
-        case noInputDevice
-        case engineFailed(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .micDenied:
-                "Microphone access is off. Enable it in System Settings → Privacy & Security → Microphone."
-            case .speechDenied:
-                "Speech Recognition is off. Enable it in System Settings → Privacy & Security → Speech Recognition."
-            case .recognizerUnavailable:
-                "Speech recognition isn't available for this language right now."
-            case .noInputDevice:
-                "No microphone input available. Check Sound settings for an input device."
-            case let .engineFailed(detail):
-                "Couldn't start the microphone: \(detail)"
-            }
-        }
-    }
+    typealias Failure = DictationFailure
 
     /// Rebuilt per session on purpose. An engine created before the microphone
     /// permission existed caches an input node with a zero-channel format and
     /// never recovers, which silently produces no audio at all.
     private var engine: AVAudioEngine?
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
-    private var recognizer: SFSpeechRecognizer?
+
+    /// Kept between sessions, and rebuilt only when the chosen engine changes.
+    ///
+    /// Not an optimization. Parakeet's models take tens of seconds to load onto
+    /// the Neural Engine, so building a recognizer per session paid that on
+    /// every single press of the dictation key rather than once, and the
+    /// `modelsLoaded` guard inside it never survived to be read.
+    private var recognizer: (any DictationRecognizer)?
+    private var recognizerEngine: AppSettings.DictationEngine?
+
+    /// True when the next `start` has a model to load, which takes tens of
+    /// seconds rather than the moment a microphone takes. The panel says so,
+    /// because an unexplained wait on a key press reads as a hang.
+    var willLoadModel: Bool {
+        let engine = AppSettings.dictationEngine
+        guard engine != .apple else { return false }
+        guard engine == recognizerEngine, let recognizer else { return true }
+        return !recognizer.isPrepared
+    }
 
     private(set) var isListening = false
-    /// False means Apple's servers are transcribing; the UI says so.
+
+    /// False means something other than this Mac is transcribing; the UI says
+    /// so. Only Apple's recognizer can report false, and only when its
+    /// on-device model is missing for the language.
     private(set) var isOnDevice = true
 
     /// Named in the UI because the system default input is often not the one the
@@ -61,23 +62,23 @@ final class SpeechDictation {
     }
 
     func start(onTranscript: @escaping (String) -> Void,
-               onEnd: @escaping () -> Void,
                onSilence: @escaping (String) -> Void) async throws {
         guard !isListening else { return }
 
-        guard await Self.authorizeSpeech() else { throw Failure.speechDenied }
+        let chosenEngine = AppSettings.dictationEngine
+        if chosenEngine != recognizerEngine || recognizer == nil {
+            recognizer = chosenEngine.makeRecognizer()
+            recognizerEngine = chosenEngine
+        }
+        guard let recognizer else { throw Failure.recognizerUnavailable }
+
+        // Prepared before the microphone opens, because this is where a
+        // permission prompt or a first-run model download happens and neither
+        // should run with the input device held open.
+        try await recognizer.prepare()
+        isOnDevice = recognizer.runsOnDevice
+
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure.micDenied }
-
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-            ?? SFSpeechRecognizer()
-        guard let recognizer, recognizer.isAvailable else { throw Failure.recognizerUnavailable }
-        self.recognizer = recognizer
-
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        isOnDevice = recognizer.supportsOnDeviceRecognition
-        request.requiresOnDeviceRecognition = isOnDevice
-        self.request = request
 
         let engine = AVAudioEngine()
         self.engine = engine
@@ -93,8 +94,8 @@ final class SpeechDictation {
         inputDeviceName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "unknown input"
         level.reset()
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level] buffer, _ in
-            request.append(buffer)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level, recognizer] buffer, _ in
+            recognizer.receive(buffer)
             level.record(buffer)
         }
 
@@ -117,27 +118,15 @@ final class SpeechDictation {
             onSilence(device)
         }
 
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            if let text = result?.bestTranscription.formattedString, !text.isEmpty {
-                Task { @MainActor in onTranscript(text) }
-            }
-            if let error {
-                NSLog("[Dictation] recognition error: \(error.localizedDescription)")
-            }
-            if error != nil || result?.isFinal == true {
-                Task { @MainActor in
-                    self?.stop()
-                    onEnd()
-                }
-            }
-        }
+        recognizer.begin(onTranscript: onTranscript)
     }
 
     func stop() {
         guard isListening else { return }
+        // Cleared first so a recognition callback already in flight does not
+        // start another segment on the way out.
         isListening = false
-        request?.endAudio()
-        task?.cancel()
+        recognizer?.end()
         cleanUp()
     }
 
@@ -149,8 +138,8 @@ final class SpeechDictation {
             if engine.isRunning { engine.stop() }
         }
         engine = nil
-        request = nil
-        task = nil
+        // The recognizer deliberately survives, holding its loaded model. Only
+        // a change of engine replaces it.
     }
 
     /// Tracks whether any non-silent audio arrived. Written from the audio
@@ -196,23 +185,6 @@ final class SpeechDictation {
                 sessionPeak = max(sessionPeak, frameMax)
                 unreadPeak = max(unreadPeak, frameMax)
             }
-        }
-    }
-
-    private static func authorizeSpeech() async -> Bool {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized:
-            return true
-        case .denied, .restricted:
-            return false
-        case .notDetermined:
-            return await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { status in
-                    continuation.resume(returning: status == .authorized)
-                }
-            }
-        @unknown default:
-            return false
         }
     }
 }

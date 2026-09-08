@@ -84,6 +84,52 @@ struct EmbeddingTests {
     }
 }
 
+/// Which words are sent alongside the text, and what that does to the identity
+/// of a stored vector.
+@Suite("Preparing text to embed")
+struct EmbeddingPreparationTests {
+    @Test("nomic gets the asymmetric prefixes it was trained with")
+    func nomicIsPrefixedByRole() {
+        let document = Embedding.prepared("a reason", as: .document, for: "nomic-embed-text")
+        let query = Embedding.prepared("a reason", as: .query, for: "nomic-embed-text")
+
+        #expect(document == "search_document: a reason")
+        #expect(query == "search_query: a reason")
+        #expect(document != query, "the two sides are deliberately not the same text")
+    }
+
+    @Test("a pinned tag is still recognized as the same model")
+    func tagsDoNotDefeatTheLookup() {
+        #expect(Embedding.prepared("x", as: .query, for: "nomic-embed-text:v1.5") == "search_query: x")
+    }
+
+    /// A prefix sent to a model that was not trained on it is not a neutral
+    /// decoration — it is content, and every vector would start with it.
+    @Test("a model with no known prefixes is left alone")
+    func otherModelsAreUntouched() {
+        #expect(Embedding.prepared("a reason", as: .document, for: "mxbai-embed-large") == "a reason")
+        #expect(Embedding.prepared("a reason", as: .query, for: "all-minilm") == "a reason")
+    }
+
+    @Test("the recorded identifier separates prefixed vectors from bare ones")
+    func identifierCarriesTheScheme() {
+        #expect(Embedding.identifier(for: "nomic-embed-text") == "nomic-embed-text+task-prefix")
+        #expect(Embedding.identifier(for: "mxbai-embed-large") == "mxbai-embed-large")
+    }
+
+    /// The whole point of the identifier: `needsEmbedding` compares it, so a
+    /// library embedded before this change re-embeds through the backfill
+    /// rather than sitting there being compared against prefixed queries.
+    @Test("a vector stored under the bare name needs re-embedding")
+    func schemeChangeInvalidatesStoredVectors() {
+        let record = SavedContext(intent: "why I kept this")
+        record.embeddingData = Data([0, 0, 0, 0])
+        record.embeddingModel = "nomic-embed-text"
+
+        #expect(record.needsEmbedding(for: Embedding.identifier(for: "nomic-embed-text")))
+    }
+}
+
 /// The parser sits between Ollama's JSON and everything above it, and Ollama
 /// has shipped two different response shapes for this call.
 @Suite("Embedding responses")

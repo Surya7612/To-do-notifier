@@ -34,6 +34,36 @@ struct ScreenObservationTests {
         #expect(cropped.image.topLeftBrightness < 0.1, "expected the black half")
     }
 
+    /// Selecting a second region measured the new selection against the whole
+    /// display even though the image was already a crop, so it scaled by the
+    /// wrong factor and offset by the first crop's origin. In practice that made
+    /// re-selecting after a mis-drag either crop somewhere unrelated or fail as
+    /// "too small to read", which read as region selection being broken.
+    @Test("a second selection is measured against the first, not the display")
+    func nestedSelectionUsesTheCurrentArea() throws {
+        var source = observation()
+        // The image already shows only the top-left quarter of the display.
+        source.primaryScreenFrame = CGRect(x: 0, y: 50, width: 50, height: 50)
+
+        // The whole of that area, selected again, must come back whole.
+        let again = try #require(
+            source.cropped(to: CGRect(x: 0, y: 50, width: 50, height: 50),
+                           inDisplayFrame: source.primaryScreenFrame!)
+        )
+
+        #expect(again.image.width == source.image.width)
+        #expect(again.image.height == source.image.height)
+        #expect(again.primaryScreenFrame == CGRect(x: 0, y: 50, width: 50, height: 50))
+    }
+
+    @Test("a crop records the area it covers, so a later one can be placed")
+    func cropRecordsItsArea() throws {
+        let selection = CGRect(x: 10, y: 20, width: 30, height: 40)
+        let cropped = try #require(observation().cropped(to: selection, inDisplayFrame: displayFrame))
+
+        #expect(cropped.primaryScreenFrame == selection)
+    }
+
     @Test("the backing scale is applied to the selection")
     func selectionIsScaledToPixels() throws {
         let selection = CGRect(x: 10, y: 20, width: 30, height: 40)

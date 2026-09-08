@@ -14,6 +14,7 @@ enum AppSettings {
         static let embeddingModel = "embeddingModel"
         static let speaksAnswers = "speaksAnswers"
         static let voiceIdentifier = "voiceIdentifier"
+        static let dictationEngine = "dictationEngine"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -37,6 +38,49 @@ enum AppSettings {
             case .openAI: "OpenAI"
             }
         }
+    }
+
+    /// Which recognizer turns speech into text.
+    ///
+    /// Both run on this Mac, so this is a quality and disk-space choice rather
+    /// than a privacy one. Apple's is the default because it needs nothing
+    /// downloaded; Parakeet is better at continuous speech but fetches a model
+    /// on first use, and asking for a hundred megabytes before anyone has tried
+    /// the feature is the wrong trade for a default.
+    enum DictationEngine: String, CaseIterable, Identifiable {
+        case apple
+        case parakeet
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .apple: "Apple"
+            case .parakeet: "Parakeet"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .apple:
+                "Built in, nothing to download. Ends a phrase at every pause."
+            case .parakeet:
+                "Runs on the Neural Engine and keeps up across pauses. Downloads a model the first time."
+            }
+        }
+
+        @MainActor
+        func makeRecognizer() -> any DictationRecognizer {
+            switch self {
+            case .apple: AppleDictationRecognizer()
+            case .parakeet: ParakeetDictationRecognizer()
+            }
+        }
+    }
+
+    static var dictationEngine: DictationEngine {
+        let raw = UserDefaults.standard.string(forKey: Key.dictationEngine) ?? ""
+        return DictationEngine(rawValue: raw) ?? .apple
     }
 
     /// Who the panel says will answer, and whether the user's choice is
