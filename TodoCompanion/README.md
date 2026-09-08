@@ -203,6 +203,18 @@ Both halves are required, so "remind me what a closure is" names no time and is 
 question it is. Switching the offered reminder off before you press Return also makes it a question
 again.
 
+They do not have to be in the same sentence, though, because Max will ask. Leave the time out and it
+replies "when should I remind you?" — and answering that sets it:
+
+```text
+"remind me to record demo" → "When should I remind you to record the demo?"
+"in 10 minutes"            → "Saved · reminder at 6:49 PM"
+```
+
+The save is filed under the first sentence rather than the second, since "in 10 minutes" is a time and
+not a reason you would want to read back later. Asking Max something else instead drops the request,
+so a time mentioned much later never attaches itself to a subject you had moved on from.
+
 Reminders are local notifications, so they need this Mac awake when they fire.
 
 Reminders respect the quiet hours you configured in the To-Do Notifier, and a reminder landing inside
@@ -240,8 +252,11 @@ Worth knowing:
   leaving you to discover that nothing reached your phone.
 - **Ticking one off on your phone silences that alert and leaves the task open here.** Reminders is a
   way of delivering the alert, not a second copy of your list.
-- **The list is only as fresh as the last time you summoned Max.** Anything already
-  copied keeps its alarm regardless, since Apple takes it from there.
+- **A reminder is handed over the moment you set it**, and the list is swept again each time Max
+  launches or is summoned. That matters because "remind me in two hours" is usually said on the way
+  out of the door: waiting for the next summon meant the phone never heard about the one reminder you
+  most needed it to. Anything already copied keeps its alarm regardless, since Apple takes it from
+  there.
 - Reminders it copies are ones **it** stops announcing, so one thing still pings once. Your own tasks
   keep being nagged about by the To-Do Notifier as before.
 - Turning the switch off takes back everything it added and leaves anything you wrote yourself alone.
