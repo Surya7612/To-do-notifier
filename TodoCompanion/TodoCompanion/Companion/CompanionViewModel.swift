@@ -154,6 +154,9 @@ final class CompanionViewModel {
         onCaptureBegan?()
         // A key may have been added in Settings since the last summon.
         refreshCloudKey()
+        // Before retrieval reads the store, so something captured on the phone
+        // an hour ago can resurface on this summon rather than the next one.
+        InboxImporter.importAll(into: modelContext)
 
         captureTask = Task {
             defer { onCaptureEnded?() }
@@ -174,6 +177,13 @@ final class CompanionViewModel {
                                                    inProject: currentProject)
                 linkedWork = TodoBridge.load()
                 if phase == .reading { phase = .idle }
+
+                // Both run after the panel is already usable. Meaning matching
+                // needs a round trip to the local model, and making every
+                // summon wait on it would trade a visible delay for a signal
+                // the user has not asked for yet.
+                backfillEmbeddings()
+                await addMeaningMatches(for: fresh)
             } catch ScreenCaptureError.permissionDenied {
                 guard !Task.isCancelled else { return }
                 phase = .needsPermission
@@ -182,6 +192,33 @@ final class CompanionViewModel {
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Re-scores the related strip once the screen itself has a vector.
+    ///
+    /// A second pass rather than part of the first: the structured matches are
+    /// already on screen by now, and this can only add to them or reorder them.
+    /// If the embedding model is missing or Ollama is down, the first pass is
+    /// simply what the user keeps.
+    private func addMeaningMatches(for observation: ScreenObservation) async {
+        guard AppSettings.semanticEnabled else { return }
+
+        let query = [observation.contextLabel, observation.recognizedText]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        guard !query.isEmpty else { return }
+
+        guard let vector = try? await localBrain().embed(query, model: AppSettings.embeddingModel) else {
+            return
+        }
+        guard !Task.isCancelled, observation.contextLabel == self.observation?.contextLabel else {
+            return
+        }
+
+        related = ContextRetriever.related(to: observation,
+                                           among: recentContexts(),
+                                           inProject: currentProject,
+                                           screenEmbedding: vector)
     }
 
     /// Vision is CPU-heavy enough to stall the panel's appearance if it runs
@@ -536,9 +573,60 @@ final class CompanionViewModel {
         Task {
             guard let summary = try? await brain.summarize(intent: intent, screenText: screenText),
                   !summary.isEmpty
-            else { return }
+            else {
+                // Still worth a vector from the user's own words alone.
+                await addEmbedding(to: record)
+                return
+            }
             record.aiSummary = summary
             try? modelContext.save()
+            // Deliberately after the summary lands, since the summary is part
+            // of what gets embedded. Embedding first would mean vectoring a
+            // save without the model's description of what was on screen.
+            await addEmbedding(to: record)
+        }
+    }
+
+    /// Computes the vector for one save, locally.
+    ///
+    /// Failure is silent by design: the model may not be pulled and Ollama may
+    /// not be running, and neither should turn a successful save into a visible
+    /// error. The save is already on disk; the vector is an enhancement that
+    /// the backfill will pick up on a later summon.
+    private func addEmbedding(to record: SavedContext) async {
+        guard AppSettings.semanticEnabled else { return }
+
+        let model = AppSettings.embeddingModel
+        guard record.needsEmbedding(for: model) else { return }
+
+        guard let vector = try? await localBrain().embed(record.embeddingSource, model: model) else {
+            return
+        }
+        record.embeddingData = vector.data
+        record.embeddingModel = model
+        try? modelContext.save()
+    }
+
+    /// Vectors anything saved before the feature was switched on.
+    ///
+    /// Capped per summon rather than run as one long pass: this is background
+    /// work triggered by the user opening a panel, and a library of hundreds
+    /// would otherwise hold the local model busy for a noticeable stretch the
+    /// first time. A few summons catch up instead.
+    private func backfillEmbeddings() {
+        guard AppSettings.semanticEnabled else { return }
+
+        let model = AppSettings.embeddingModel
+        let pending = recentContexts()
+            .filter { $0.needsEmbedding(for: model) }
+            .prefix(8)
+        guard !pending.isEmpty else { return }
+
+        Task {
+            for record in pending {
+                guard !Task.isCancelled else { return }
+                await addEmbedding(to: record)
+            }
         }
     }
 

@@ -23,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         watchForProjectChanges()
+
+        // Anything captured on the phone while this Mac was asleep is waiting
+        // in the folder, so launch is the moment to collect it.
+        InboxImporter.importAll(into: ContextStore.shared.mainContext)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

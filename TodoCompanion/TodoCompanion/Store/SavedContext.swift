@@ -83,6 +83,41 @@ final class SavedContext {
         return remindAt > Date()
     }
 
+    /// Vector for meaning-based matching, generated locally. Nil until it has
+    /// been computed, which it may never be — semantic matching is opt-in and
+    /// needs a model the user has to pull, so everything downstream treats its
+    /// absence as normal rather than as an error.
+    @Attribute(.externalStorage)
+    var embeddingData: Data?
+
+    /// Which model produced `embeddingData`. Vectors from different models are
+    /// not comparable, so changing the model has to invalidate rather than
+    /// silently mix two coordinate systems.
+    var embeddingModel: String = ""
+
+    var embedding: Embedding? {
+        embeddingData.flatMap(Embedding.init(data:))
+    }
+
+    /// The text a vector is computed from.
+    ///
+    /// The user's own reason, their topics, and the model's one-line gloss of
+    /// the screen — but deliberately **not** the raw OCR text. A page of
+    /// incidental interface furniture would swamp a one-sentence reason and
+    /// make every save taken in the same app look alike. Literal search already
+    /// covers the screen text, and covers it better.
+    var embeddingSource: String {
+        [intent, topics.map { "#\($0)" }.joined(separator: " "), aiSummary]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    /// True when the stored vector is missing or was made by another model.
+    func needsEmbedding(for model: String) -> Bool {
+        guard !embeddingSource.isEmpty else { return false }
+        return embeddingData == nil || embeddingModel != model
+    }
+
     init(intent: String,
          recognizedText: String = "",
          imageData: Data? = nil,

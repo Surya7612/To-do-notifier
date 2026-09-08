@@ -92,11 +92,33 @@ the screen in front of you and shows the top few under "You kept this before" �
 it surfaced, such as "same window", "#engram", "in Engram", or "mentions retrieval". Those matches
 are also handed to the model, labelled as your words.
 
-Scoring is structured rather than semantic, deliberately: embeddings cannot tell you *why* something
-came back, and unexplained resurfacing is indistinguishable from the app guessing.
-
 This happens **only when you summon it**. Nothing polls in the background and no capture occurs that
 you didn't ask for.
+
+### Matching by meaning
+
+Turn on **Match saved context by meaning** in Settings and "screen capture" will also find a note
+that says "display grabbing". It needs a second Ollama model:
+
+```sh
+ollama pull nomic-embed-text
+```
+
+Meaning is one signal among several rather than a replacement for them, and it obeys the same rule as
+everything else here: it carries a reason, shown as **close in meaning**. That was the condition on
+using embeddings at all — a match that can't say why it surfaced is indistinguishable from the app
+guessing. So a vector distance is only allowed to *contribute* to a score it can also explain, it can
+only ever add, and in library search a save that literally contains your words is never pushed below
+a mere resemblance.
+
+Embedding runs on this Mac and is never sent anywhere, even when OpenAI is answering your questions.
+That is enforced the same way summaries are: `embed` is absent from the `Brain` protocol and exists
+only on `OllamaBrain`, so no cloud provider can be attached to it. Embedding is in fact the worst
+thing to export, because it runs once per *save* rather than once per question — the volume is your
+whole library, not a single deliberate ask.
+
+Off by default, because it needs that second model and a feature that silently does nothing until an
+unrelated command is run is worse than one you turned on deliberately.
 
 ## Requirements
 
@@ -155,6 +177,51 @@ The companion then reads your open tasks, notes, and quiet-hours setting — and
 Traffic in the other direction is a separate file it writes with its project list, which the Electron
 app reads. Each app owns one file and reads the other's; neither writes the other's.
 
+## Capturing from your phone
+
+Point **Capture from your phone** in Settings at a folder, put that folder in iCloud Drive, and a
+Shortcut on your iPhone can save into it. Anything it drops there is brought in when the app launches
+and each time you summon the panel, and then **removed from the folder** — it is a transport, not
+storage, and the screenshot lives in the app's own store once imported.
+
+This is a folder rather than an iCloud container on purpose. A real iCloud container needs an
+entitlement that requires the paid Apple Developer Program, which this project does not have. A
+*folder* inside iCloud Drive needs no entitlement at all and syncs just as well — and as a side
+effect the same mechanism works with Dropbox, Syncthing, or a plain local folder.
+
+### The Shortcut
+
+Build it once on the phone, in the Share Sheet so it can accept a screenshot:
+
+1. **Shortcut Details** → accept **Images** and **Text** from the share sheet.
+2. **Ask for Input** (Text) → prompt "Why keep this?". This is the intent field, so it holds *your*
+   words. Dictation works here.
+3. **Base64 Encode** the shortcut input (the image).
+4. **Dictionary** with four keys:
+
+   | Key | Value |
+   |---|---|
+   | `intent` | the Ask for Input result |
+   | `imageBase64` | the Base64 Encode result |
+   | `createdAt` | Current Date, formatted ISO 8601 |
+   | `source` | `iPhone` |
+
+5. **Save File** into the folder you linked, with **Ask Where to Save** off and the name set to
+   anything unique — the date works.
+
+Use the **Dictionary** action rather than building the JSON as text. Shortcuts serializes a dictionary
+correctly, whereas a text template breaks the moment your reason contains a quote or a newline.
+
+The image travels base64-encoded inside the JSON rather than as a second file, which matters over a
+syncing folder: two files sharing a name arrive independently, so a reader can see a manifest whose
+image hasn't landed yet and can't distinguish that from an image that is never coming.
+
+`#tags` you type on the phone become topics exactly as they do on the Mac. A reason with no image is
+accepted — a thought captured on a walk is what this is for. An image with **no** reason is refused,
+because the reason is the thing this app is built around and inventing one would be inference posing
+as your words. A file that fails to parse is left in the folder rather than deleted, since its staying
+put is the only signal anything went wrong.
+
 ## Layout
 
 | Path | Role |
@@ -164,7 +231,7 @@ app reads. Each app owns one file and reads the other's; neither writes the othe
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
 | `Voice/` | On-device dictation and input level metering |
-| `Store/` | SwiftData models, retrieval scoring, reminder parsing, both halves of the to-do bridge |
+| `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import |
 | `Library/` | Browse, search, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |
 | `Support/` | Settings, design tokens, Keychain, notifications, image encoding |
@@ -192,13 +259,11 @@ entitlements.
 
 ## Not built yet
 
-- **Semantic search.** Retrieval and library search are literal — "screen capture" will not find a
-  note that says "display grabbing". Embeddings are deferred until the structured version
-  demonstrably fails, since it can explain itself and they cannot.
 - **Remote reminders.** Reminders are local, so they need this Mac awake when they fire. A hosted
   scheduler is the one thing that would fix that, and the only reason to build one.
 - **Voice responses.** Dictation is in; spoken answers are not, and are no longer obviously wanted.
-- **iPhone capture.** Intended to start as a Shortcut rather than an app.
+- **An iPhone app.** Phone capture is a Shortcut writing to a folder, deliberately, and that is
+  expected to stay true for a long time.
 - **Signing and notarization.** `scripts/release-companion.sh` builds a DMG and publishes a release,
   but stops short of Developer ID signing, notarization, and auto-updates, all of which need the paid
   Apple Developer Program. Until then, downloaders must right-click → Open once.

@@ -21,6 +21,10 @@ struct LibraryView: View {
     /// owns that file and can change it while this window is open.
     @State private var work = LinkedWork()
 
+    /// Saves that match the query by meaning. Held as identifiers rather than
+    /// models so a store change cannot leave this holding stale objects.
+    @State private var semanticMatchIDs: [PersistentIdentifier] = []
+
     /// Which slice of the library the sidebar is showing.
     private enum Scope: Hashable {
         case everything
@@ -39,11 +43,64 @@ struct LibraryView: View {
         }
     }
 
+    /// Literal matches first, then anything that only matches by meaning.
+    ///
+    /// Ordered that way deliberately: a save containing the words the user
+    /// typed is not a guess, and should never be pushed below a resemblance.
+    /// The meaning-only matches are appended and labelled, so the list never
+    /// silently reorders itself around a score nobody can see.
     private var filtered: [SavedContext] {
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return inScope }
-        return inScope.filter {
+
+        let literal = inScope.filter {
             $0.searchHaystack.localizedCaseInsensitiveContains(term)
+        }
+
+        guard !semanticMatchIDs.isEmpty else { return literal }
+
+        let alreadyFound = Set(literal.map(\.persistentModelID))
+        let byMeaning = semanticMatchIDs
+            .filter { !alreadyFound.contains($0) }
+            .compactMap { id in inScope.first { $0.persistentModelID == id } }
+
+        return literal + byMeaning
+    }
+
+    /// True for a row that is only in the list because of what it means.
+    private func isMeaningOnlyMatch(_ context: SavedContext) -> Bool {
+        let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty, semanticMatchIDs.contains(context.persistentModelID) else {
+            return false
+        }
+        return !context.searchHaystack.localizedCaseInsensitiveContains(term)
+    }
+
+    /// Embeds the query and ranks saves against it.
+    ///
+    /// Debounced because this fires per keystroke and each run is a round trip
+    /// to a local model. Short queries are skipped: two or three characters
+    /// embed to something close to nothing in particular, and matching on that
+    /// produces confident-looking nonsense.
+    private func refreshSemanticMatches() async {
+        let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard AppSettings.semanticEnabled, term.count >= 4 else {
+            semanticMatchIDs = []
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(350))
+        guard !Task.isCancelled else { return }
+
+        let brain = OllamaBrain(endpoint: AppSettings.endpoint, model: AppSettings.model)
+        guard let vector = try? await brain.embed(term, model: AppSettings.embeddingModel) else {
+            semanticMatchIDs = []
+            return
+        }
+        guard !Task.isCancelled else { return }
+
+        semanticMatchIDs = ContextRetriever.matching(vector, among: contexts).map {
+            $0.context.persistentModelID
         }
     }
 
@@ -79,6 +136,7 @@ struct LibraryView: View {
             }
         }
         .task(id: scope) { work = TodoBridge.load() }
+        .task(id: search) { await refreshSemanticMatches() }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")
         .frame(minWidth: 820, minHeight: 520)
         .toolbar {
@@ -192,7 +250,8 @@ struct LibraryView: View {
         } else {
             List(filtered, id: \.persistentModelID, selection: $selection) { context in
                 NavigationLink(value: context) {
-                    LibraryRow(context: context)
+                    LibraryRow(context: context,
+                               matchedByMeaningOnly: isMeaningOnlyMatch(context))
                 }
                 .tag(context)
             }
@@ -343,6 +402,11 @@ private struct ProjectOverview: View {
 private struct LibraryRow: View {
     let context: SavedContext
 
+    /// Set when the row is in the list only because of what it means, not
+    /// because it contains the words typed. Said out loud so a result that
+    /// looks unrelated is explained rather than merely puzzling.
+    var matchedByMeaningOnly = false
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             thumbnail
@@ -350,6 +414,11 @@ private struct LibraryRow: View {
                 Text(context.intent)
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
+                if matchedByMeaningOnly {
+                    Label("close in meaning", systemImage: "wand.and.sparkles")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 HStack(spacing: DS.Spacing.hair) {
                     if let project = context.project {
                         Label(project.name, systemImage: "folder.fill")

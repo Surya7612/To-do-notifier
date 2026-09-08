@@ -15,7 +15,7 @@ Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode —
 | | |
 | --- | --- |
 | **This app** (`electron/`, `src/`) | Where work is **created and completed**: todos, notes, flashcards, streaks, the pomodoro timer, the pet, and notification preferences. |
-| **[TodoCompanion](TodoCompanion/README.md)** (`TodoCompanion/`) | A native Swift menu bar app where context is **captured and connected**: it answers questions about what is on screen and remembers things with your stated reason for keeping them. Active development. |
+| **[TodoCompanion](TodoCompanion/README.md)** (`TodoCompanion/`) | A native Swift menu bar app where context is **captured and connected**: it answers questions about what is on screen, remembers things with your stated reason for keeping them, finds them again by words or meaning, and accepts captures from your phone. Active development. |
 
 They are separate products sharing one task list, not two versions of the same thing. Merging them was considered and rejected — see [the design document](docs/TO_DO_NOTIFIER_UPDATED_PLAN.md).
 

@@ -98,10 +98,35 @@ rides across Spaces and full-screen apps, and hands focus back to the previous a
 itself to its content and pins its *top-left* corner, because AppKit resizes about the bottom-left and a
 streaming answer would otherwise walk the window up and off the cursor.
 
-**Retrieval is structured, not semantic.** `ContextRetriever` scores on topic hits, same-window,
-same-app, and token overlap rather than embeddings. This is a deliberate trade: embeddings cannot tell
-the user *why* something resurfaced, and unexplained resurfacing is indistinguishable from the app
-guessing. Revisit only when the structured version demonstrably fails.
+**Retrieval is structured first, and meaning is one signal inside it.** `ContextRetriever` scores on
+topic hits, same-window, same-app, and token overlap. Embeddings were added later under a condition
+rather than as a replacement: a vector distance may only *contribute* to a score it can also explain,
+so it carries the reason `close in meaning` like every other signal, and it can only ever add. It is
+weighted below "same window" deliberately — a shared window title is a fact, a resemblance is not —
+and in library search a literal match is never ranked below a resemblance. With the feature off,
+scoring is byte-for-byte what it was before. If a change would let an unexplained score reorder the
+list, it is the wrong change.
+
+The similarity floor is 0.55 because embedding models have a high similarity floor rather than a
+zero one: measured with `nomic-embed-text`, plainly unrelated pairs score 0.31–0.40 and related pairs
+0.62–0.69. Contribution scales from the floor, not from zero, or everything above the line would
+arrive with the same near-maximum boost.
+
+**Embedding is local, structurally.** `embed` is absent from the `Brain` protocol and exists only on
+`OllamaBrain`, exactly as `summarize` is. Embedding is the *worst* thing to export, because it runs
+once per save rather than once per question — the volume is the user's whole library, not one
+deliberate ask. It embeds intent, topics, and the AI summary, but deliberately **not** the raw OCR
+text, which would swamp a one-sentence reason and make every save from the same app look alike.
+
+**Phone capture is a folder, not iCloud.** An iCloud container needs an entitlement requiring the
+paid Apple Developer Program. A *folder* inside iCloud Drive needs none and syncs identically, so
+`InboxImporter` takes a user-chosen folder through a security-scoped bookmark, the same pattern as
+`TodoBridge`. The image travels base64-encoded inside a single JSON manifest rather than as a paired
+file, because two files sharing a name arrive independently over a syncing folder and a reader cannot
+distinguish "image not yet synced" from "image never coming". Importing removes what it imported —
+the folder is a transport — but a manifest that *fails* to parse is left in place, since that is the
+only signal the user gets that something went wrong. An item with no stated reason is refused rather
+than imported with an inferred one.
 
 **The current project is stated, not detected.** `AppSettings.currentProjectID` holds a project the user
 picked, and it stays until they change it. Deriving it from the frontmost app or window was the obvious
@@ -154,33 +179,35 @@ from the screenshot along with the panel.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~159 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `App/SettingsView.swift` | ~220 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
 | `Companion/CompanionPanelController.swift` | ~157 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
 | `Companion/CompanionView.swift` | ~420 | Panel UI: status header with the who-answers menu, ask field, dictation and save buttons, save options, related-context strip, answer area. |
-| `Companion/CompanionViewModel.swift` | ~618 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
+| `Companion/CompanionViewModel.swift` | ~706 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
 | `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
 | `Brain/Brain.swift` | ~116 | `Brain` protocol, `AskContext`, and the shared prompt text. |
-| `Brain/OllamaBrain.swift` | ~84 | Streaming Ollama client. Also the only place summaries are generated. |
+| `Brain/OllamaBrain.swift` | ~172 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
-| `Store/SavedContext.swift` | ~140 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
+| `Store/SavedContext.swift` | ~170 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
 | `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
-| `Store/ContextRetriever.swift` | ~115 | Explainable relevance scoring against the current screen. |
+| `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
+| `Store/Embedding.swift` | ~58 | Normalized vector, cosine similarity, and blob storage. Pure. |
+| `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
-| `Support/AppSettings.swift` | ~154 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
+| `Support/AppSettings.swift` | ~172 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
 | `Support/DesignSystem.swift` | ~51 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
 | `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |
 | `Hotkey/HotkeyChoice.swift` | ~45 | The vetted list of non-reserved shortcuts. |
-| `Library/LibraryView.swift` | ~545 | Browse by project, search, reassign, rename, and delete saved contexts. Project overview pairs what was kept with the project's open tasks. |
+| `Library/LibraryView.swift` | ~614 | Browse by project, search, reassign, rename, and delete saved contexts. Project overview pairs what was kept with the project's open tasks. |
 
 ## Build & run
 
@@ -220,6 +247,9 @@ What is covered, and why these pieces specifically:
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
+| `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
+| `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
+| `InboxImporterTests` | Parsing the phone's JSON manifest | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. |
 | `ProjectExportTests` | The published JSON's keys and date format | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
 
 The Electron side has its own suite, run with `npm test` (vitest), and

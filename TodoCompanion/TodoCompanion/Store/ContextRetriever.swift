@@ -11,19 +11,34 @@ struct RetrievalMatch: Identifiable {
     var id: PersistentIdentifier { context.persistentModelID }
 }
 
-/// Structured, explainable relevance scoring — no embeddings.
+/// Structured, explainable relevance scoring.
 ///
-/// The plan defers semantic retrieval until the structured version proves
-/// insufficient, and this has a property embeddings lack: every match can say
-/// exactly why it surfaced.
+/// Meaning-based similarity is one signal among several rather than a
+/// replacement for them, and it carries its own reason string like everything
+/// else. That is the condition on using embeddings here at all: a match that
+/// cannot say why it surfaced is indistinguishable from the app guessing, so a
+/// vector distance is only allowed to *contribute* to a score it can also
+/// explain. It is also additive, so with the feature off nothing changes.
 enum ContextRetriever {
     /// Below this, a match is noise. Resurfacing should be high-relevance and
     /// low-interruption rather than eager.
     private static let threshold = 2.0
 
+    /// Similarity below which two texts are treated as unrelated.
+    ///
+    /// Not near zero, because embedding models have a high similarity floor:
+    /// measured with `nomic-embed-text`, plainly unrelated pairs score 0.31 to
+    /// 0.40 while related ones score 0.62 to 0.69. This sits in that gap.
+    static let similarityFloor = 0.55
+
+    /// The most a meaning match can contribute. Below "same window" (2.5) on
+    /// purpose: a shared window title is a fact, while this is a resemblance.
+    static let similarityWeight = 2.2
+
     static func related(to observation: ScreenObservation,
                         among candidates: [SavedContext],
                         inProject activeProject: Project? = nil,
+                        screenEmbedding: Embedding? = nil,
                         limit: Int = 3,
                         now: Date = Date()) -> [RetrievalMatch] {
         let screenTokens = tokenize(observation.recognizedText)
@@ -71,6 +86,17 @@ enum ContextRetriever {
                 reasons.append("mentions \(overlap.sorted().prefix(2).joined(separator: ", "))")
             }
 
+            // Catches what the literal signals cannot: a reason worded nothing
+            // like the screen it belongs to. Only ever adds, so a save that
+            // already matched on words is not penalised for also matching here,
+            // and the reason names it as a resemblance rather than a fact.
+            if let screenEmbedding,
+               let candidateEmbedding = candidate.embedding,
+               let contribution = meaningScore(candidateEmbedding, screenEmbedding) {
+                score += contribution
+                reasons.append("close in meaning")
+            }
+
             guard score >= threshold else { continue }
 
             // Gentle recency nudge, never enough to promote an irrelevant item.
@@ -83,6 +109,46 @@ enum ContextRetriever {
         }
 
         return matches.sorted { $0.score > $1.score }.prefix(limit).map { $0 }
+    }
+
+    /// How much a similarity is worth, or nil if the two are unrelated.
+    ///
+    /// Scaled from the floor rather than from zero, so a similarity barely over
+    /// the line is worth almost nothing and only a strong resemblance
+    /// approaches the full weight. Without that, everything above the floor
+    /// would arrive with the same near-maximum boost.
+    static func meaningScore(_ candidate: Embedding, _ query: Embedding) -> Double? {
+        guard let similarity = candidate.similarity(to: query),
+              similarity >= similarityFloor
+        else { return nil }
+
+        let headroom = 1.0 - similarityFloor
+        return similarityWeight * min(1.0, (similarity - similarityFloor) / headroom)
+    }
+
+    /// Ranks saves by meaning alone, for the library's search field.
+    ///
+    /// Separate from `related` because the inputs differ: there is a typed
+    /// query rather than a screen, and no window, app, or project to score
+    /// against. Returns nothing rather than everything when the query embeds to
+    /// something no save resembles.
+    static func matching(_ queryEmbedding: Embedding,
+                         among candidates: [SavedContext],
+                         limit: Int = 20) -> [RetrievalMatch] {
+        candidates
+            .compactMap { candidate -> RetrievalMatch? in
+                guard let embedding = candidate.embedding,
+                      let similarity = embedding.similarity(to: queryEmbedding),
+                      similarity >= similarityFloor
+                else { return nil }
+
+                return RetrievalMatch(context: candidate,
+                                      score: similarity,
+                                      reason: "close in meaning")
+            }
+            .sorted { $0.score > $1.score }
+            .prefix(limit)
+            .map { $0 }
     }
 
     /// Formats matches for the model, labelled so it cannot mistake the user's

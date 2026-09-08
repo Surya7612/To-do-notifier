@@ -10,10 +10,13 @@ enum AppSettings {
         static let provider = "provider"
         static let openAIModel = "openAIModel"
         static let currentProjectID = "currentProjectID"
+        static let semanticEnabled = "semanticEnabled"
+        static let embeddingModel = "embeddingModel"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
     static let defaultModel = "llama3.2"
+    static let defaultEmbeddingModel = "nomic-embed-text"
 
     /// Which brain answers a question the user asked.
     ///
@@ -99,7 +102,22 @@ enum AppSettings {
             Key.hotkeyID: HotkeyChoice.fallback.id,
             Key.provider: Provider.ollama.rawValue,
             Key.openAIModel: OpenAIBrain.defaultModel,
+            // Off by default because it needs a second model pulled, and a
+            // feature that silently does nothing until an unrelated command is
+            // run is worse than one the user turned on deliberately.
+            Key.semanticEnabled: false,
+            Key.embeddingModel: defaultEmbeddingModel,
         ])
+    }
+
+    /// Whether saved context is matched by meaning as well as by words.
+    static var semanticEnabled: Bool {
+        UserDefaults.standard.bool(forKey: Key.semanticEnabled)
+    }
+
+    static var embeddingModel: String {
+        let raw = UserDefaults.standard.string(forKey: Key.embeddingModel) ?? defaultEmbeddingModel
+        return raw.isEmpty ? defaultEmbeddingModel : raw
     }
 
     static var provider: Provider {

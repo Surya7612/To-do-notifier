@@ -856,10 +856,10 @@ First "magic moment":
 
 And the app retrieves it with the original reason I saved it.
 
-**This now works** via text search in the Saved Context window. It is not yet
-semantic — searching "screen capture" will not match a note that only says
-"display grabbing." Embeddings are deliberately deferred to Phase 5, per the
-plan's own rule about not adding them before structured retrieval works.
+**This now works** via search in the Saved Context window, which since Phase 5
+matches by meaning as well as by words — "screen capture" does now find a note
+that only says "display grabbing". That was deferred until structured retrieval
+worked first, per this plan's own rule, and it was.
 
 ---
 
@@ -867,7 +867,7 @@ plan's own rule about not adding them before structured retrieval works.
 
 Add:
 
-- [ ] Semantic search
+- [x] Semantic search (opt-in, local embeddings via `nomic-embed-text`)
 - [x] Project-aware retrieval (a save in the current project scores 3.5, above
       any single screen signal, and says so: "in Engram")
 - [x] Time-based retrieval (recency weighting, deliberately weak)
@@ -876,9 +876,7 @@ Add:
 - [x] "Why did I save this?" (the intent field, surfaced verbatim)
 - [x] "Show me everything related to X" (text search in the library)
 
-Embeddings can be added here.
-
-Do not add them before basic structured retrieval works.
+Embeddings were added here, after structured retrieval worked and not before.
 
 **Structured retrieval now works.** `ContextRetriever` scores saved items against
 the current screen using signals the user can reason about:
@@ -890,14 +888,32 @@ the current screen using signals the user can reason about:
 | Same window title | 2.5 |
 | Same application | 2.0 |
 | Words shared between the saved reason and the screen | 1.2 each, up to 3.0 |
+| Close in meaning (opt-in) | up to 2.2, scaled from a 0.55 floor |
 | Recency | up to 1.0, decaying over 30 days |
 
 Anything under 2.0 is dropped. Every match carries a human-readable reason
 ("same window", "#engram", "mentions retrieval") which is shown in the panel —
 resurfacing without an explanation is indistinguishable from the app guessing.
 
-That explainability is the reason to keep this stage non-semantic for now.
-Embeddings would improve recall but cannot tell you *why* something came back.
+That explainability was the reason to hold embeddings back, and it became the
+condition on adding them rather than a reason to refuse them forever. Meaning is
+one signal inside the structured score, not a replacement for it: it carries the
+reason "close in meaning", it can only ever add, and it is weighted below "same
+window" on purpose — a shared window title is a fact, a resemblance is not. With
+the feature off, scoring is exactly what it was before. In library search a save
+that literally contains the typed words is never ranked below a resemblance.
+
+The floor is 0.55 because embedding models have a high similarity floor rather
+than a zero one. Measured with `nomic-embed-text`, plainly unrelated pairs score
+0.31–0.40 while related ones score 0.62–0.69, so the threshold sits in that gap
+and the contribution scales from it rather than from zero.
+
+Embedding runs locally and is kept off the `Brain` protocol exactly as
+`summarize` is. It is in fact the worst thing to export, because it runs once per
+save rather than once per question: the volume is the whole library, not one
+deliberate ask. It covers the user's reason, their topics, and the model's
+one-line gloss, but deliberately not the raw OCR text, which would swamp a
+one-sentence reason and make every save from the same editor look alike.
 
 Known rough edge to tune with real use: "same app" alone clears the threshold, so
 once there are many saves from one editor the top three may be dominated by it.
@@ -1059,13 +1075,35 @@ Later:
 
 Before a full iOS app:
 
-- [ ] Create "Save to Companion" Shortcut
-- [ ] Share screenshot/link/photo
-- [ ] Dictate/type reason
-- [ ] Send into Companion Inbox
-- [ ] Sync to Mac
+- [x] Create "Save to Companion" Shortcut (the recipe is in the companion's README)
+- [x] Share screenshot/link/photo (share-sheet Shortcut, base64 into one manifest)
+- [x] Dictate/type reason (Ask for Input, which dictation works in)
+- [x] Send into Companion Inbox (a folder, via `InboxImporter`)
+- [x] Sync to Mac (iCloud Drive carries the folder; import on launch and on each summon)
 
 Only build a native iOS client when the Shortcut becomes limiting.
+
+**The inbox is a folder, not an iCloud container.** A container needs an
+entitlement that requires the paid Apple Developer Program, which this project
+does not have. A folder *inside* iCloud Drive needs no entitlement at all and
+syncs identically, so access goes through a user-chosen security-scoped
+bookmark — the same mechanism as the to-do bridge, and the same reason: the user
+picking the folder is what grants a sandboxed app access to it. As a side effect
+the transport also works over Dropbox, Syncthing, or no sync at all.
+
+The image travels base64-encoded inside a single JSON manifest rather than as a
+paired image file. Two files sharing a base name was the obvious alternative and
+is worse over a syncing folder: the halves arrive independently, so a reader can
+see a manifest whose image has not landed yet and cannot distinguish that from
+one that is never coming.
+
+Importing removes what it imported, because the folder is a transport rather
+than storage. A manifest that *fails* to parse is deliberately left in place —
+deleting it would destroy something the user captured, and its staying put is
+the only signal they get that anything went wrong. An item with a reason and no
+image is accepted, since a thought captured on a walk is much of the point. An
+image with no reason is refused: the reason is what this app is built around,
+and supplying one by inference is the exact failure §12 forbids.
 
 ---
 

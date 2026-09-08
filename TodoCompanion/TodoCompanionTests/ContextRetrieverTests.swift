@@ -173,3 +173,206 @@ struct ContextRetrieverTests {
         #expect(ContextRetriever.promptLines(for: []).isEmpty)
     }
 }
+
+/// Meaning-based matching is allowed here only on the condition that it can
+/// explain itself and can only ever add. These tests are the condition: they
+/// use hand-built vectors rather than a running model, so they check the
+/// integration rather than the quality of anyone's embeddings.
+@Suite("Retrieval by meaning")
+struct SemanticRetrievalTests {
+    /// A vector pointing almost exactly along `axis`, so similarity to another
+    /// unit axis vector is controllable without a model.
+    private func vector(axis: Int, of count: Int = 8, weight: Float = 1) -> Embedding {
+        var values = [Float](repeating: 0.001, count: count)
+        values[axis] = weight
+        return Embedding(values)!
+    }
+
+    private func saved(intent: String, embedding: Embedding?, model: String = "test-model") -> SavedContext {
+        let context = Fixture.saved(intent: intent)
+        if let embedding {
+            context.embeddingData = embedding.data
+            context.embeddingModel = model
+        }
+        return context
+    }
+
+    @Test("a save worded nothing like the screen still surfaces, and says why")
+    func meaningAloneCanSurfaceASave() throws {
+        let close = vector(axis: 0)
+        // Shares no words at all with the screen text, so every literal signal
+        // scores zero and only meaning can carry it over the threshold.
+        let context = saved(intent: "display grabbing notes", embedding: close)
+        let screen = Fixture.observation(text: "unrelated wording entirely")
+
+        let matches = ContextRetriever.related(to: screen,
+                                               among: [context],
+                                               screenEmbedding: close)
+
+        #expect(matches.count == 1)
+        #expect(try #require(matches.first).reason.contains("close in meaning"))
+    }
+
+    @Test("an unrelated vector does not surface anything")
+    func distantMeaningStaysQuiet() {
+        let context = saved(intent: "renew passport", embedding: vector(axis: 0))
+        let screen = Fixture.observation(text: "completely different subject")
+
+        #expect(ContextRetriever.related(to: screen,
+                                         among: [context],
+                                         screenEmbedding: vector(axis: 4)).isEmpty)
+    }
+
+    /// The feature is opt-in, so with no query vector the behaviour has to be
+    /// exactly what it was before embeddings existed.
+    @Test("with the feature off, scoring is unchanged")
+    func absentQueryVectorChangesNothing() {
+        let context = saved(intent: "display grabbing notes", embedding: vector(axis: 0))
+        let screen = Fixture.observation(text: "unrelated wording entirely")
+
+        #expect(ContextRetriever.related(to: screen, among: [context]).isEmpty)
+    }
+
+    @Test("a save with no vector of its own is simply scored without one")
+    func missingCandidateVectorIsNotAnError() throws {
+        let unvectored = saved(intent: "engram retrieval", embedding: nil, model: "")
+        let screen = Fixture.observation(text: "engram retrieval scoring")
+
+        let matches = ContextRetriever.related(to: screen,
+                                               among: [unvectored],
+                                               screenEmbedding: vector(axis: 0))
+
+        #expect(matches.count == 1)
+        let match = try #require(matches.first)
+        #expect(!match.reason.contains("close in meaning"))
+    }
+
+    /// Meaning is additive. A save that already matched on words must not lose
+    /// its literal reason, or the explanation would get worse as the app got
+    /// cleverer.
+    @Test("a literal match keeps its own reason when meaning also agrees")
+    func meaningAddsToReasonsRatherThanReplacingThem() throws {
+        let close = vector(axis: 0)
+        let context = saved(intent: "engram retrieval scoring", embedding: close)
+        let screen = Fixture.observation(text: "engram retrieval scoring", app: "Xcode")
+
+        let match = try #require(ContextRetriever.related(to: screen,
+                                                          among: [context],
+                                                          screenEmbedding: close).first)
+
+        #expect(match.reason.contains("mentions"))
+        #expect(match.reason.contains("close in meaning"))
+    }
+
+    @Test("a stronger resemblance is worth more than a marginal one")
+    func scoreScalesWithSimilarity() throws {
+        let query = vector(axis: 0)
+        let strong = try #require(ContextRetriever.meaningScore(vector(axis: 0), query))
+        let marginal = try #require(ContextRetriever.meaningScore(
+            Embedding([0.6, 0.8, 0, 0, 0, 0, 0, 0])!, query
+        ))
+
+        #expect(strong > marginal)
+        #expect(strong <= ContextRetriever.similarityWeight)
+    }
+
+    /// Below the floor it must be nil rather than zero: a score of zero would
+    /// still append the "close in meaning" reason to a match that is not.
+    @Test("similarity below the floor contributes nothing at all")
+    func belowFloorIsNilNotZero() {
+        let query = vector(axis: 0)
+        let across = Embedding([0, 1, 0, 0, 0, 0, 0, 0])!
+
+        #expect(ContextRetriever.meaningScore(across, query) == nil)
+    }
+
+    @Test("a shared window still outranks a resemblance")
+    func statedFactsOutrankResemblance() throws {
+        let close = vector(axis: 0)
+        let resembles = saved(intent: "worded differently", embedding: close)
+        let sameWindow = saved(intent: "same place", embedding: nil, model: "")
+        sameWindow.sourceApp = "Xcode"
+        sameWindow.windowTitle = "Brain.swift"
+
+        let screen = Fixture.observation(app: "Xcode", window: "Brain.swift")
+        let matches = ContextRetriever.related(to: screen,
+                                               among: [resembles, sameWindow],
+                                               screenEmbedding: close)
+
+        #expect(try #require(matches.first).context.intent == "same place")
+    }
+
+    @Test("library search by meaning ranks by similarity and explains itself")
+    func librarySearchRanksAndExplains() throws {
+        let query = vector(axis: 0)
+        let exact = saved(intent: "closest", embedding: vector(axis: 0))
+        let near = saved(intent: "nearby", embedding: Embedding([0.8, 0.6, 0, 0, 0, 0, 0, 0])!)
+        let far = saved(intent: "unrelated", embedding: vector(axis: 5))
+
+        let matches = ContextRetriever.matching(query, among: [far, near, exact])
+
+        #expect(matches.map(\.context.intent) == ["closest", "nearby"])
+        #expect(try #require(matches.first).reason == "close in meaning")
+    }
+
+    @Test("library search returns nothing when nothing resembles the query")
+    func librarySearchCanComeBackEmpty() {
+        let context = saved(intent: "unrelated", embedding: vector(axis: 5))
+
+        #expect(ContextRetriever.matching(vector(axis: 0), among: [context]).isEmpty)
+    }
+}
+
+/// What text a vector is computed from decides what meaning matching can find,
+/// so the composition is a product decision rather than an implementation
+/// detail.
+@Suite("Embedding source")
+struct EmbeddingSourceTests {
+    @Test("the user's words, their topics, and the model's gloss are included")
+    func combinesTheThingsWorthMatching() {
+        let context = Fixture.saved(intent: "check this later", topics: ["engram"])
+        context.aiSummary = "A page of ScreenCaptureKit documentation."
+
+        let source = context.embeddingSource
+
+        #expect(source.contains("check this later"))
+        #expect(source.contains("#engram"))
+        #expect(source.contains("ScreenCaptureKit"))
+    }
+
+    /// A page of interface furniture would swamp a one-sentence reason and make
+    /// every save taken in the same app look alike. Literal search covers the
+    /// screen text, and covers it better.
+    @Test("raw screen text is deliberately left out")
+    func excludesRecognizedText() {
+        let context = Fixture.saved(intent: "keep this")
+        context.recognizedText = "File Edit View Window Help Untitled Sidebar Inspector"
+
+        #expect(!context.embeddingSource.contains("Inspector"))
+    }
+
+    @Test("a save with nothing to embed is not queued forever")
+    func nothingToEmbedIsNotPending() {
+        let empty = Fixture.saved(intent: "")
+
+        #expect(empty.embeddingSource.isEmpty)
+        #expect(empty.needsEmbedding(for: "nomic-embed-text") == false)
+    }
+
+    @Test("a save with no vector needs one")
+    func missingVectorIsPending() {
+        #expect(Fixture.saved(intent: "something").needsEmbedding(for: "nomic-embed-text"))
+    }
+
+    /// Vectors from two models are not comparable, so a model change has to
+    /// invalidate rather than quietly mix two coordinate systems.
+    @Test("changing the embedding model invalidates existing vectors")
+    func modelChangeInvalidates() throws {
+        let context = Fixture.saved(intent: "something")
+        context.embeddingData = try #require(Embedding([1, 0, 0])).data
+        context.embeddingModel = "nomic-embed-text"
+
+        #expect(context.needsEmbedding(for: "nomic-embed-text") == false)
+        #expect(context.needsEmbedding(for: "mxbai-embed-large"))
+    }
+}
