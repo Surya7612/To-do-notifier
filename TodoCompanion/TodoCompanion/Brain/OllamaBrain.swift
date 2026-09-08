@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Streams a reply from a local Ollama model. Text-only models get OCR text;
@@ -10,18 +11,27 @@ struct OllamaBrain: Brain {
     var leavesTheMachine: Bool { false }
 
     func answerStream(question: String, context: AskContext) -> AsyncThrowingStream<String, Error> {
+        generate(system: Prompt.system(for: context),
+                 prompt: Prompt.user(question: question, context: context),
+                 image: context.includeImage ? context.observation?.image : nil)
+    }
+
+    /// - Parameter system: passed in rather than derived, because summarizing
+    ///   must not inherit the conversational persona. A teacher told to explain
+    ///   its reasoning and name the next action writes a bad one-line gloss.
+    private func generate(system: String,
+                          prompt: String,
+                          image: CGImage?) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     var body: [String: Any] = [
                         "model": model,
-                        "system": Prompt.system,
-                        "prompt": Prompt.user(question: question, context: context),
+                        "system": system,
+                        "prompt": prompt,
                         "stream": true,
                     ]
-                    if context.includeImage,
-                       let image = context.observation?.image,
-                       let encoded = ImageCodec.base64PNG(from: image) {
+                    if let image, let encoded = ImageCodec.base64PNG(from: image) {
                         body["images"] = [encoded]
                     }
 
@@ -77,7 +87,7 @@ struct OllamaBrain: Brain {
         """
 
         var collected = ""
-        let stream = answerStream(question: prompt, context: AskContext())
+        let stream = generate(system: Prompt.summarySystem, prompt: prompt, image: nil)
         for try await chunk in stream { collected += chunk }
         return collected.trimmingCharacters(in: .whitespacesAndNewlines)
     }

@@ -6,6 +6,7 @@ struct CompanionView: View {
     let onRetry: () -> Void
     let onSelectRegion: () -> Void
     let onClearRegion: () -> Void
+    let onLookAgain: () -> Void
 
     @FocusState private var questionFocused: Bool
     @State private var isNamingProject = false
@@ -25,7 +26,7 @@ struct CompanionView: View {
             } else {
                 askField
                 actionRow
-                if !isFieldEmpty {
+                if viewModel.canSave {
                     saveOptionsRow
                 }
                 if !viewModel.related.isEmpty {
@@ -59,6 +60,29 @@ struct CompanionView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: DS.Spacing.tight)
+            if viewModel.speech.isSpeaking {
+                Button {
+                    viewModel.speech.stop()
+                } label: {
+                    Image(systemName: "speaker.wave.2.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.Status.listening)
+                .help("Stop reading aloud")
+                .transition(.opacity)
+            }
+            if !viewModel.turns.isEmpty {
+                Button {
+                    viewModel.startNewConversation()
+                } label: {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Start a new conversation about this screen (⌘K)")
+                .keyboardShortcut("k", modifiers: .command)
+            }
+            fileBadge
             destinationBadge
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -94,7 +118,7 @@ struct CompanionView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("s", modifiers: .command)
             .help("Remember this screen with your reason (⌘S)")
-            .disabled(isFieldEmpty || !viewModel.hasCapture)
+            .disabled(!viewModel.canSave)
 
             Button(action: viewModel.submit) {
                 Image(systemName: "arrow.up.circle.fill")
@@ -247,6 +271,19 @@ struct CompanionView: View {
                 .help("Back to the whole screen")
             }
 
+            // Only once there is a conversation to continue, so the row is not
+            // crowded with a control that cannot do anything yet.
+            if !viewModel.turns.isEmpty {
+                Button {
+                    onLookAgain()
+                } label: {
+                    Label("Look again", systemImage: "arrow.clockwise.circle")
+                }
+                .disabled(viewModel.isBusy)
+                .help("Capture the screen again and keep this conversation (⌘L)")
+                .keyboardShortcut("l", modifiers: .command)
+            }
+
             Spacer(minLength: DS.Spacing.hair)
 
             ForEach(CompanionViewModel.Preset.allCases) { preset in
@@ -264,6 +301,40 @@ struct CompanionView: View {
         // Without this the row silently compresses its buttons to illegible
         // slivers instead of asking the panel for the width it needs.
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The one file Max may propose changes to, and the control for choosing it.
+    ///
+    /// Deliberately a visible, standing statement rather than a transient
+    /// picker: while a file is open, every answer is given with its contents in
+    /// the prompt, and the user should never have to wonder whether that is
+    /// still true.
+    private var fileBadge: some View {
+        Menu {
+            if viewModel.editableFile.isOpen {
+                Text(viewModel.editableFile.name)
+                Divider()
+                Button("Choose a different file…") { viewModel.openFileToEdit() }
+                if viewModel.editableFile.canRevert {
+                    Button("Revert my last applied change") { viewModel.revertAppliedEdit() }
+                }
+                Button("Stop working on this file") { viewModel.closeEditableFile() }
+            } else {
+                Button("Open a file to work on…") { viewModel.openFileToEdit() }
+                Divider()
+                Text("Max can propose a change to one file. You always see a diff first.")
+            }
+        } label: {
+            Label(viewModel.editableFile.isOpen ? viewModel.editableFile.name : "No file",
+                  systemImage: viewModel.editableFile.isOpen ? "doc.text.fill" : "doc")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .font(.caption2)
+        .lineLimit(1)
+        .fixedSize()
+        .foregroundStyle(viewModel.editableFile.isOpen ? DS.Status.saved : Color.secondary)
     }
 
     /// Says plainly whether asking will send the screen off this Mac. A
@@ -382,21 +453,135 @@ struct CompanionView: View {
     /// Long answers scroll rather than pushing the panel off the screen.
     @ViewBuilder
     private var answerArea: some View {
-        ScrollView {
-            if viewModel.answer.isEmpty {
-                Text(placeholder)
+        ScrollViewReader { scroller in
+            ScrollView {
+                if viewModel.turns.isEmpty {
+                    Text(placeholder)
+                        .font(.callout)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: DS.Spacing.normal) {
+                        ForEach(viewModel.turns) { turn in
+                            turnView(turn)
+                        }
+                        if let edit = viewModel.proposedEdit {
+                            diffView(edit)
+                        }
+                        // Anchored so a streaming answer keeps its own tail in
+                        // view instead of scrolling off the bottom.
+                        Color.clear.frame(height: 1).id(bottomAnchor)
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+            .frame(maxHeight: DS.Size.maxAnswerHeight)
+            .onChange(of: viewModel.answer) {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    scroller.scrollTo(bottomAnchor, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private var bottomAnchor: String { "conversation-bottom" }
+
+    /// One exchange. The user's words and Max's are visually distinct because
+    /// the whole app rests on that distinction being obvious.
+    private func turnView(_ turn: Turn) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.hair) {
+            Text(turn.question)
+                .font(.callout.weight(.medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if turn.answer.isEmpty {
+                Text("…")
                     .font(.callout)
                     .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text(viewModel.answer)
+                Text(turn.answer)
                     .font(.callout)
+                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .scrollIndicators(.never)
-        .frame(maxHeight: DS.Size.maxAnswerHeight)
+    }
+
+    /// The change Max is proposing, shown before anything is written.
+    ///
+    /// Only the changed regions with a little context around them: a whole file
+    /// is unreadable at this width, and the user is being asked to approve
+    /// something, which they cannot do if they cannot find what changed.
+    private func diffView(_ edit: CompanionViewModel.ProposedEdit) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+            HStack(spacing: DS.Spacing.tight) {
+                Label(edit.fileName, systemImage: "doc.text")
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(edit.summary.description)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: DS.Spacing.hair)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(TextDiff.hunks(edit.lines).enumerated()), id: \.offset) { hunk in
+                        if hunk.offset > 0 {
+                            Text("⋯")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .padding(.vertical, 2)
+                        }
+                        ForEach(hunk.element) { line in
+                            diffLine(line)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.never)
+            .frame(maxHeight: DS.Size.maxDiffHeight)
+            .padding(DS.Spacing.tight)
+            .background(.black.opacity(DS.Alpha.well), in: RoundedRectangle(cornerRadius: DS.Radius.control))
+
+            HStack(spacing: DS.Spacing.tight) {
+                Button("Apply") { viewModel.applyProposedEdit() }
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+                Button("Discard") { viewModel.discardProposedEdit() }
+                Spacer(minLength: DS.Spacing.hair)
+                Text("Nothing is written until you apply.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .controlSize(.small)
+        }
+        .padding(.top, DS.Spacing.hair)
+    }
+
+    private func diffLine(_ line: TextDiff.Line) -> some View {
+        HStack(alignment: .top, spacing: DS.Spacing.tight) {
+            Text(line.kind == .added ? "+" : line.kind == .removed ? "−" : " ")
+                .font(.caption2.monospaced())
+                .foregroundStyle(diffColor(line.kind))
+            Text(line.text.isEmpty ? " " : line.text)
+                .font(.caption2.monospaced())
+                .foregroundStyle(line.kind == .unchanged ? .secondary : diffColor(line.kind))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 2)
+        .background(diffColor(line.kind).opacity(line.kind == .unchanged ? 0 : DS.Alpha.diffRow))
+    }
+
+    private func diffColor(_ kind: TextDiff.Line.Kind) -> Color {
+        switch kind {
+        case .added: DS.Status.saved
+        case .removed: DS.Status.problem
+        case .unchanged: .secondary
+        }
     }
 
     private var placeholder: String {
@@ -404,7 +589,7 @@ struct CompanionView: View {
         case .thinking: "…"
         case let .failed(message): message
         case .saved: "Kept, with your reason attached. Find it again in the library."
-        default: "Return asks. ⌘D dictates. ⌘S remembers this screen. #tags become topics. Esc closes."
+        default: "Ask \(Prompt.assistantName) anything about this screen. Return asks, and you can keep asking — ⌘L looks again after the screen changes. ⌘D dictates. ⌘S remembers this screen. Esc closes."
         }
     }
 

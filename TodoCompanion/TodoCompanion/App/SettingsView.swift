@@ -1,3 +1,4 @@
+import AVFAudio
 import SwiftUI
 
 struct SettingsView: View {
@@ -9,6 +10,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.openAIModel) private var openAIModel = OpenAIBrain.defaultModel
     @AppStorage(AppSettings.Key.semanticEnabled) private var semanticEnabled = false
     @AppStorage(AppSettings.Key.embeddingModel) private var embeddingModel = AppSettings.defaultEmbeddingModel
+    @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
+    @AppStorage(AppSettings.Key.voiceIdentifier) private var voiceIdentifier = ""
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
@@ -72,6 +75,23 @@ struct SettingsView: View {
             Section("On this Mac") {
                 TextField("Ollama endpoint", text: $endpoint)
                 TextField("Model", text: $model)
+            }
+
+            Section("Reading answers aloud") {
+                Toggle("Have \(Prompt.assistantName) read answers out loud", isOn: $speaksAnswers)
+
+                if speaksAnswers {
+                    Picker("Voice", selection: $voiceIdentifier) {
+                        Text("System default").tag("")
+                        ForEach(SpeechPlayback.availableVoices, id: \.identifier) { voice in
+                            Text(voice.name).tag(voice.identifier)
+                        }
+                    }
+                }
+
+                Text("Uses the speech voices built into macOS, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Finding things by meaning") {

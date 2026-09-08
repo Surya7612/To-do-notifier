@@ -784,14 +784,23 @@ Add:
 
 - [x] Push-to-talk (⌘D, or the mic button, toggles a dictation session)
 - [x] Speech-to-text (`SFSpeechRecognizer` forced on-device; the panel says which)
-- [ ] Voice response — not built, and no longer obviously wanted. Reading four
-      sentences aloud is slower than reading them, and the panel is already on
-      screen by the time the answer arrives.
+- [x] Voice response (`AVSpeechSynthesizer`, off by default, sentence at a time).
+      Reversed once conversations arrived: the earlier reasoning was right about
+      a one-shot answer and wrong about a multi-turn one. Being walked through
+      an interface means looking at the interface, not at the panel, and a
+      hosted voice was never on the table — the ban on cloud transcription
+      applies in reverse.
 - [x] Visual listening state (pink ring at the cursor, driven by real input level
       so a muted or wrong input device is visible rather than silent)
 - [x] Stop / cancel control (⌘D again, Esc, or silence)
 
-Do not add wake-word monitoring immediately.
+Do not add wake-word monitoring, now or later. See §13: it means an always-hot
+microphone in an app built on capture being explicit, and the hotkey already
+costs one keystroke.
+
+Half duplex is a requirement rather than a simplification: the synthesizer plays
+through the speakers and the recognizer would transcribe it, so speaking stops
+whenever dictation starts.
 
 Two things worth recording from building this. The audio engine has to be
 recreated per session — a retained `AVAudioEngine` caches a zero-channel input
@@ -1107,6 +1116,52 @@ and supplying one by inference is the exact failure §12 forbids.
 
 ---
 
+## Phase 9 — Conversation
+
+The panel was one-shot: ask, read, dismiss. That is fine for "what does this
+error mean" and useless for the thing it should be best at — standing next to an
+unfamiliar interface while you are taken through it.
+
+- [x] Multi-turn conversation, with earlier turns replayed into the prompt
+- [x] Re-capture that keeps the transcript (⌘L), and a fresh start that keeps
+      the capture (⌘K)
+- [x] A named assistant, Max, as tone in the prompt and the UI
+- [x] Spoken answers, local, off by default (see Phase 2)
+- [x] A proposed change to one user-picked file, applied only from a diff
+
+**History is capped.** The screen text already dominates the prompt, so an
+unbounded transcript would push it out of a small local model's context window
+and answers would degrade the longer you talked — precisely backwards.
+
+**Max is not the bundle name.** TCC keys the Screen Recording grant to the
+signature and identifier, the SwiftData container is derived from the identifier,
+and `companionProjects.cjs` hardcodes it. A rename would silently cost the
+permission and the database and break the other app's project labels.
+
+**The persona is fenced.** A warm voice is the standard way grounding rules get
+loosened without anyone deciding to loosen them, so the prompt says outright that
+a persona does not license inventing what is on screen or softening an "I don't
+know". `Prompt.summarySystem` is the same rule inverted: a background gloss is a
+label in a list and gets no persona at all. Summaries went through `answerStream`
+and inherited the teacher's instructions, which measurably worsened them.
+
+**Preset wording can never become a stated reason.** Asking clears the field, so
+⌘S afterwards falls back to the first question the user typed — but never to
+"Explain what this is", which is this app's sentence. `intent` is a promise about
+whose words are in it, and a convenience is exactly where that promise would
+have broken quietly.
+
+**Editing is a proposal, not an action.** Same shape as the reminder parser:
+inference may offer, only the user commits. One file, chosen through a picker, a
+locally-computed diff, and a write that happens on a button press. The model
+returns a whole file rather than a patch because wrong diff line numbers are far
+more common than a mangled file, and a diff computed here from both versions
+cannot misreport what changed. A reply whose fence never closed is refused
+outright — a truncated file written over the user's own is the worst available
+outcome.
+
+---
+
 # 12. Privacy Principles
 
 Because the app can eventually know a lot about the user's computer, privacy is a core engineering constraint.
@@ -1142,7 +1197,20 @@ Do not build:
 - Neo4j infrastructure unless real need appears
 - Complex LangGraph orchestration
 - Continuous screen recording
-- Full autonomous computer-use agent
+- Full autonomous computer-use agent. Narrowed rather than abandoned: Max may
+  propose a change to **one file the user picked**, shown as a diff, applied
+  only by a button press. The reason to stop there is product quality before
+  safety — this app sees a screenshot, has no file tree, and cannot run the
+  tests, so a project-wide agent here would be strictly worse than the editor
+  already open on the same machine. What it uniquely offers is answering about
+  the code currently on screen
+- Wake words and always-listening modes. "Hey Max" needs a hot microphone in an
+  app whose screen capture is explicit and whose mic state is deliberately
+  visible, and the hotkey is already one keystroke with no Accessibility
+  requirement. The Electron app's own wake word ships off by default
+- Cloud speech **synthesis**. Spoken answers are built, using the macOS voices;
+  a hosted voice would export the screen to a vendor that is not answering the
+  question
 - Calendar/email integrations immediately
 - Social features
 - SaaS billing

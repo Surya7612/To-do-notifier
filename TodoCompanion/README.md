@@ -3,6 +3,10 @@
 A menu bar companion that answers questions about what is on your screen right now, and remembers
 things you explicitly ask it to remember — along with *your own stated reason* for keeping them.
 
+The assistant is called **Max**. That is a name and a tone in the prompt and the interface, not a
+separate thing from the app: the bundle stays `surya.TodoCompanion`, because renaming it would
+invalidate the Screen Recording permission and move the database.
+
 It runs alongside the Electron app in this repository rather than replacing it. See
 [`docs/TO_DO_NOTIFIER_UPDATED_PLAN.md`](../docs/TO_DO_NOTIFIER_UPDATED_PLAN.md) for the design
 document, including what was deliberately rejected and why.
@@ -31,6 +35,54 @@ button.
 
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.
+
+### Keeping asking
+
+The answer is not the end of it. Ask a follow-up and the earlier turns go with it, so "why that one?"
+or "now what?" resolve against what Max just told you instead of starting from nothing.
+
+**⌘L** captures the screen again and keeps the conversation. That is the whole point of the feature:
+you do the thing you were told to do, the screen changes, and you ask what is next without losing the
+thread. The prompt says a fresh capture describes the screen *now*, so Max does not keep describing a
+screen that has moved on. **⌘K** starts a new conversation about the same capture.
+
+Only the last few turns are sent. The text on your screen already dominates the prompt, and an
+unbounded transcript would push it out of a smaller local model's context window — answers would get
+worse the longer you talked, which is the opposite of what this is for.
+
+Two things worth knowing about the second case. Asking moves your words out of the field, so **⌘S**
+afterwards files the save under the first question you typed rather than refusing. And preset wording
+is never used that way: "Explain what this is" is the app's sentence, not yours, and only your own
+words are ever stored as your reason for keeping something.
+
+### Hearing it
+
+Turn on **Have Max read answers out loud** in Settings and answers are spoken as they arrive, a
+sentence at a time, using the speech voices built into macOS. Nothing is sent anywhere for this —
+the ban on cloud transcription applies just as much in reverse, since a hosted voice would export
+whatever is on your screen to a company that is not even answering the question.
+
+It is off by default, stops the moment you dictate, ask something else, or close the panel, and there
+is a button in the panel header to stop it mid-sentence. Code blocks are announced rather than read
+aloud, because hearing a function read out character by character is unbearable and too long to
+interrupt.
+
+### Working on one file
+
+Open a file from the panel header and Max can propose a change to it. You are shown a diff, and
+nothing is written until you press **Apply**.
+
+This is deliberately not an agent that edits your project. It sees a screenshot, has no file tree,
+and cannot run your tests, so the editor you already have open is better at that in every respect.
+What it can do instead is answer a question about the code that is on your screen and hand back a
+concrete change.
+
+The scope is one file, picked by you through a file dialog — there is no way for it to reach a file
+you have not pointed at. Max returns the whole file rather than a patch, because models get diff line
+numbers wrong far more often than they mangle an entire file, and the diff you see is computed here
+from the two versions, so it cannot be wrong about what changed. A reply whose code block was cut off
+is refused rather than applied. **Revert my last applied change** puts the file back as it was before
+the conversation touched it, which is a convenience and not a substitute for version control.
 
 ### Who answers
 
@@ -230,8 +282,8 @@ put is the only signal anything went wrong.
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
-| `Voice/` | On-device dictation and input level metering |
-| `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import |
+| `Voice/` | On-device dictation, input level metering, and spoken answers |
+| `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |
 | `Support/` | Settings, design tokens, Keychain, notifications, image encoding |
@@ -254,14 +306,27 @@ than by convention: `summarize` is absent from the `Brain` protocol and exists o
 so no cloud provider can be attached to it. That is why summaries of everything you keep stay local
 even when OpenAI is answering your questions.
 
-The App Sandbox is enabled, with outgoing network and microphone access as the only added
-entitlements.
+Answers are spoken by the speech voices built into macOS, so enabling that sends nothing anywhere.
+There is no wake word and no always-listening mode: the microphone opens when you open it.
+
+Max can write to exactly one file, chosen by you through a file dialog, and only when you press Apply
+on a diff. Inference never writes to disk on its own.
+
+The App Sandbox is enabled, with outgoing network, microphone, and user-selected file access as the
+only added entitlements.
 
 ## Not built yet
 
 - **Remote reminders.** Reminders are local, so they need this Mac awake when they fire. A hosted
   scheduler is the one thing that would fix that, and the only reason to build one.
-- **Voice responses.** Dictation is in; spoken answers are not, and are no longer obviously wanted.
+- **A wake word.** Saying "hey Max" would mean an always-hot microphone, which sits badly beside an
+  app whose screen capture is explicit and whose mic state is deliberately visible. The hotkey is one
+  keystroke and needs no Accessibility permission. The Electron app in this repository has a wake word
+  and ships it off by default, which is the evidence rather than the counter-example.
+- **Editing more than one file.** No project-wide agent, no running your tests, no applying a change
+  you were not shown. See above for why that is a product judgement and not only a cautious one.
+- **Pointing at things on screen.** Clicky flies the cursor to a UI element it names. It needs
+  Accessibility permission and was rejected in the plan.
 - **An iPhone app.** Phone capture is a Shortcut writing to a folder, deliberately, and that is
   expected to stay true for a long time.
 - **Signing and notarization.** `scripts/release-companion.sh` builds a DMG and publishes a release,

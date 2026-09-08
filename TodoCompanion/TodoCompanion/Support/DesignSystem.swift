@@ -18,6 +18,7 @@ enum DS {
     enum Radius {
         static let panel: CGFloat = 18
         static let card: CGFloat = 10
+        static let control: CGFloat = 8
         static let chip: CGFloat = 7
     }
 
@@ -29,6 +30,11 @@ enum DS {
         static let chipFill: Double = 0.35
         static let noticeFill: Double = 0.4
         static let fieldFill: Double = 0.5
+        /// Recessed background for monospaced content such as a diff.
+        static let well: Double = 0.18
+        /// Tint behind an added or removed diff line, low enough that the text
+        /// stays the thing carrying the meaning.
+        static let diffRow: Double = 0.16
     }
 
     enum Size {
@@ -37,6 +43,8 @@ enum DS {
         static let panelWidth: CGFloat = 468
         /// Past this the answer scrolls rather than growing the window forever.
         static let maxAnswerHeight: CGFloat = 320
+        /// A diff sits inside the answer area, so it gets a smaller share of it.
+        static let maxDiffHeight: CGFloat = 200
         static let indicator: CGFloat = 110
     }
 

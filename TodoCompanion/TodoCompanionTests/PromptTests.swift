@@ -129,6 +129,185 @@ struct PromptTests {
     }
 }
 
+/// Follow-up turns are what make the panel usable for learning something step
+/// by step, and they are also the easiest place to accidentally hand the model
+/// the current question twice or let a conversation grow until the screen text
+/// falls out of the context window.
+@Suite("Conversation")
+struct ConversationPromptTests {
+    @Test("earlier turns are included, attributed to each speaker")
+    func includesHistory() {
+        let context = AskContext(history: [
+            Turn(question: "what is this panel", answer: "The colour grading page."),
+        ])
+        let prompt = Prompt.user(question: "how do I use it", context: context)
+
+        #expect(prompt.contains("Earlier in this conversation:"))
+        #expect(prompt.contains("User: what is this panel"))
+        #expect(prompt.contains("\(Prompt.assistantName): The colour grading page."))
+    }
+
+    @Test("the question still comes last, after the history")
+    func questionComesAfterHistory() {
+        let context = AskContext(history: [Turn(question: "first", answer: "answer")])
+        let prompt = Prompt.user(question: "second", context: context)
+
+        #expect(prompt.hasSuffix("Question: second"))
+    }
+
+    /// The screen text already dominates the prompt. An unbounded transcript
+    /// would push it out of a small local model's window, so answers would get
+    /// worse the longer the conversation went — the opposite of the intent.
+    @Test("history is capped, keeping the most recent turns")
+    func capsHistory() {
+        let total = 12
+        let turns = (1...total).map { Turn(question: "q\($0)", answer: "a\($0)") }
+        let prompt = Prompt.user(question: "now", context: AskContext(history: turns))
+
+        let oldestKept = total - Prompt.historyLimit + 1
+        #expect(prompt.contains("User: q\(oldestKept)"))
+        #expect(prompt.contains("User: q\(total)"))
+        #expect(!prompt.contains("User: q\(oldestKept - 1)"), "older turns are dropped")
+        #expect(!prompt.contains("User: q1\n"))
+    }
+
+    @Test("a first question carries no conversation section")
+    func noHistorySectionOnFirstTurn() {
+        let prompt = Prompt.user(question: "first thing", context: AskContext())
+
+        #expect(!prompt.contains("Earlier in this conversation"))
+    }
+
+    @Test("the model is told a fresh capture describes the screen now")
+    func explainsThatTheScreenMayHaveChanged() {
+        #expect(Prompt.system.contains("screen may have changed"))
+    }
+
+    @Test("short follow-ups are to be read as being about the last answer")
+    func handlesTerseFollowUps() {
+        #expect(Prompt.system.contains("now what?"))
+        #expect(Prompt.system.contains("do not repeat"))
+    }
+}
+
+/// Asking a question empties the field, so `⌘S` afterwards has to find the
+/// reason somewhere. What it settles on is stored as the user's own words,
+/// which makes this a question about the app's central promise rather than a
+/// convenience.
+@Suite("What a save is filed under")
+struct SavableReasonTests {
+    @Test("the typed field wins whenever it has something in it")
+    func typedFieldWins() {
+        let turns = [Turn(question: "an earlier question", answer: "a")]
+
+        #expect(Turn.savableReason(typed: "why I kept this", turns: turns) == "why I kept this")
+    }
+
+    @Test("with the field empty, the first typed question is used")
+    func fallsBackToTheFirstQuestion() {
+        let turns = [
+            Turn(question: "how do I colour grade this", answer: "a"),
+            Turn(question: "why that one", answer: "b"),
+        ]
+
+        #expect(Turn.savableReason(typed: "", turns: turns) == "how do I colour grade this")
+    }
+
+    /// "Explain what this is, in plain language" is the app's sentence. Storing
+    /// it as the user's stated reason is the one thing `intent` must never do.
+    @Test("preset wording is never stored as the user's reason")
+    func presetsAreNotEligible() {
+        let presetOnly = [Turn(question: "Explain what this is.", answer: "a", isFromPreset: true)]
+        #expect(Turn.savableReason(typed: "", turns: presetOnly) == nil)
+
+        let mixed = [
+            Turn(question: "Explain what this is.", answer: "a", isFromPreset: true),
+            Turn(question: "what does this node do", answer: "b"),
+        ]
+        #expect(Turn.savableReason(typed: "", turns: mixed) == "what does this node do")
+    }
+
+    @Test("nothing typed and nothing asked means there is no reason to save under")
+    func nothingToSave() {
+        #expect(Turn.savableReason(typed: "", turns: []) == nil)
+        #expect(Turn.savableReason(typed: "   \n ", turns: []) == nil)
+    }
+
+    @Test("the typed reason is trimmed but otherwise kept verbatim")
+    func keepsWordingVerbatim() {
+        #expect(Turn.savableReason(typed: "  remind me tomorrow #resolve  ", turns: [])
+            == "remind me tomorrow #resolve")
+    }
+}
+
+/// The persona is a tone. It must not become permission to invent, and the
+/// editing instructions must not reach a question that has no file open.
+@Suite("Persona and editing")
+struct PersonaPromptTests {
+    @Test("the assistant is named, and it is not the bundle name")
+    func hasItsOwnName() {
+        #expect(Prompt.assistantName == "Max")
+        #expect(Prompt.system.contains("Max"))
+    }
+
+    /// A friendly voice is the classic way grounding rules get quietly
+    /// loosened, so the prompt says outright that it does not.
+    @Test("the persona is explicitly not a licence to invent")
+    func personaDoesNotOverrideGrounding() {
+        #expect(Prompt.system.contains("A persona is a tone, not a licence"))
+        // The rules the persona sits on top of must all still be there.
+        #expect(Prompt.system.contains("ground truth"))
+        #expect(Prompt.system.contains("outrank"))
+        #expect(Prompt.system.contains("say that instead of guessing"))
+    }
+
+    @Test("a teacher is asked for the next single action and to define jargon")
+    func teachesRatherThanAsserts() {
+        #expect(Prompt.system.contains("Define any jargon"))
+        #expect(Prompt.system.contains("single next action"))
+    }
+
+    /// A question about the screen must never arrive with instructions about
+    /// rewriting files attached.
+    @Test("editing instructions appear only when a file is open")
+    func editingRulesAreConditional() {
+        let plain = AskContext()
+        #expect(!Prompt.system(for: plain).contains("complete new contents"))
+
+        let editing = AskContext(editableFile: EditableFileContext(name: "a.swift", contents: "let x = 1"))
+        #expect(Prompt.system(for: editing).contains("complete new contents"))
+    }
+
+    @Test("the file is given with line numbers and named")
+    func numbersTheFile() {
+        let context = AskContext(editableFile: EditableFileContext(
+            name: "Brain.swift",
+            contents: "import Foundation\nlet x = 1"
+        ))
+        let prompt = Prompt.user(question: "improve this", context: context)
+
+        #expect(prompt.contains("Brain.swift"))
+        #expect(prompt.contains("1\timport Foundation"))
+        #expect(prompt.contains("2\tlet x = 1"))
+    }
+
+    /// Abbreviating is what makes a whole-file reply unusable, and the failure
+    /// is silent: the block applies cleanly and deletes most of the file.
+    @Test("abbreviating the file is forbidden and applying is the user's call")
+    func forbidsAbbreviationAndStatesWhoDecides() {
+        #expect(Prompt.editingSystem.contains("rest unchanged"))
+        #expect(Prompt.editingSystem.contains("Nothing you produce is applied on its own"))
+    }
+
+    /// A summary is a label in a list, not something said to anyone. The
+    /// teaching persona writes a bad one.
+    @Test("summarizing uses a prompt with no persona")
+    func summariesHaveNoPersona() {
+        #expect(!Prompt.summarySystem.contains(Prompt.assistantName))
+        #expect(Prompt.summarySystem.contains("no persona"))
+    }
+}
+
 /// The badge in the panel header states who will answer. It has to say
 /// something different for each choice, or a provider switch looks like it did
 /// nothing — which is exactly what happened when OpenAI was selected with no

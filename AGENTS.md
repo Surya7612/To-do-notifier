@@ -8,7 +8,8 @@
 Two applications share this repository.
 
 **`TodoCompanion/`** is the active work: a native macOS menu bar companion that answers questions about
-what is currently on screen and remembers things you explicitly ask it to remember. Summoning it with a
+what is currently on screen and remembers things you explicitly ask it to remember. The assistant is
+called **Max**, which is a name and a tone in the prompt and the UI, *not* the bundle name. Summoning it with a
 global hotkey captures every display, runs OCR, and asks a model. `⌘R` narrows the question to a region
 you drag out. Saving with `⌘S` stores the screenshot alongside *your own stated reason* for keeping it,
 so it can be resurfaced later when related material is on screen.
@@ -181,6 +182,60 @@ Consequence for the sandbox: user-selected files are entitled **read-write**, no
 `InboxImporter` deletes what it has imported. Read-only would have let the import succeed and the
 delete fail silently, re-importing the same capture on every summon.
 
+**A question is a conversation, not a lookup.** Every summon used to be one-shot, which made the panel
+useless for the thing it is best at: standing next to an unfamiliar interface and being asked "now
+what?" three times in a row. `CompanionViewModel.turns` holds the exchange and `Prompt.user` replays it,
+so a two-word follow-up resolves against what was just said. Two consequences worth knowing. History is
+capped at `Prompt.historyLimit` because the screen text already dominates the prompt and an unbounded
+transcript would push it out of a small local model's window — answers would get *worse* the longer you
+talked, which is the opposite of the point. And `lookAgain` re-captures while keeping the transcript,
+because the screen changing is the normal case between turns rather than a reason to start over; the
+prompt says so, so the model does not describe a screen that has moved on.
+
+**Max is a name and a tone, never a licence.** The persona lives in `Prompt.system` and in UI copy. It
+is emphatically *not* the bundle name: renaming the bundle would invalidate the Screen Recording grant,
+which TCC keys to the signature and identifier, relocate the SwiftData container, and break
+`electron/lib/companionProjects.cjs`, which hardcodes `surya.TodoCompanion`. The prompt states outright
+that a persona does not permit inventing what is on screen or softening an "I don't know", because a
+friendly voice is the classic way grounding rules get quietly loosened. `Prompt.summarySystem` exists
+for the same reason in reverse: a background one-line gloss is a label in a list, not something said to
+anyone, so it gets no persona at all — `summarize` was routed through `answerStream` and inherited the
+teacher's instructions, which made for visibly worse summaries.
+
+**Asking empties the field, so saving needs a stated fallback.** `Turn.savableReason` prefers the typed
+field and otherwise uses the first question the user actually typed, since ⌘S straight after asking
+would otherwise refuse with the field looking empty for no visible reason. Preset wording is
+**ineligible**: "Explain what this is, in plain language" is this app's sentence, and storing it as the
+user's reason for keeping something would break precisely the stated-versus-inferred distinction the
+app exists to maintain. That is what `Turn.isFromPreset` is for; the model never sees it.
+
+**Speech out is local, like speech in.** `AVSpeechSynthesizer` rather than a hosted voice. The ban on
+cloud transcription applies in reverse — routing every answer through a speech vendor would export the
+contents of the user's screen to a third party that is not even answering the question. It speaks a
+sentence at a time so playback starts about a second in, rather than per word, which the synthesizer
+renders as a stilted list because its prosody needs a full clause. It is off by default, stops on
+`.immediate`, and stops when dictation starts: the synthesizer plays through the speakers and the mic
+would transcribe it, so Max would otherwise dictate to itself. Markup is stripped before speaking, and
+a fenced block is announced rather than read, since reading code aloud character by character is both
+unbearable and too long to interrupt.
+
+**Max may propose a file edit; only the user writes one.** This is deliberately *not* the autonomous
+computer-use agent the plan rejects, and the argument is about product quality as much as safety: this
+app sees a screenshot, has no file tree, and cannot run the tests, so a whole-project agent here would
+be strictly worse than the editor the user already has open. What it can do that the editor cannot is
+answer a question about the thing currently on screen. So `EditableFile` holds exactly one file, chosen
+through a picker — there is no path to a file the user has not pointed at — and `apply` runs only from a
+button press, after a diff. `Prompt.editingSystem` is appended only when a file is open, so a question
+about the screen never arrives with instructions about rewriting files attached.
+
+The model returns a **whole file**, not a patch, because models emit unified diffs with wrong line
+numbers far more often than they mangle an entire file, and `TextDiff` computes the diff locally — a
+diff derived from the two texts cannot be wrong about what changed, because it *is* what changed. For
+the same reason `CodeBlock.extract` takes the **last** fenced block (explanations quote the broken lines
+first) and refuses an unterminated fence outright, since a truncated file written over the user's own is
+the worst outcome available here. An identical rewrite is discarded rather than offered, and `revert`
+restores the file as it was before the conversation touched it rather than undoing one step of several.
+
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
@@ -192,20 +247,23 @@ from the screenshot along with the panel.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~220 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
-| `Companion/CompanionPanelController.swift` | ~157 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
+| `App/SettingsView.swift` | ~240 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~420 | Panel UI: status header with the who-answers menu, ask field, dictation and save buttons, save options, related-context strip, answer area. |
-| `Companion/CompanionViewModel.swift` | ~706 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
+| `Companion/CompanionView.swift` | ~605 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, and the diff of a proposed edit. |
+| `Companion/CompanionViewModel.swift` | ~851 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, and proposed file edits. |
 | `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~116 | `Brain` protocol, `AskContext`, and the shared prompt text. |
-| `Brain/OllamaBrain.swift` | ~172 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
+| `Brain/Brain.swift` | ~254 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, and the file-editing rules. |
+| `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
+| `Voice/SpeechPlayback.swift` | ~116 | Reads answers aloud with `AVSpeechSynthesizer`, sentence by sentence, on device. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
 | `Store/SavedContext.swift` | ~170 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
+| `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
+| `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
 | `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
@@ -214,8 +272,8 @@ from the screenshot along with the panel.
 | `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
-| `Support/AppSettings.swift` | ~172 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
-| `Support/DesignSystem.swift` | ~51 | Spacing, radius, alpha, and status colour tokens. |
+| `Support/AppSettings.swift` | ~190 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
+| `Support/DesignSystem.swift` | ~59 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
@@ -258,6 +316,11 @@ What is covered, and why these pieces specifically:
 | `TodoBridgeTests` | Parsing the Electron app's `app-data.json` | Another app owns that file and can change or truncate it. Also pins that the OpenAI key in the same file never reaches prompt data. |
 | `QuietHoursTests` | The do-not-disturb window, and project↔task links | Must match the Electron implementation exactly; a silent disagreement between two notification systems is the failure mode. Also covers a task deleted in the other app leaving a dangling link. |
 | `PromptTests` | Prompt construction | Where the "user intent outranks inference" rule actually lives. Regressions here surface as subtly worse answers, not errors. |
+| `ConversationPromptTests` | Replaying earlier turns | The easy mistakes are handing the model the current question twice and letting the transcript grow until the screen text falls out of the context window, both of which degrade answers silently. |
+| `PersonaPromptTests` | Max's tone, and the editing instructions | Pins that the persona sits *on top of* the grounding rules rather than replacing them, that editing instructions never reach a question with no file open, and that summaries stay persona-free. |
+| `SavableReasonTests` | What a save is filed under | Decides which words get stored as the user's own. Pins that preset wording never can be, which is the app's central promise in the one place a convenience could quietly break it. |
+| `TextDiffTests` | Line diff and hunk grouping | This is the safety mechanism for file edits, not a presentation detail — a diff that under-reported a change would get one applied that nobody agreed to. |
+| `CodeBlockTests` | Pulling the file out of a reply | A model's reply is prose with a file inside it. Extracting wrongly means writing prose, or half a file, over the user's code, so an unterminated fence must yield nothing. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
@@ -315,7 +378,13 @@ Keep argument names the same as the variables they came from rather than abbrevi
 
 ### Do not
 
-- Do not add cloud **transcription** or analytics. Voice and usage data stay on the machine
+- Do not add cloud **transcription** or **speech synthesis**, or analytics. Voice and usage data stay
+ on the machine
+- Do not add a wake word or any always-listening mode. The mic opens when the user opens it. Note the
+ Electron app's own wake word (`ilEnabled`) ships **off by default**, which is the evidence, not the
+ counter-example
+- Do not let inference write to disk. Max proposes a file change, the user is shown a diff, and only a
+ button press writes anything. Do not extend editing past one explicitly-picked file
 - Do not route background or automatic work to a cloud model. Foreground questions only, and only
   when the user has opted in. This rule replaced a blanket ban on hosted models once local vision
   proved too weak to explain what is on screen; the ban on *unprompted* export did not change

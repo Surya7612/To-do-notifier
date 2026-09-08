@@ -40,11 +40,47 @@ final class CompanionViewModel {
     var answer: String = ""
     var contextLabel: String = "Nothing captured yet"
 
+    /// The conversation so far, oldest first. The last turn's answer is what
+    /// `answer` is streaming into.
+    private(set) var turns: [Turn] = []
+
+    /// Reads answers aloud when the user has asked for that.
+    let speech = SpeechPlayback()
+
+    /// The one file the user opened for Max to work on, if any.
+    let editableFile = EditableFile()
+
+    /// A rewrite Max produced, waiting to be accepted or discarded. Never
+    /// written without the user pressing Apply.
+    private(set) var proposedEdit: ProposedEdit?
+
+    struct ProposedEdit: Equatable {
+        let fileName: String
+        let contents: String
+        let lines: [TextDiff.Line]
+        let summary: TextDiff.Summary
+    }
+
     /// Re-reads the reminder suggestion on every keystroke, so the offer
     /// appears and disappears as the sentence changes.
     var question: String = "" {
         didSet { refreshReminderSuggestion() }
     }
+
+    /// The reason a save would be filed under, or nil if there isn't one yet.
+    ///
+    /// The typed field when it has something in it, otherwise the first
+    /// question the user actually typed this session. Asking something moves it
+    /// out of the field and into the transcript, and without this fallback
+    /// pressing ⌘S straight after asking would refuse for no visible reason.
+    ///
+    /// Preset wording is skipped rather than used, because `intent` is a
+    /// promise that the words in it are the user's own.
+    var savableReason: String? {
+        Turn.savableReason(typed: question, turns: turns)
+    }
+
+    var canSave: Bool { savableReason != nil && observation != nil }
 
     /// What the app thinks the typed reason is asking for, if anything.
     private(set) var reminderSuggestion: ReminderSuggestion?
@@ -269,7 +305,7 @@ final class CompanionViewModel {
 
     func ask(_ preset: Preset) {
         question = preset.question
-        submit()
+        submit(isFromPreset: true)
     }
 
     /// Narrows the capture to a rectangle the user drags out.
@@ -321,6 +357,10 @@ final class CompanionViewModel {
             return
         }
 
+        // Half duplex. The synthesizer plays through the speakers and the mic
+        // would transcribe it, so Max would end up dictating to itself.
+        speech.stop()
+
         // Stated before anything can go wrong, so a failure that arrives later
         // replaces a visible "starting" rather than appearing out of nowhere.
         phase = .startingDictation
@@ -357,25 +397,95 @@ final class CompanionViewModel {
         onListeningEnded?()
     }
 
+    // MARK: Proposed edits
+
+    /// Pulls a rewrite out of the finished answer, if there is one.
+    ///
+    /// Nothing is written here. An identical rewrite is discarded rather than
+    /// offered, because "Apply" on a diff with no changes in it is a button
+    /// that does nothing and implies the model achieved something.
+    private func captureProposedEdit(from reply: String) {
+        guard editableFile.isOpen,
+              let proposed = CodeBlock.extract(from: reply)
+        else { return }
+
+        let lines = TextDiff.compare(editableFile.contents, to: proposed)
+        let summary = TextDiff.summary(of: lines)
+        guard !summary.isEmpty else { return }
+
+        proposedEdit = ProposedEdit(fileName: editableFile.name,
+                                    contents: proposed,
+                                    lines: lines,
+                                    summary: summary)
+    }
+
+    func openFileToEdit() {
+        guard editableFile.open() else { return }
+        proposedEdit = nil
+    }
+
+    func closeEditableFile() {
+        editableFile.close()
+        proposedEdit = nil
+    }
+
+    func applyProposedEdit() {
+        guard let proposedEdit else { return }
+
+        if editableFile.apply(proposedEdit.contents) {
+            self.proposedEdit = nil
+            phase = .saved("Applied to \(proposedEdit.fileName)")
+        } else {
+            phase = .failed("Couldn't write \(proposedEdit.fileName).")
+        }
+    }
+
+    func discardProposedEdit() {
+        proposedEdit = nil
+    }
+
+    func revertAppliedEdit() {
+        guard editableFile.revert() else {
+            phase = .failed("Couldn't put \(editableFile.name) back.")
+            return
+        }
+        phase = .saved("Reverted \(editableFile.name)")
+    }
+
     func openScreenRecordingSettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         if let url { NSWorkspace.shared.open(url) }
     }
 
-    func submit() {
+    func submit() { submit(isFromPreset: false) }
+
+    private func submit(isFromPreset: Bool) {
         let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
 
         answerTask?.cancel()
+        speech.stop()
         answer = ""
+        proposedEdit = nil
         phase = .thinking
+
+        // The question moves into the transcript immediately so a follow-up
+        // reads as a conversation rather than as the field having been cleared.
+        let turnID = UUID()
+        turns.append(Turn(id: turnID, question: prompt, isFromPreset: isFromPreset))
+        question = ""
+        refreshReminderSuggestion()
 
         let brain = makeBrain()
         let context = AskContext(
             observation: observation,
             memories: ContextRetriever.promptLines(for: related),
             tasks: taskLines(),
-            includeImage: AppSettings.sendsImage
+            includeImage: AppSettings.sendsImage,
+            // Everything before the turn just added, so the model is not shown
+            // the question it is currently answering twice.
+            history: turns.dropLast(),
+            editableFile: editableFile.context
         )
 
         answerTask = Task {
@@ -384,14 +494,45 @@ final class CompanionViewModel {
                 for try await chunk in stream {
                     if Task.isCancelled { return }
                     answer += chunk
+                    recordAnswer(answer, for: turnID)
                     if phase != .answering { phase = .answering }
+                    speech.speakArriving(answer)
                 }
-                if !Task.isCancelled { phase = .idle }
+                guard !Task.isCancelled else { return }
+
+                speech.finish(answer)
+                captureProposedEdit(from: answer)
+                phase = .idle
             } catch {
                 guard !Task.isCancelled else { return }
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    private func recordAnswer(_ text: String, for turnID: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].answer = text
+    }
+
+    /// Clears the conversation but keeps the capture, so the user can start a
+    /// fresh line of questioning about the same screen.
+    func startNewConversation() {
+        answerTask?.cancel()
+        speech.stop()
+        turns = []
+        answer = ""
+        proposedEdit = nil
+        phase = .idle
+    }
+
+    /// Grabs the screen again while keeping the conversation.
+    ///
+    /// The point of the whole feature: the user does what they were told, the
+    /// screen changes, and they ask "now what?" without losing the thread.
+    func lookAgain(frontmostApp: NSRunningApplication?) {
+        speech.stop()
+        captureScreen(frontmostApp: frontmostApp)
     }
 
     /// Persists the current screen with whatever the user typed as the reason.
@@ -402,8 +543,7 @@ final class CompanionViewModel {
             return
         }
 
-        let raw = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else {
+        guard let raw = savableReason else {
             phase = .failed("Type why this matters, then save.")
             return
         }
@@ -490,8 +630,7 @@ final class CompanionViewModel {
     /// phrasing: "remind me tomorrow" is part of why they saved it and stays in
     /// the record verbatim.
     private func refreshReminderSuggestion() {
-        let raw = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else {
+        guard let raw = savableReason else {
             reminderSuggestion = nil
             reminderDate = nil
             reminderIsArmed = false
@@ -633,12 +772,18 @@ final class CompanionViewModel {
     func reset() {
         captureTask?.cancel()
         answerTask?.cancel()
+        speech.stop()
         if isListening {
             dictation.stop()
             endListening()
         }
         question = ""
         answer = ""
+        turns = []
+        proposedEdit = nil
+        // The opened file deliberately survives, because dismissing the panel
+        // between questions about the same file is the normal way to use this
+        // and re-picking it every time through a modal would be absurd.
         observation = nil
         related = []
         phase = .idle

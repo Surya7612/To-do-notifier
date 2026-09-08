@@ -12,6 +12,8 @@ enum AppSettings {
         static let currentProjectID = "currentProjectID"
         static let semanticEnabled = "semanticEnabled"
         static let embeddingModel = "embeddingModel"
+        static let speaksAnswers = "speaksAnswers"
+        static let voiceIdentifier = "voiceIdentifier"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -107,7 +109,23 @@ enum AppSettings {
             // run is worse than one the user turned on deliberately.
             Key.semanticEnabled: false,
             Key.embeddingModel: defaultEmbeddingModel,
+            // Off by default: an assistant that starts talking the moment it is
+            // summoned is intrusive in a way a panel of text is not, and the
+            // panel is often summoned in a meeting.
+            Key.speaksAnswers: false,
         ])
+    }
+
+    /// Whether answers are read aloud, always by the system voice on this Mac.
+    static var speaksAnswers: Bool {
+        UserDefaults.standard.bool(forKey: Key.speaksAnswers)
+    }
+
+    /// nil means the system default voice.
+    static var voiceIdentifier: String? {
+        UserDefaults.standard.string(forKey: Key.voiceIdentifier).flatMap {
+            $0.isEmpty ? nil : $0
+        }
     }
 
     /// Whether saved context is matched by meaning as well as by words.

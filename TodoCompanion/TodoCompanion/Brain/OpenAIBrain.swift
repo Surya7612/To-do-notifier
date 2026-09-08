@@ -43,7 +43,7 @@ struct OpenAIBrain: Brain {
                         "model": model,
                         "stream": true,
                         "messages": [
-                            ["role": "system", "content": Prompt.system],
+                            ["role": "system", "content": Prompt.system(for: context)],
                             ["role": "user", "content": content],
                         ],
                     ]
