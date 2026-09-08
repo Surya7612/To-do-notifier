@@ -175,6 +175,24 @@ clock, which is why the tests assert relative facts instead of fixed timestamps.
 clock time has to state a future day alongside it for the same reason: a stated hour already gone is
 rejected by design, so `"at 10 AM today"` made the suite pass every morning and fail every afternoon.
 
+**`NSDataDetector` does not understand durations shorter than a day, at all.** Measured, not assumed:
+it matches `in 3 days`, `in 2 weeks`, `next tuesday at 4` and `tomorrow`, and returns *nothing* for
+`in an hour`, `in 10 min`, `in 90 seconds` or `in 1 hour 30 minutes`. It also requires digits, so
+`in three days` and `in a week` fail while `in 3 days` works. This is why `ReminderPhrase` carries its
+own `durationPattern`, and why that runs **before** the detector rather than after: a stated duration
+is the user saying when they want something back, whereas a clock time elsewhere in the sentence is
+usually part of what they are describing — "remind me in an hour about the 3pm meeting" means an hour.
+A duration of a day or more still gets the morning treatment a bare "friday" does, because it states
+no time of day; anything shorter means exactly what it says and must not be moved. The failure this
+fixes was total rather than partial: with no time found, "remind me to send an email in one minute"
+fell to the tomorrow-morning fallback, and because a fallback states no time it also failed
+`isReminderInstruction`, so it went to the model — which replied that it could not set reminders.
+
+**A notification trigger built from date components must include `.second`.** Truncating to the minute
+fires every reminder up to 59 seconds early, and for anything less than a minute out it rounds the
+target into the *past*, where a non-repeating `UNCalendarNotificationTrigger` has no next matching
+date and so never fires at all — silently, since scheduling itself succeeds.
+
 **Who answers is switchable from the panel, not only from Settings.** The badge in the panel header is a
 menu, because the choice is per-question in practice: the local model reads text back fine and is worth
 leaving for a diagram or an unfamiliar interface. It also carries the "Send the screenshot" toggle, which

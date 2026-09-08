@@ -42,6 +42,16 @@ nonisolated enum ReminderPhrase {
         let lowered = text.lowercased()
         let wasExplicitlyRequested = requestCues.contains { lowered.contains($0) }
 
+        // Before the system parser, not after it. A stated duration is the
+        // user saying when they want this back; a clock time elsewhere in the
+        // sentence is usually part of what they are describing — "remind me in
+        // an hour about the 3pm meeting" means an hour, not three.
+        if let found = relativeDuration(in: text, now: now, calendar: calendar) {
+            return ReminderSuggestion(date: found.date,
+                                      wasExplicitlyRequested: wasExplicitlyRequested,
+                                      matchedText: found.matchedText)
+        }
+
         if let found = firstFutureDate(in: text, now: now, calendar: calendar) {
             return ReminderSuggestion(date: found.date,
                                       wasExplicitlyRequested: wasExplicitlyRequested,
@@ -58,9 +68,108 @@ nonisolated enum ReminderPhrase {
                                   matchedText: nil)
     }
 
-    /// Uses the system's own date parser rather than a hand-rolled one, so
-    /// "next tuesday at 4" and "in three days" work without this file growing a
-    /// calendar of its own.
+    /// Durations the system parser does not recognize at all.
+    ///
+    /// Measured, not assumed. `NSDataDetector` matches "in 3 days" and "in 2
+    /// weeks", and **nothing below a day**: not "in an hour", not "in 10 min",
+    /// not "in 90 seconds". It also needs digits, so "in three days" and "in a
+    /// week" fail too. "Remind me to send an email in one minute" therefore
+    /// found no time at all, was offered as tomorrow morning by the fallback,
+    /// and — because the fallback states no time — was not treated as an
+    /// instruction either, so it went to the model, which explained that it
+    /// could not set reminders. Every part of that was this gap.
+    private static let durationPattern = try? NSRegularExpression(
+        pattern: #"\bin\s+(half\s+an?|\d{1,4}|[a-z]+(?:[-\s]five)?)\s+"#
+            + #"(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?)\b"#,
+        options: [.caseInsensitive]
+    )
+
+    /// Spelled-out amounts, which the system parser rejects outright.
+    private static let amountWords: [String: Int] = [
+        "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+        "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40,
+        "forty-five": 45, "forty five": 45, "sixty": 60, "ninety": 90,
+    ]
+
+    private static func component(forUnit unit: String) -> Calendar.Component? {
+        switch unit {
+        case _ where unit.hasPrefix("sec"): .second
+        case _ where unit.hasPrefix("min"): .minute
+        case _ where unit.hasPrefix("hr"), _ where unit.hasPrefix("hour"): .hour
+        case _ where unit.hasPrefix("day"): .day
+        case _ where unit.hasPrefix("week"): .weekOfYear
+        default: nil
+        }
+    }
+
+    private static func relativeDuration(
+        in text: String,
+        now: Date,
+        calendar: Calendar
+    ) -> (date: Date, matchedText: String)? {
+        guard let durationPattern else { return nil }
+
+        let range = NSRange(text.startIndex..., in: text)
+
+        // Every match is tried rather than just the first, because the amount
+        // group deliberately accepts any word: "in the minutes that follow"
+        // matches the shape and resolves to nothing, and should not stop a real
+        // duration later in the sentence from being found.
+        for match in durationPattern.matches(in: text, options: [], range: range) {
+            guard let amountRange = Range(match.range(at: 1), in: text),
+                  let unitRange = Range(match.range(at: 2), in: text),
+                  let matchedRange = Range(match.range, in: text)
+            else { continue }
+
+            let amountText = text[amountRange].lowercased()
+            let unit = text[unitRange].lowercased()
+            guard let component = component(forUnit: unit) else { continue }
+
+            // "half an hour" is thirty minutes, not half of one hour, because
+            // `Calendar` moves in whole units.
+            let isHalf = amountText.hasPrefix("half")
+            let amount = isHalf ? 1 : (Int(amountText) ?? amountWords[amountText])
+            guard let amount, amount > 0 else { continue }
+
+            let resolved: Date? = if isHalf {
+                halved(component, from: now, calendar: calendar)
+            } else {
+                calendar.date(byAdding: component, value: amount, to: now)
+            }
+
+            guard var date = resolved, date > now else { continue }
+
+            // A duration of days or more states no time of day, so it gets the
+            // same morning treatment a bare "friday" does. Anything shorter
+            // means exactly what it says and must not be moved.
+            if component == .day || component == .weekOfYear {
+                date = calendar.date(bySettingHour: defaultHour, minute: 0, second: 0, of: date)
+                    ?? date
+            }
+
+            return (date, String(text[matchedRange]))
+        }
+
+        return nil
+    }
+
+    /// "half an hour" and "half a day", in the next unit down.
+    private static func halved(_ component: Calendar.Component,
+                               from now: Date,
+                               calendar: Calendar) -> Date? {
+        switch component {
+        case .hour: calendar.date(byAdding: .minute, value: 30, to: now)
+        case .minute: calendar.date(byAdding: .second, value: 30, to: now)
+        case .day: calendar.date(byAdding: .hour, value: 12, to: now)
+        case .weekOfYear: calendar.date(byAdding: .day, value: 3, to: now)
+        default: nil
+        }
+    }
+
+    /// Uses the system's own date parser for absolute dates, so "next tuesday
+    /// at 4" and "in 3 days" work without this file growing a calendar of its
+    /// own. What it cannot do is handled above.
     ///
     /// Note that `NSDataDetector` takes no reference date: relative words are
     /// always resolved against the system clock, whatever `now` says. `now` is
