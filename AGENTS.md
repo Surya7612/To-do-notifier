@@ -192,6 +192,16 @@ talked, which is the opposite of the point. And `lookAgain` re-captures while ke
 because the screen changing is the normal case between turns rather than a reason to start over; the
 prompt says so, so the model does not describe a screen that has moved on.
 
+**A conversation outlives the panel.** `hide()` calls `endSession()`, not a full reset, because
+reaching the app being discussed means clicking outside this one and the click-outside monitor treats
+that as a dismissal. Wiping `turns` there made follow-ups impossible in the one situation they exist
+for — the panel could hold a conversation only while the user never touched the app they were asking
+about. It is resumed on the next summon within `conversationResumeWindow` and dropped after, keyed on
+*time* rather than on the frontmost app: the screen changing between turns is the intended case, so
+"different app" would end the conversation exactly when it was working. A turn dismissed before it
+was answered is removed rather than kept, or it would sit in the transcript showing an ellipsis and
+go back to the model as something Max failed to answer.
+
 **Max is a name and a tone, never a licence.** The persona lives in `Prompt.system` and in UI copy. It
 is emphatically *not* the bundle name: renaming the bundle would invalidate the Screen Recording grant,
 which TCC keys to the signature and identifier, relocate the SwiftData container, and break
@@ -338,6 +348,7 @@ What is covered, and why these pieces specifically:
 | `TodoBridgeTests` | Parsing the Electron app's `app-data.json` | Another app owns that file and can change or truncate it. Also pins that the OpenAI key in the same file never reaches prompt data. |
 | `QuietHoursTests` | The do-not-disturb window, and project↔task links | Must match the Electron implementation exactly; a silent disagreement between two notification systems is the failure mode. Also covers a task deleted in the other app leaving a dangling link. |
 | `PromptTests` | Prompt construction | Where the "user intent outranks inference" rule actually lives. Regressions here surface as subtly worse answers, not errors. |
+| `ConversationResumeTests` | Whether a dismissed conversation is resumed | Decides whether follow-up questions work at all, since reaching the app being asked about dismisses the panel. |
 | `ConversationPromptTests` | Replaying earlier turns | The easy mistakes are handing the model the current question twice and letting the transcript grow until the screen text falls out of the context window, both of which degrade answers silently. |
 | `PersonaPromptTests` | Max's tone, and the editing instructions | Pins that the persona sits *on top of* the grounding rules rather than replacing them, that editing instructions never reach a question with no file open, and that summaries stay persona-free. |
 | `SavableReasonTests` | What a save is filed under | Decides which words get stored as the user's own. Pins that preset wording never can be, which is the app's central promise in the one place a convenience could quietly break it. |

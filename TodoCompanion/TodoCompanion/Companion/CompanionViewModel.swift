@@ -504,6 +504,7 @@ final class CompanionViewModel {
 
                 speech.finish(streamed)
                 captureProposedEdit(from: streamed)
+                lastTurnAt = Date()
                 phase = .idle
             } catch {
                 guard !Task.isCancelled else { return }
@@ -543,6 +544,7 @@ final class CompanionViewModel {
         answerTask?.cancel()
         speech.stop()
         turns = []
+        lastTurnAt = nil
         proposedEdit = nil
         phase = .idle
     }
@@ -791,7 +793,15 @@ final class CompanionViewModel {
         }
     }
 
-    func reset() {
+    /// Dismisses the panel's working state but keeps the conversation.
+    ///
+    /// Dismissing is how the user reaches the thing they are being taught:
+    /// clicking into DaVinci to do the step they were just given is, from this
+    /// app's side, a click outside it. Wiping the transcript there made
+    /// follow-up questions impossible in precisely the situation they exist
+    /// for — the panel could only hold a conversation for as long as the user
+    /// never touched the app they were asking about.
+    func endSession() {
         captureTask?.cancel()
         answerTask?.cancel()
         speech.stop()
@@ -799,8 +809,16 @@ final class CompanionViewModel {
             dictation.stop()
             endListening()
         }
+
+        // A question dismissed before it was answered leaves a turn that would
+        // otherwise sit in the transcript showing an ellipsis forever, and go
+        // back to the model as something it failed to answer.
+        if turns.last?.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+            turns.removeLast()
+        }
+        lastTurnAt = turns.isEmpty ? nil : Date()
+
         question = ""
-        turns = []
         proposedEdit = nil
         // The opened file deliberately survives, because dismissing the panel
         // between questions about the same file is the normal way to use this
@@ -812,6 +830,35 @@ final class CompanionViewModel {
         reminderSuggestion = nil
         reminderDate = nil
         reminderIsArmed = false
+    }
+
+    /// How long a dismissed conversation stays resumable.
+    ///
+    /// Long enough to go and do the step you were just told to do, short enough
+    /// that a summon after lunch is not answered against this morning's
+    /// subject. Time rather than app identity, because the screen legitimately
+    /// changes between turns — that is the whole point — so "different app"
+    /// would end the conversation exactly when it was working.
+    /// `nonisolated` so the pure check below can use it as a default argument;
+    /// the class is `@MainActor`, which would otherwise isolate it.
+    nonisolated static let conversationResumeWindow: TimeInterval = 5 * 60
+
+    /// When the last answer landed, or nil when there is nothing to resume.
+    private var lastTurnAt: Date?
+
+    nonisolated static func conversationSurvives(lastTurnAt: Date?,
+                                                 now: Date = Date(),
+                                                 window: TimeInterval = conversationResumeWindow) -> Bool {
+        guard let lastTurnAt else { return false }
+        return now.timeIntervalSince(lastTurnAt) <= window
+    }
+
+    /// Decides, on each summon, whether the kept conversation is still live.
+    func prepareForSummon(now: Date = Date()) {
+        guard !Self.conversationSurvives(lastTurnAt: lastTurnAt, now: now) else { return }
+
+        turns = []
+        lastTurnAt = nil
     }
 
     /// Falls back to the local model when OpenAI is selected without a key, so

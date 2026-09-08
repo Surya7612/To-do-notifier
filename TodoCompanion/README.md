@@ -41,7 +41,14 @@ level — so a microphone that is producing silence looks like silence rather th
 The answer is not the end of it. Ask a follow-up and the earlier turns go with it, so "why that one?"
 or "now what?" resolve against what Max just told you instead of starting from nothing.
 
-**⌘L** captures the screen again and keeps the conversation. That is the whole point of the feature:
+A conversation outlives the panel. Clicking into the app you are asking about dismisses the panel —
+that is how every floating panel on the system behaves — and the transcript is kept, so summoning
+again picks the conversation back up with a fresh capture. It is dropped after five minutes of not
+being touched, so a summon after lunch is not answered against what you were doing this morning.
+Without that, follow-up questions were impossible in exactly the situation they exist for: reaching
+DaVinci to do the step you were just given *is*, from this app's side, a click outside it.
+
+**⌘L** captures the screen again without dismissing, for when the screen changed on its own. That is the whole point of the feature:
 you do the thing you were told to do, the screen changes, and you ask what is next without losing the
 thread. The prompt says a fresh capture describes the screen *now*, so Max does not keep describing a
 screen that has moved on. **⌘K** starts a new conversation about the same capture.

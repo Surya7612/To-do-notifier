@@ -45,6 +45,9 @@ final class CompanionPanelController {
         NSApp.activate(ignoringOtherApps: true)
         watchForOutsideClick()
 
+        // Decides whether the previous conversation is still live before the
+        // capture that will be asked about in its terms.
+        viewModel.prepareForSummon()
         viewModel.captureScreen(frontmostApp: frontmost)
     }
 
@@ -96,7 +99,9 @@ final class CompanionPanelController {
     func hide() {
         stopWatchingForOutsideClick()
         panel?.orderOut(nil)
-        viewModel.reset()
+        // Not `reset()`: the conversation outlives the panel, because reaching
+        // the app being discussed means clicking outside this one.
+        viewModel.endSession()
         previousApp?.activate()
         previousApp = nil
     }
