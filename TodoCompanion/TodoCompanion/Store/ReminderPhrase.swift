@@ -36,6 +36,36 @@ nonisolated enum ReminderPhrase {
     /// When a request has no time in it, morning is the least intrusive guess.
     private static let defaultHour = 9
 
+    /// Whether a message should be carried out as a reminder rather than sent to
+    /// the model, given anything left over from the message before it.
+    ///
+    /// Split out from the view model so it can be tested without a store, a
+    /// clock or a panel. `pendingRequest` is an earlier "remind me" that named
+    /// no time; when one is outstanding, a stated time completes it, because
+    /// Max asked for exactly that and both halves are the user's own words.
+    static func isInstruction(suggestion: ReminderSuggestion?,
+                              isArmed: Bool,
+                              hasPendingRequest: Bool) -> Bool {
+        guard let suggestion, isArmed, suggestion.matchedText != nil else { return false }
+        return suggestion.wasExplicitlyRequested || hasPendingRequest
+    }
+
+    /// What remains outstanding after a message has been dealt with.
+    ///
+    /// Opens on an explicit request that named no time, and closes on anything
+    /// that states one — either because it was carried out, or because the user
+    /// has moved on to something else. Left open only while Max's question is
+    /// genuinely still unanswered, since a request that outlived the subject
+    /// would attach a later, unrelated time to it.
+    ///
+    /// - Parameter message: the text the user just submitted.
+    static func pendingRequest(message: String, suggestion: ReminderSuggestion?) -> String? {
+        // A stated time closes it either way: it was carried out, or it belongs
+        // to something else the user is now talking about.
+        guard suggestion?.matchedText == nil else { return nil }
+        return suggestion?.wasExplicitlyRequested == true ? message : nil
+    }
+
     static func suggestion(in text: String,
                                        now: Date = Date(),
                                        calendar: Calendar = .current) -> ReminderSuggestion? {

@@ -88,6 +88,22 @@ final class CompanionViewModel {
     /// What the app thinks the typed reason is asking for, if anything.
     private(set) var reminderSuggestion: ReminderSuggestion?
 
+    /// An explicit "remind me" that named no time, held until the user says
+    /// when.
+    ///
+    /// Max answers such a sentence by asking "when should I remind you?", and
+    /// without this it could not act on the reply: the cue and the time would
+    /// sit in two different messages, and each half alone is only ever a
+    /// question. Max was asking something it could not do anything with.
+    ///
+    /// This is not the parser inferring a request. Both halves are still the
+    /// user's own words — "remind me to record demo" and then "in 10 minutes" —
+    /// and Max asked for the second one, so answering it is an instruction in
+    /// exactly the way the single sentence is. What it must not do is survive
+    /// the user moving on, which is why any message that states no time clears
+    /// it.
+    private var pendingReminderRequest: String?
+
     /// The time a reminder will actually be set for. Separate from the
     /// suggestion so choosing a preset does not have to fight the parser on the
     /// next keystroke.
@@ -128,9 +144,11 @@ final class CompanionViewModel {
     /// parser's fallback guess of tomorrow morning.
     /// Switching the offered reminder off is also an instruction, so the
     /// sentence goes back to being an ordinary question.
+    /// The cue may also have been given a message earlier, when Max asked when.
     var isReminderInstruction: Bool {
-        guard let suggestion = reminderSuggestion, reminderIsArmed else { return false }
-        return suggestion.wasExplicitlyRequested && suggestion.matchedText != nil
+        ReminderPhrase.isInstruction(suggestion: reminderSuggestion,
+                                     isArmed: reminderIsArmed,
+                                     hasPendingRequest: pendingReminderRequest != nil)
     }
 
     /// Every project, for the picker.
@@ -553,8 +571,17 @@ final class CompanionViewModel {
         // asked about. Never for a preset, whose wording is this app's own and
         // could not be asking for anything.
         if !isFromPreset, isReminderInstruction {
-            saveCurrentContext()
+            // Filed under the original request when this message is only the
+            // answer to "when?", since "in 10 minutes" is a time and not a
+            // reason anyone would want to read back later.
+            saveCurrentContext(reason: pendingReminderRequest)
+            pendingReminderRequest = nil
             return
+        }
+
+        if !isFromPreset {
+            pendingReminderRequest = ReminderPhrase.pendingRequest(message: prompt,
+                                                                   suggestion: reminderSuggestion)
         }
 
         answerTask?.cancel()
@@ -686,13 +713,16 @@ final class CompanionViewModel {
 
     /// Persists the current screen with whatever the user typed as the reason.
     /// The typed text is the record's intent; `#tags` inside it become topics.
-    func saveCurrentContext() {
+    /// - Parameter reason: overrides the typed field. Used when the message on
+    ///   screen is the answer to Max asking when, so the save is filed under
+    ///   what was asked for rather than under the time.
+    func saveCurrentContext(reason: String? = nil) {
         guard let observation else {
             phase = .failed("Nothing captured yet.")
             return
         }
 
-        guard let raw = savableReason else {
+        guard let raw = reason ?? savableReason else {
             phase = .failed("Type why this matters, then save.")
             return
         }
@@ -728,6 +758,10 @@ final class CompanionViewModel {
 
         if let reminder {
             scheduleReminder(for: record, at: reminder, destination: destination, tagSuffix: tagSuffix)
+            // Handed to Apple now rather than on the next summon: this is
+            // usually said just before walking away from the Mac, which is the
+            // one case where there is no next summon.
+            mirrorTasksToAppleReminders()
         }
     }
 
@@ -742,7 +776,13 @@ final class CompanionViewModel {
     private func mirrorTasksToAppleReminders() {
         guard AppSettings.mirrorsToAppleReminders, AppleReminders.isAuthorized else { return }
 
-        let todos = linkedWork.todos
+        // Reminders set here stand in for themselves until the to-do app has
+        // turned them into tasks. Ahead of it rather than instead of it: the
+        // same id arrives from `TodoBridge` later and reconciles.
+        let todos = linkedWork.todos + ProjectExport.anticipatedTasks(
+            for: ProjectExport.pendingReminders(in: modelContext),
+            knownTo: linkedWork.todos
+        )
         let quietHours = linkedWork.quietHours
 
         Task {
@@ -844,7 +884,10 @@ final class CompanionViewModel {
 
         if !wasChosenByHand {
             reminderDate = fresh.date
+            // A bare time is normally inference and stays switched off. It is an
+            // instruction when it is the answer to Max having asked for one.
             reminderIsArmed = fresh.wasExplicitlyRequested
+                || (pendingReminderRequest != nil && fresh.matchedText != nil)
         }
     }
 
@@ -999,6 +1042,7 @@ final class CompanionViewModel {
         reminderSuggestion = nil
         reminderDate = nil
         reminderIsArmed = false
+        pendingReminderRequest = nil
     }
 
     /// How long a dismissed conversation stays resumable.

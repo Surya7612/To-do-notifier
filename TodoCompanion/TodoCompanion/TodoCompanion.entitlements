@@ -26,5 +26,17 @@
 	<true/>
 	<key>com.apple.security.personal-information.reminders</key>
 	<true/>
+
+	<!--
+	  Reminders needs Calendars too, which is not a guess: with only the
+	  reminders key above, requestFullAccessToReminders() throws
+	  NSMachErrorDomain 4099 - the XPC connection refused - immediately, before
+	  any prompt is shown. An iCloud reminder list is served by CalendarAgent
+	  over CalDAV, and the sandbox will not let this app reach that agent on the
+	  reminders entitlement alone. The symptom is a switch that turns itself
+	  back off in a fraction of a second with nothing logged anywhere.
+	-->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
 </dict>
 </plist>

@@ -356,7 +356,19 @@ struct SettingsView: View {
             return
         }
 
-        guard await AppleReminders.requestAccess() else {
+        let granted: Bool
+        do {
+            granted = try await AppleReminders.requestAccess()
+        } catch {
+            // Stated rather than folded into "not granted": a thrown error is
+            // usually a misconfiguration on this side, which is not something
+            // the user can fix in System Settings.
+            mirrorsToAppleReminders = false
+            mirrorProblem = "Reminders refused the request: \(error.localizedDescription)"
+            return
+        }
+
+        guard granted else {
             mirrorsToAppleReminders = false
             mirrorProblem = AppleReminders.isDenied
                 ? "Reminders access is off for \(Prompt.assistantName) in System Settings → Privacy & Security → Reminders."

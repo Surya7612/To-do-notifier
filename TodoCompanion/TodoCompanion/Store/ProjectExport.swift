@@ -134,6 +134,46 @@ enum ProjectExport {
         )
     }
 
+    /// Reminders set here that the to-do app has not made a task of yet.
+    ///
+    /// The Apple Reminders mirror needs these and cannot wait for the round
+    /// trip. `ReminderMirror.plan` withdraws anything absent from the to-do
+    /// app's list, so a reminder handed to Apple the moment it was set would be
+    /// deleted again by the very next sweep — before the other app, which may
+    /// not be running at all, had a chance to create the task. Standing in for
+    /// it until the task appears is what carries it across that gap, and that
+    /// gap is the whole point: "remind me in two hours" is usually said just
+    /// before walking away from the Mac.
+    ///
+    /// Dropped as soon as the id *is* known over there, whatever its state, so
+    /// a task the user completed withdraws normally rather than being kept
+    /// alive by this. Bounded by the same offer window as the export, for the
+    /// same reason: a task deleted over there must not return forever.
+    static func anticipatedTasks(for pendingReminders: [SavedContext],
+                                 knownTo todos: [LinkedTodo],
+                                 now: Date = Date()) -> [LinkedTodo] {
+        let known = Set(todos.map(\.id))
+        let stillOffered = now.addingTimeInterval(-offerWindowAfterDue)
+
+        return pendingReminders.compactMap { record in
+            guard let dueAt = record.remindAt, dueAt > stillOffered else { return nil }
+
+            let title = record.intent.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+
+            let identifier = importedTaskPrefix + record.reminderIdentifier
+            guard !known.contains(identifier) else { return nil }
+
+            return LinkedTodo(id: identifier, title: title, dueAt: dueAt, isDone: false)
+        }
+    }
+
+    /// The reminders worth standing in for, read from the store.
+    static func pendingReminders(in context: ModelContext) -> [SavedContext] {
+        (try? context.fetch(FetchDescriptor<SavedContext>()))?
+            .filter { $0.remindAt != nil } ?? []
+    }
+
     /// Which of these to-do app task ids came from a reminder set here.
     ///
     /// Reads the id scheme back the other way. Used when Apple Reminders has

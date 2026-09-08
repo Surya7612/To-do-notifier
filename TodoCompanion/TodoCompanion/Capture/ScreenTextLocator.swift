@@ -91,13 +91,37 @@ nonisolated enum ScreenTextLocator {
         if quoted.contains(needle) { return cleaned.count + 100 }
 
         // Unquoted, this is a guess drawn from ordinary prose, so it has to earn
-        // it: long enough not to be a common word, and never a word Max uses to
-        // talk *about* controls.
+        // it: long enough not to be a common word, never a word Max uses to talk
+        // *about* controls, and printed on screen the way a label is printed.
         guard !descriptiveWords.contains(needle),
-              cleaned.count >= minimumUnquotedLength || cleaned.contains(" ")
+              cleaned.count >= minimumUnquotedLength || cleaned.contains(" "),
+              isPrintedLikeALabel(cleaned)
         else { return nil }
 
         return cleaned.count
+    }
+
+    /// Whether the words, *as Vision read them off the screen*, are printed the
+    /// way a control's label is printed rather than the way prose is.
+    ///
+    /// Length alone was standing in for this and is a poor proxy: "should",
+    /// "before" and "because" all clear six characters, so an answer that merely
+    /// used one of them in a sentence would offer to draw a box around it
+    /// wherever it happened to appear. The observed case was Max asking "When
+    /// should I remind you?" and offering to point at "should".
+    ///
+    /// A capital, an interior capital or a digit is what separates `Fairlight`,
+    /// `Deliver` and `qwen3` from ordinary running text. This deliberately gives
+    /// up on an entirely lowercase label, which is the cheaper mistake: that
+    /// yields no box, where the alternative draws a confident one over a word
+    /// nobody was talking about.
+    private static func isPrintedLikeALabel(_ phrase: String) -> Bool {
+        phrase.split(separator: " ").contains { word in
+            guard let first = word.first else { return false }
+            return first.isUppercase
+                || word.contains(where: \.isNumber)
+                || word.dropFirst().contains(where: \.isUppercase)
+        }
     }
 
     /// Text inside double quotes, straight or curly, lowercased.
@@ -125,12 +149,21 @@ nonisolated enum ScreenTextLocator {
 
     /// Words Max uses to describe a control rather than to name one. Matching
     /// these points at whatever unrelated place the word happens to be printed.
+    ///
+    /// The second group is ordinary prose rather than interface vocabulary. It
+    /// is here because `isPrintedLikeALabel` accepts a leading capital, and one
+    /// of these beginning a sentence on screen would otherwise qualify.
     private static let descriptiveWords: Set<String> = [
         "button", "buttons", "menu", "menus", "panel", "panels", "window",
         "windows", "screen", "toolbar", "sidebar", "tab", "tabs", "option",
         "options", "setting", "settings", "field", "fields", "dialog", "icon",
         "click", "select", "choose", "press", "open", "the", "this", "that",
         "there", "here", "then", "your", "you",
+
+        "should", "would", "could", "before", "after", "because", "instead",
+        "already", "another", "without", "through", "something", "anything",
+        "everything", "nothing", "about", "these", "those", "which", "where",
+        "when", "while", "again", "still", "right", "first", "next", "same",
     ]
 
     private static func union(of regions: [TextRegion]) -> CGRect {

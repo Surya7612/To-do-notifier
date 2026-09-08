@@ -203,6 +203,22 @@ the same publish-only footing as `ProjectExport` — completion is never read ba
 make Reminders a second source of truth for what is done. Off by default, since it is the only feature
 here that puts the user's task titles into another company's sync.
 
+**The mirror runs at launch and when a reminder is set, not only on summon.** Tying it to the summon
+alone broke it in its own motivating case: a reminder reaches Apple only after the to-do app has turned
+it into a task and this app has been summoned *again* to read it back, and "remind me in two hours" is
+usually said just before walking away from the Mac. There was no next summon, so the phone was never
+told. `AppDelegate` therefore sweeps once at launch, beside the phone-inbox import, and
+`saveCurrentContext` hands a new reminder over immediately. Still not a background poll — it acts when
+something happens, not on a timer.
+
+That early hand-over needs `ProjectExport.anticipatedTasks`, and the reason is not obvious:
+`ReminderMirror.plan` withdraws anything absent from the to-do app's open list, so a reminder given to
+Apple before that app created the task would be **deleted by the very next sweep** — and that app may
+not be running at all. So a reminder stands in for itself, under the `companion:` id the importer will
+independently arrive at, until the real task appears and reconciles. It stands down as soon as the id
+is known over there in *any* state, which is what lets a task the user completed withdraw normally
+instead of being kept alive by the reminder that created it.
+
 Four things about it are load-bearing. **Only tasks still ahead of us are copied**: an `EKAlarm` whose
 date has passed is delivered as soon as it syncs, so mirroring a backlog would fire every overdue task
 at once on every device the moment the switch was flipped. **Withdrawal keys on the task leaving the
@@ -217,12 +233,28 @@ rejected: this one swaps a Mac-only notification for delivery to every device, w
 one Mac notifier for another.
 
 The permission needs a **hand-written entitlements file**, which is why `TodoCompanion.entitlements`
-exists at all. Xcode's generated entitlements cover Calendars (`ENABLE_RESOURCE_ACCESS_CALENDARS`) and
-have no Reminders equivalent, and without `com.apple.security.personal-information.reminders` macOS
-refuses even to *show* the prompt — tccd logs that `kTCCServiceReminders` requires the entitlement and
-denies access silently, so the feature reads as broken rather than unpermitted. Because that file now
-replaces generation, the keys the `ENABLE_*` settings used to produce are restated in it and have to be
-kept in step; a mismatch surfaces as a sandbox violation at runtime, not as a build failure.
+exists at all. Xcode has no build setting that emits a Reminders entitlement, and without
+`com.apple.security.personal-information.reminders` macOS refuses even to *show* the prompt. Because
+that file replaces generation, the keys the `ENABLE_*` settings used to produce are restated in it and
+have to be kept in step; a mismatch surfaces as a sandbox violation at runtime, not as a build failure.
+
+**Reminders also needs the Calendars entitlement, and this was measured rather than reasoned.** With
+`personal-information.reminders` alone, `requestFullAccessToReminders()` throws `NSMachErrorDomain`
+4099 — the XPC connection refused — immediately, before any prompt appears. An iCloud reminder list is
+served by CalendarAgent over CalDAV, and the sandbox will not let the app reach that agent on the
+reminders key alone, so `personal-information.calendars` is required too. Worth knowing because of how
+it presents: the switch turns itself back off in a fraction of a second, `tccd` logs nothing, and
+nothing is thrown that reaches the user. It reads as a dead control rather than a missing entitlement.
+Two things follow. `requestAccess` propagates its error instead of swallowing it with `try?`, since
+"refused" and "threw" need different words in front of someone — one is fixable in System Settings and
+the other is not. And the activation-policy dance `FilePicker` needs is **not** needed here: a TCC
+prompt is presented by the system rather than by this app, so it appears for an accessory app
+perfectly well. That was tried while chasing this bug and removed once the entitlement proved to be
+the cause; it only made the Settings window lose focus mid-click.
+
+A grant is also keyed to the code signature, so stale `kTCCServiceReminders` records from earlier
+builds accumulate and a denial among them makes the request fail instantly with no prompt. Clear them
+with `tccutil reset Reminders surya.TodoCompanion` when the symptom looks like the above.
 
 **Quiet hours are mirrored, not reinvented.** The user configured a do-not-disturb window once, in the
 app that owns notification preferences. `QuietHours.contains` deliberately reproduces `inQuietHours` in
@@ -240,6 +272,18 @@ the parser acting on inference; it is the user's own instruction, which is why a
 rather than `ReminderPhrase`'s fallback guess of tomorrow morning. "Remind me what a closure is" names
 no time and stays a question, and switching the offered reminder off makes the sentence a question
 again. Preset wording can never qualify.
+
+**The cue and the time may arrive in two messages, because Max asks for the second one.** "Remind me
+to record demo" states no time, so it stays a question — and Max answers it by asking when. It could
+not then act on the reply: a bare "in 10 minutes" carries no cue, so each half alone was only ever a
+question and the conversation Max itself opened could not be finished. `ReminderPhrase.pendingRequest`
+holds the outstanding request and `isInstruction` lets a stated time complete it. This is still not
+inference acting: both halves are the user's own words, and Max asked for the second. Two bounds keep
+it that way. A message stating **no** time closes the request rather than leaving it open, or a time
+mentioned much later would attach itself to a subject the user had walked away from. And the save is
+filed under the *original* request rather than the typed field, because "in 10 minutes" is a time and
+not a reason anyone would want to read back later — which is why `saveCurrentContext` takes a `reason`
+override at all. Both functions are pure and tested; the view model only holds the outstanding string.
 
 **A reminder is set by the user, never by the parser.** `ReminderPhrase` reads a saved reason and may
 *offer* a time, but it only arms the reminder by default when the user actually used words like "remind
@@ -544,12 +588,20 @@ that button, so the user sees which words will be boxed before anything is drawn
 
 Matching is deliberately reluctant: a **quoted** label outranks everything, since `Prompt.system` asks
 Max to quote a control's label character for character, and that is the model stating what it meant
-rather than us inferring it from prose. An unquoted candidate must be six characters or multi-word and
-must not be one of `descriptiveWords` — "menu", "panel", "button" are how Max talks *about* controls, so
-matching them points at whatever unrelated place the word happens to be printed. An unlabelled glyph is
-therefore unfindable, which is the right failure: Max describes those positionally, and a confident box
-over the wrong icon is worse than no box. If a change would let an unexplained or unquoted guess draw on
-the screen, it is the wrong change.
+rather than us inferring it from prose. An unquoted candidate must be six characters or multi-word, must
+not be one of `descriptiveWords` — "menu", "panel", "button" are how Max talks *about* controls, so
+matching them points at whatever unrelated place the word happens to be printed — and must be
+**printed on screen the way a label is printed**, meaning a capital, an interior capital or a digit.
+
+That last rule replaced length doing the job alone, which was a poor proxy for being a name: "should",
+"before" and "because" all clear six characters. The observed failure was Max asking "When should I
+remind you?" and offering to point at "should" wherever it appeared. The cost is that an entirely
+lowercase label is now unfindable, which is the cheaper mistake — no box, rather than a confident one
+over unrelated running text — and quoting still overrides it, since that is Max stating what it meant.
+
+An unlabelled glyph is likewise unfindable, which is the right failure: Max describes those
+positionally, and a confident box over the wrong icon is worse than no box. If a change would let an
+unexplained or unquoted guess draw on the screen, it is the wrong change.
 
 ## Key files — `TodoCompanion/TodoCompanion/`
 

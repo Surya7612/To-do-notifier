@@ -1055,6 +1055,11 @@ mode of its own: schema is not behaviour.
 
 - [x] Delivery to other devices, by writing dated tasks into an iCloud
       Reminders list (`ReminderMirror`, `AppleReminders`)
+- [x] Handing a reminder over the moment it is set, and sweeping again at
+      launch, rather than only on summon
+- [x] Completing a reminder across two messages, since Max answers a request
+      with no time in it by asking when — and previously could not act on the
+      reply, so the conversation it opened could not be finished
 
 What is still genuinely remote-only, and therefore still open:
 
@@ -1076,11 +1081,20 @@ covered by a publish into Apple Reminders, on the same footing as
 
 That does not close the rest of this phase, and it is worth being clear about
 what it does not buy. There is no delivery state, so nothing here knows whether
-an alert was seen; there is no escalation and no retry; and the mirror is only
-as current as the last time the app was summoned, because this app reads the
-task list on summon rather than polling. A hosted scheduler is still the answer
-to those. It is no longer the answer to "I am not at my Mac", which was the only
-part of it the user actually felt.
+an alert was seen, and there is no escalation and no retry. A hosted scheduler is
+still the answer to those. It is no longer the answer to "I am not at my Mac",
+which was the only part of it the user actually felt.
+
+Tying the mirror to the summon alone was a real bug rather than a limitation,
+and it failed in precisely this phase's own case: a reminder reached Apple only
+once the Electron app had made a task of it *and* this app had been summoned
+again to read it back, so "remind me in two hours" said on the way out of the
+door never left the Mac. It is now handed over when it is set and swept again at
+launch. Neither is a poll — both happen because something happened — but the
+early hand-over needs `ProjectExport.anticipatedTasks`, because
+`ReminderMirror.plan` withdraws anything missing from the to-do app's list and
+would otherwise delete the reminder on the next sweep, before the other app
+(which may not be running) had created the task.
 
 Two consequences worth recording, because both are the kind of thing that reads
 as a broken feature rather than a refused one. Only tasks **still ahead** are
@@ -1504,26 +1518,32 @@ Possible future interactions:
 
 ---
 
-# 17. Immediate Next Step
+# 17. Where this stands
 
-Do not start with the full context system.
+The first milestone this section used to describe — project, floating panel, global hotkey,
+capture, model, response — has been true for a long time, as have Phases 0 through 10.
+What follows is what is actually left, and why each thing is left.
 
-Start here:
+**Open, and deliberately so.** Everything remaining in Phase 7 needs a server:
+a cloud reminder model, an email channel, retry, delivery state, escalation, and
+the experimental self-iMessage. The one part of that list anybody actually felt —
+"I am not at my Mac" — is answered by the Apple Reminders mirror without one. The
+rest buys knowing whether an alert was *seen*, and none of it is worth a hosted
+service and its running costs yet. iOS push (Phase 7, "Later") is the same
+answer: an iOS app is the honest way to do it, not a push certificate bolted to
+this one.
 
-```text
-Xcode macOS project
-        ↓
-Native floating companion
-        ↓
-Global hotkey
-        ↓
-Capture current screen
-        ↓
-Ask AI
-        ↓
-Native response bubble
-```
+**Closed rather than pending**, and not to be reopened without new information:
+proactive resurfacing (Phase 6) is closed *at its current form*, since without
+Accessibility the only trigger left is an app switch, which says nothing about
+need. Moving the user's cursor (Phase 10) is rejected outright. The focus session
+(Phase 3) belongs to the Electron app and stays there. Merging the two apps was
+measured and rejected; see §9 and the note in Phase 7.
 
-Once that works reliably, connect the companion to the existing To-Do Notifier data and begin adding persistent context.
-
-That is the first real milestone.
+**The real next step is not a feature.** Distribution is the binding constraint:
+`scripts/release-companion.sh` builds a DMG, but without the paid Apple Developer
+Program there is no Developer ID signing, no notarization, and no Sparkle
+updates, so every downloader must right-click → Open to get past Gatekeeper. That
+is the thing standing between this working well for one person and being usable
+by anyone else — which, by §14's own test, is the only measure that was ever
+worth anything here.

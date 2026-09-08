@@ -57,9 +57,24 @@ enum AppleReminders {
 
     /// Asked the first time the user turns mirroring on, next to the switch
     /// that needs it, rather than at launch.
-    static func requestAccess() async -> Bool {
+    /// The error is propagated rather than swallowed because the two failures
+    /// need different words in front of the user: access refused is something
+    /// they can go and change in System Settings, and a thrown error is usually
+    /// a misconfiguration on this side that they cannot.
+    static func requestAccess() async throws -> Bool {
         if isAuthorized { return true }
-        return (try? await store.requestFullAccessToReminders()) ?? false
+
+        guard try await store.requestFullAccessToReminders() else { return false }
+
+        // A store that existed before the grant keeps the empty `sources` it was
+        // born with, and this one is created by the request itself. Without a
+        // reset every later lookup reports no Reminders account, so the switch
+        // turns itself back off in the same motion that just granted access —
+        // and it then works on the next launch, when the store is built after
+        // the grant, which makes the failure look intermittent rather than
+        // ordered.
+        store.reset()
+        return true
     }
 
     /// Which account the list lives in, and therefore whether it travels.
