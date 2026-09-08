@@ -253,7 +253,6 @@ final class CompanionViewModel {
                                                    among: recentContexts(),
                                                    inProject: currentProject)
                 linkedWork = TodoBridge.load()
-                handOverAdoptedReminders()
                 if phase == .reading { phase = .idle }
 
                 // Both run after the panel is already usable. Meaning matching
@@ -728,27 +727,6 @@ final class CompanionViewModel {
 
         if let reminder {
             scheduleReminder(for: record, at: reminder, destination: destination, tagSuffix: tagSuffix)
-        }
-    }
-
-    /// Stops notifying for a reminder the to-do app has taken over.
-    ///
-    /// A reminder set here is published as a task request, and that app creates
-    /// a real task from it — which means it will notify. This app keeps its own
-    /// notification until it can *see* that task, rather than standing aside as
-    /// soon as it publishes the request: the other app imports on launch and on
-    /// focus, so somebody who does not open it for a week would otherwise be
-    /// reminded of nothing at all. A reminder is a promise this app made, and a
-    /// silent failure is the one outcome worse than a duplicate ping.
-    ///
-    /// Cancelling is idempotent, so this runs on every summon without keeping
-    /// track of what it has already handed over.
-    private func handOverAdoptedReminders() {
-        let adopted = ProjectExport.adoptedReminderIdentifiers(
-            inTodoIDs: linkedWork.todos.map(\.id)
-        )
-        for identifier in adopted {
-            Reminders.cancel(id: identifier)
         }
     }
 

@@ -214,10 +214,13 @@ cannot write that app's data file, so it publishes the request and the To-Do Not
 itself — the same "propose, don't write" rule that governs file edits. If the save was filed under a
 project, the task carries that project's label.
 
-Once the task exists, the To-Do Notifier does the notifying and the companion cancels its own, so one
-thing pings once. It waits until it can actually see the task rather than standing aside as soon as it
-publishes: the other app imports when it launches and when its window comes forward, so handing over
-any earlier would mean no reminder at all for anyone who doesn't open it for a week.
+The **notification comes from the companion**, which scheduled it the moment you set the reminder. The
+To-Do Notifier shows the task, sorts it and lets you complete it, but stays quiet about it, so one
+thing pings once and you always know which app to go to if you want that changed.
+
+The To-Do Notifier picks up new requests when it starts and every half minute after, so it does not
+have to be open at the time. A reminder whose time has already passed still becomes a task — overdue,
+which is how that list already talks about anything you missed.
 
 ### Projects
 

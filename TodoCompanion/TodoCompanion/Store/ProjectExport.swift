@@ -18,11 +18,26 @@ enum ProjectExport {
 
     /// What the to-do app prefixes onto a task it created from a request.
     ///
-    /// Part of the contract rather than that app's private business, because
-    /// this app reads it back: a prefixed id appearing over there is how it
-    /// learns a reminder has been taken over. Mirrored in
-    /// `electron/lib/companionTasks.cjs`, and the two must agree.
+    /// Part of the contract rather than that app's private business. This app
+    /// derives the same id to put in a project's published task list, and the
+    /// other app matches on it to leave the announcing to this one. Mirrored in
+    /// `electron/lib/companionTasks.cjs`; if the two drift, one reminder is
+    /// announced twice.
     static let importedTaskPrefix = "companion:"
+
+    /// How long a reminder keeps being offered after its time has passed.
+    ///
+    /// Not zero, which is what it effectively was before, and that was a real
+    /// bug for short reminders: "remind me in one minute" dropped out of the
+    /// export a minute later, so unless the to-do app happened to be opened
+    /// inside that minute the task was never created at all. A fired reminder
+    /// is still worth offering — an overdue task is precisely what the other
+    /// app is good at putting in front of someone.
+    ///
+    /// Bounded rather than indefinite, because the import keys on a stable id:
+    /// a task deleted over there would otherwise return on every launch for
+    /// good.
+    static let offerWindowAfterDue: TimeInterval = 7 * 24 * 60 * 60
 
     /// Bumped only for a change a reader could not survive. The to-do app is
     /// written to ignore fields it does not recognize, so adding one is not
@@ -86,12 +101,9 @@ enum ProjectExport {
     static func payload(for projects: [Project],
                         pendingReminders: [SavedContext] = [],
                         now: Date = Date()) -> Payload {
-        // Only reminders still ahead of us. One that has already fired is
-        // history, and publishing it would ask the other app to create a task
-        // that was due in the past — which, being keyed on a stable id, it
-        // would then keep forever.
+        let stillOffered = now.addingTimeInterval(-offerWindowAfterDue)
         let offered = pendingReminders.filter { record in
-            guard let dueAt = record.remindAt, dueAt > now else { return false }
+            guard let dueAt = record.remindAt, dueAt > stillOffered else { return false }
             return !record.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
 
@@ -120,20 +132,6 @@ enum ProjectExport {
                 }
                 .sorted { $0.dueAt < $1.dueAt }
         )
-    }
-
-    /// Which reminders the to-do app has made tasks of.
-    ///
-    /// The other half of the hand-over. Once a task exists over there, that app
-    /// is the one that will notify, so this one cancels its own — but not a
-    /// moment sooner, since a reminder nobody fires is worse than one fired
-    /// twice.
-    static func adoptedReminderIdentifiers(inTodoIDs ids: [String]) -> Set<String> {
-        Set(ids.compactMap { id in
-            guard id.hasPrefix(importedTaskPrefix) else { return nil }
-            let identifier = String(id.dropFirst(importedTaskPrefix.count))
-            return identifier.isEmpty ? nil : identifier
-        })
     }
 
     static func encode(_ payload: Payload) throws -> Data {

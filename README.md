@@ -83,8 +83,9 @@ Reminders cross the same way, and it is worth being precise about how. Saying "r
 bugs at 10" to the companion creates a **real task here**, completable like any other — but the
 companion does not create it. It publishes the request, and this app, which owns `app-data.json`, makes
 the task itself. Importing rather than mirroring is the whole point: a read-only list would have looked
-identical and could not have been ticked off. Once the task exists this app does the notifying and the
-companion cancels its own, so one thing pings once.
+identical and could not have been ticked off. The announcing stays with the companion, which scheduled
+a notification when the reminder was set, so this app's nag sweep skips those tasks and one thing pings
+once.
 
 ### Inside the Electron app
 

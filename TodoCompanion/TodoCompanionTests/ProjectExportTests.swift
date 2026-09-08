@@ -115,12 +115,26 @@ import Testing
         #expect(payload.requestedTasks.first?.title == "Text voice bugs")
     }
 
-    @Test func aFiredReminderIsNoLongerOffered() {
-        // Publishing one already past would ask the other app to create a task
-        // that was due yesterday — and, being keyed on a stable id, it would
-        // then keep it forever.
+    @Test func aJustFiredReminderIsStillOffered() {
+        // The bug this fixes was total for short reminders: offering only
+        // future ones meant "remind me in one minute" left the export a minute
+        // later, so the task was never created unless the other app happened to
+        // be opened inside that minute. It shows there as overdue, which is
+        // that app's whole idiom.
         let payload = ProjectExport.payload(for: [], pendingReminders: [
-            reminder("Already happened", dueIn: -3_600),
+            reminder("Revisit the code", dueIn: -3_600),
+        ])
+
+        #expect(payload.requestedTasks.count == 1)
+    }
+
+    @Test func aLongStaleReminderIsDropped() {
+        // Bounded because the import keys on a stable id: a task the user
+        // deleted over there would otherwise come back on every launch, for
+        // good.
+        let stale = -ProjectExport.offerWindowAfterDue - 60
+        let payload = ProjectExport.payload(for: [], pendingReminders: [
+            reminder("Ancient history", dueIn: stale),
         ])
 
         #expect(payload.requestedTasks.isEmpty)
@@ -177,27 +191,10 @@ import Testing
         #expect(ISO8601DateFormatter().date(from: dueAt) != nil)
     }
 
-    @Test func readsBackWhichRemindersTheOtherAppTookOver() {
-        // How this app learns it can stop notifying for one.
-        let adopted = ProjectExport.adoptedReminderIdentifiers(inTodoIDs: [
-            "companion:abc",
-            "companion:def",
-            "an-ordinary-task",
-            "companion:",
-        ])
-
-        #expect(adopted == ["abc", "def"])
-    }
-
-    @Test func aTaskThisAppNeverAskedForIsNotAHandOver() {
-        // Cancelling on a loose prefix match would silence a reminder the other
-        // app knows nothing about.
-        #expect(ProjectExport.adoptedReminderIdentifiers(inTodoIDs: ["abc", ""]).isEmpty)
-    }
-
     @Test func theImportPrefixMatchesTheOtherApp() {
-        // Mirrored in electron/lib/companionTasks.cjs. If these drift, this app
-        // stops recognising a hand-over and every reminder fires twice.
+        // Mirrored in electron/lib/companionTasks.cjs, where it is what stops
+        // that app nagging about a task this one already announces. If the two
+        // drift, one reminder is announced twice.
         #expect(ProjectExport.importedTaskPrefix == "companion:")
     }
 

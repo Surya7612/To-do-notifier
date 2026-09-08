@@ -105,9 +105,14 @@ describe("importing the companion's reminder requests", () => {
   });
 
   it("recognises its own ids, and only its own", () => {
+    // The reminder sweep skips these, because the companion already scheduled
+    // a notification when the user set the reminder. A false negative here
+    // announces one thing twice; a false positive silences a task this app
+    // created itself.
     expect(companionTodoId("abc")).toBe("companion:abc");
     expect(isCompanionTodoId("companion:abc")).toBe(true);
     expect(isCompanionTodoId("abc")).toBe(false);
+    expect(isCompanionTodoId("my-companion:abc")).toBe(false);
     expect(isCompanionTodoId(undefined)).toBe(false);
   });
 });

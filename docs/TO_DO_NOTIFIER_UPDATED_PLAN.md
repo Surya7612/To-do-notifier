@@ -1092,7 +1092,8 @@ does not own. Completing a task stays where tasks live.
 - [x] Tests on both sides of the contract
 - [x] Publish reminders as task requests, and create real tasks from them there
       (`electron/lib/companionTasks.cjs`), keyed on the reminder's own identifier
-- [x] Hand the notification over once the task exists, so one thing pings once
+- [x] Keep the announcing in the companion, and skip those tasks in the to-do
+      app's nag sweep, so one thing pings once
 
 A grouping only the companion could see was half a feature: the point of putting
 tasks in a project is to look at that project's work, and the to-do list is where
@@ -1134,18 +1135,33 @@ where a read-only list would have looked identical and done none of it. The
 companion still never writes `app-data.json`.
 
 Idempotency rests on the id — `companion:` plus the reminder's own identifier,
-which is stable across launches and store migrations. The import runs on launch
-and on every window focus, and a reminder stays published until it fires, so
-anything less stable would add the same task over and over. An already-imported
-id counts whether the task is open or **done**: bringing back something the user
-has ticked off is the failure that would make this unusable.
+which is stable across launches and store migrations. The import runs repeatedly
+by design, so anything less stable would add the same task over and over. An
+already-imported id counts whether the task is open or **done**: bringing back
+something the user has ticked off is the failure that would make this unusable.
 
-The notification is handed over rather than split. The to-do app owns it once the
-task exists, so the companion cancels its own — but only when it can *see* that
-task through the read-only bridge, not when it publishes the request. That app
-imports on launch and on focus, so standing aside any earlier would leave someone
-who does not open it for a week with no reminder at all, and a reminder is a
-promise the app made.
+Two things were got wrong first time round and are worth recording, because both
+failed *silently* in the direction of the feature appearing not to exist.
+
+The import was hung off the to-do panel mounting, so it only ran when that panel
+was on screen — and the app can start hidden into the tray, with no window at
+all. It now runs in the main process, at startup and on the same tick as the
+reminder sweep; the IPC handler remains only so that returning to the window
+picks up something set moments ago. And only *future* reminders were published,
+which meant "remind me in one minute" left the export a minute later: unless the
+to-do app happened to be open inside that minute, the task was never created. A
+fired reminder is now still offered for a bounded window, and arrives overdue —
+which is how that list already talks about anything missed. Bounded, because the
+import keys on a stable id, so an unbounded offer would resurrect a task the user
+deleted, forever.
+
+The notification stays with the companion, which scheduled it when the user set
+the reminder; the to-do app shows and completes the task but skips it in its nag
+sweep. The first design handed ownership over instead — the companion watched for
+the task through the read-only bridge and then cancelled its own notification —
+which worked, but made delivery of a reminder depend on whether a second app had
+run yet. Stating ownership once, in the app that took the request, does the same
+job with none of that.
 
 Later:
 
