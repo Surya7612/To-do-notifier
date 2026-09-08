@@ -160,7 +160,9 @@ me". A date noticed in passing — "notes from tomorrow's standup" — is offere
 time is always displayed, along with the words it came from, so the app's reading is visible rather than
 applied silently. This is the core principle applied to scheduling: inference may suggest, not act.
 Note that `NSDataDetector` takes no reference date and always resolves relative words against the system
-clock, which is why the tests assert relative facts instead of fixed timestamps.
+clock, which is why the tests assert relative facts instead of fixed timestamps. A fixture that states a
+clock time has to state a future day alongside it for the same reason: a stated hour already gone is
+rejected by design, so `"at 10 AM today"` made the suite pass every morning and fail every afternoon.
 
 **Who answers is switchable from the panel, not only from Settings.** The badge in the panel header is a
 menu, because the choice is per-question in practice: the local model reads text back fine and is worth
@@ -191,6 +193,22 @@ this app otherwise is, and strictly better than a control that does nothing.
 Consequence for the sandbox: user-selected files are entitled **read-write**, not read-only, because
 `InboxImporter` deletes what it has imported. Read-only would have let the import succeed and the
 delete fail silently, re-importing the same capture on every summon.
+
+The same rule reaches ordinary windows, which is subtler because they look fine. An accessory app is
+never frontmost, so macOS gives its windows no key focus: they draw correctly and they take mouse
+clicks, so toggles, buttons and pickers all work, and only **text fields** are dead — they accept the
+click, show no caret, and silently swallow typing. `SettingsView` therefore activates on appear, as
+`LibraryMenuButton` already did. A window where every control works except the ones needing a keyboard
+is this bug, not a SwiftUI binding problem.
+
+**The OpenAI model is picked from a list, not typed.** `OpenAIModelChoice.all` is fixed rather than
+fetched from `/v1/models`, because that endpoint only answers for a key that already works — the
+picker would be empty in exactly the state a new user is in — and it returns every model the key can
+reach, including embedding, audio and image models this app cannot call, so most of the list would be
+wrong answers presented as choices. `Selection.custom` keeps a model newer than the build reachable
+without an update, and the legacy default is listed so an existing setting shows as itself rather than
+as something the user typed. The blurbs describe the tier and deliberately quote **no prices**: these
+rates were cut twice in one quarter, and a stale number in the UI is worse than none.
 
 **A question is a conversation, not a lookup.** Every summon used to be one-shot, which made the panel
 useless for the thing it is best at: standing next to an unfamiliar interface and being asked "now
@@ -345,7 +363,7 @@ the screen, it is the wrong change.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~240 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `App/SettingsView.swift` | ~274 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
 | `Companion/CompanionView.swift` | ~627 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
@@ -359,6 +377,7 @@ the screen, it is the wrong change.
 | `Brain/Brain.swift` | ~254 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, and the file-editing rules. |
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
+| `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
 | `Voice/SpeechPlayback.swift` | ~116 | Reads answers aloud with `AVSpeechSynthesizer`, sentence by sentence, on device. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
@@ -430,6 +449,7 @@ What is covered, and why these pieces specifically:
 | `ScreenRectTests` | Normalized box → screen coordinates | Vision and AppKit share a bottom-left origin where `cropped(to:)` needs a flip, so the mistake is a box a mirrored distance up the screen, which looks plausible. Also pins that a cropped capture maps into the *selection*. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
+| `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |

@@ -33,9 +33,14 @@ struct ReminderPhraseTests {
     /// app declining to do what it had plainly been told. The line is drawn at
     /// an explicit cue *and* a stated time, so a question that happens to
     /// contain "remind me" is still a question.
+    ///
+    /// The reported sentence said "today", and the test deliberately does not:
+    /// a stated hour that has already passed is rejected by design, so the
+    /// original wording made this pass before 10 AM and fail after it. What is
+    /// under test is a stated clock time, not which day it lands on.
     @Test("an explicit cue with a stated time is an instruction")
     func instructionNeedsBothCueAndTime() throws {
-        let instruction = try #require(suggestion("remind me to text voice bugs at 10 AM today"))
+        let instruction = try #require(suggestion("remind me to text voice bugs tomorrow at 10 AM"))
         #expect(instruction.wasExplicitlyRequested)
         #expect(instruction.matchedText != nil, "the time has to come from the sentence")
 

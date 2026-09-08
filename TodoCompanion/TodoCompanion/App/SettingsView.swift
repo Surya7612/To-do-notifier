@@ -1,3 +1,4 @@
+import AppKit
 import AVFAudio
 import SwiftUI
 
@@ -22,6 +23,10 @@ struct SettingsView: View {
     @State private var canImportKey = false
     @State private var inboxFolder: String?
     @State private var inboxWaiting = 0
+
+    /// Derived from the stored name on appear rather than persisted, since
+    /// "custom" is a state of this window and not a preference.
+    @State private var modelSelection = OpenAIModelChoice.Selection.custom
 
     var body: some View {
         Form {
@@ -116,7 +121,29 @@ struct SettingsView: View {
             }
 
             Section("OpenAI") {
-                TextField("Model", text: $openAIModel)
+                Picker("Model", selection: $modelSelection) {
+                    ForEach(OpenAIModelChoice.all) { choice in
+                        Text(choice.displayName)
+                            .tag(OpenAIModelChoice.Selection.known(choice.id))
+                    }
+                    Divider()
+                    Text("Custom…").tag(OpenAIModelChoice.Selection.custom)
+                }
+                .onChange(of: modelSelection) { _, newSelection in
+                    // Custom deliberately leaves the stored name alone, so
+                    // switching to it and back does not discard a typed one.
+                    if case .known(let chosenModel) = newSelection { openAIModel = chosenModel }
+                }
+
+                if modelSelection == .custom {
+                    TextField("Model name", text: $openAIModel, prompt: Text("gpt-5.6-…"))
+                }
+
+                if let choice = OpenAIModelChoice.named(openAIModel) {
+                    Text("\(choice.id) — \(choice.detail)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 HStack {
                     SecureField(keyIsStored ? "Stored in Keychain" : "sk-…", text: $apiKey)
@@ -209,7 +236,7 @@ struct SettingsView: View {
             Section("Screen context") {
                 Toggle("Send the screenshot instead of on-device text", isOn: $sendsImage)
                 Text(sendsImage
-                     ? "Needed for OpenAI to see the screen, and for local vision models such as llava or qwen2.5vl."
+                     ? "Needed for OpenAI to see the screen, and for a local vision model such as qwen3-vl."
                      : "Screenshots stay on this Mac; only recognized text reaches the model.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -218,6 +245,13 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 480)
         .onAppear {
+            // An accessory app is never a normal foreground application, so
+            // macOS hands this window no key focus: it draws, and it takes
+            // mouse clicks on toggles and buttons, but every text field silently
+            // swallows typing. The library window activates for the same reason.
+            NSApp.activate(ignoringOtherApps: true)
+
+            modelSelection = OpenAIModelChoice.selection(for: openAIModel)
             keyIsStored = AppSettings.openAIKey != nil
             refreshLinkedSummary()
             refreshInbox()

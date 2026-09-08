@@ -139,10 +139,14 @@ leaving for a diagram or an interface it has never seen.
 
 The same menu carries **Send the screenshot**, which decides whether a visual question can be
 answered at all — without it OpenAI receives only the recognized text and guesses at anything that is
-not words. Locally it needs a vision model (`llava`, `qwen2.5vl`) to be worth turning on.
+not words. Locally it needs a vision model (`qwen3-vl`) to be worth turning on.
 
 Selecting OpenAI without saving a key falls back to the local model, and the badge says so rather
 than quietly reading "Local".
+
+Which OpenAI model answers is chosen in Settings, from a short list with a note on what each is good
+for. The list is fixed rather than read from your account, so it is useful before a key is saved;
+pick **Custom…** to name a model released after this build.
 
 ## Remembering
 
