@@ -8,7 +8,7 @@ enum ContextStore {
     static let shared: ModelContainer = makeContainer()
 
     private static func makeContainer() -> ModelContainer {
-        let schema = Schema([SavedContext.self, Project.self])
+        let schema = Schema([SavedContext.self, Project.self, ConversationTurn.self])
         do {
             return try ModelContainer(for: schema)
         } catch {

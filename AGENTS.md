@@ -236,6 +236,26 @@ first) and refuses an unterminated fence outright, since a truncated file writte
 the worst outcome available here. An identical rewrite is discarded rather than offered, and `revert`
 restores the file as it was before the conversation touched it rather than undoing one step of several.
 
+**A conversation is kept because the screen was kept.** `ConversationTurn` is written only by ⌘S,
+never automatically. Most summons are throwaway, and storing every one would fill the library with
+material nobody chose to keep — the opposite of how the rest of the app works, where the user states
+what matters. Ordering is an explicit `order` field because SwiftData to-many relationships come back
+unordered, which would otherwise print a follow-up before the question it followed. The transcript
+joins `searchHaystack`, since "I remember discussing this" is a real way to look for something, but is
+deliberately kept out of `embeddingSource`: most of its length is the *model's* words, and embedding
+those would let what Max said decide what gets resurfaced, when that field exists so the user's stated
+reason drives retrieval.
+
+**The graph is a view, not a database.** The plan rejects Neo4j, and the edges already exist in
+SwiftData — a save belongs to a project, carries the user's `#tags`, and records the app it came from.
+A graph store would add a server and a query language without adding one edge. What was missing was a
+way to *see* them, so `ContextGraph` flattens the models into value types and `GraphLayout` runs a
+deterministic Fruchterman–Reingold placement over them. Deterministic matters: reopening the window
+gives the same picture, so spatial memory of your own material is worth building. A layout that
+settles somewhere new each time looks impressive once and is useless twice. Rendered in a `Canvas`
+rather than as views, because a few hundred `View` identities with their own animation machinery
+stutter where an immediate-mode draw does not.
+
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
@@ -251,7 +271,7 @@ from the screenshot along with the panel.
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
 | `Companion/CompanionView.swift` | ~605 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~851 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, and proposed file edits. |
+| `Companion/CompanionViewModel.swift` | ~872 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, and proposed file edits. |
 | `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
@@ -261,12 +281,13 @@ from the screenshot along with the panel.
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Voice/SpeechPlayback.swift` | ~116 | Reads answers aloud with `AVSpeechSynthesizer`, sentence by sentence, on device. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
-| `Store/SavedContext.swift` | ~170 | SwiftData models (`SavedContext`, `Project`) and hashtag parsing. |
+| `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
 | `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
+| `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
 | `Store/Embedding.swift` | ~58 | Normalized vector, cosine similarity, and blob storage. Pure. |
 | `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
@@ -279,7 +300,8 @@ from the screenshot along with the panel.
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
 | `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |
 | `Hotkey/HotkeyChoice.swift` | ~45 | The vetted list of non-reserved shortcuts. |
-| `Library/LibraryView.swift` | ~614 | Browse by project, search, reassign, rename, and delete saved contexts. Project overview pairs what was kept with the project's open tasks. |
+| `Library/GraphView.swift` | ~203 | `Canvas` rendering of the graph, with hover to trace a connection. |
+| `Library/LibraryView.swift` | ~656 | Browse by project, search, reassign, rename, and delete saved contexts. Project overview pairs what was kept with the project's open tasks. |
 
 ## Build & run
 
@@ -321,6 +343,8 @@ What is covered, and why these pieces specifically:
 | `SavableReasonTests` | What a save is filed under | Decides which words get stored as the user's own. Pins that preset wording never can be, which is the app's central promise in the one place a convenience could quietly break it. |
 | `TextDiffTests` | Line diff and hunk grouping | This is the safety mechanism for file edits, not a presentation detail — a diff that under-reported a change would get one applied that nobody agreed to. |
 | `CodeBlockTests` | Pulling the file out of a reply | A model's reply is prose with a file inside it. Extracting wrongly means writing prose, or half a file, over the user's code, so an unterminated fence must yield nothing. |
+| `ContextGraphTests` | Nodes and edges built from saves | A wrong edge is a wrong claim about how the user's material relates, and it is drawn large enough to be believed. Pins that shared tags collapse to one node and that filtering a kind removes its edges too. |
+| `GraphLayoutTests` | Force-directed placement | No assertable "correct" coordinates, so it pins the properties that make it usable: everything placed, nothing off-canvas, connected nodes closer than unconnected, and the same picture every time. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |

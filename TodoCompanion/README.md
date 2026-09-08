@@ -55,6 +55,11 @@ afterwards files the save under the first question you typed rather than refusin
 is never used that way: "Explain what this is" is the app's sentence, not yours, and only your own
 words are ever stored as your reason for keeping something.
 
+Pressing **⌘S** keeps the transcript along with the screen it was about. Conversations are never
+saved on their own: most summons are throwaway, and filling the library with material you did not
+choose to keep is the opposite of how the rest of this works. It rides along with the decision you
+already make.
+
 ### Hearing it
 
 Turn on **Have Max read answers out loud** in Settings and answers are spoken as they arrive, a
@@ -172,6 +177,20 @@ whole library, not a single deliberate ask.
 Off by default, because it needs that second model and a feature that silently does nothing until an
 unrelated command is run is worse than one you turned on deliberately.
 
+## Seeing how it connects
+
+The library has a **Connections** button. It draws what you kept as a graph: each save, the project
+it belongs to, the `#tags` you gave it, and the app it came from. Hovering a node dims everything it
+does not touch, so you can follow one thread; clicking a save opens it. Projects, topics and apps can
+each be switched off when the picture gets busy.
+
+There is no graph database behind this and there isn't going to be. Those relationships already exist
+in SwiftData, so Neo4j would add a server and a query language without adding a single edge — the
+plan says as much. What was actually missing was a way to look at them.
+
+The layout is deterministic. Reopening the window gives you the same picture, which is what makes it
+worth learning the shape of; a simulation that settles somewhere new every time is impressive once.
+
 ## Requirements
 
 - macOS 26.5 or later (the project's deployment target)
@@ -284,7 +303,7 @@ put is the only signal anything went wrong.
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
 | `Voice/` | On-device dictation, input level metering, and spoken answers |
 | `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
-| `Library/` | Browse, search, and manage what you've kept |
+| `Library/` | Browse, search, graph, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |
 | `Support/` | Settings, design tokens, Keychain, notifications, image encoding |
 

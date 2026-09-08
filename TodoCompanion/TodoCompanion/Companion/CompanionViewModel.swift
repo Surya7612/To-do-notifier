@@ -510,6 +510,26 @@ final class CompanionViewModel {
         }
     }
 
+    /// Stores what was said about the screen being saved.
+    ///
+    /// Preset turns are kept here even though preset wording may never become
+    /// the *stated reason* — the transcript is a record of what happened, and
+    /// pressing "Explain" is part of what happened. The distinction the app
+    /// protects is about whose words are presented as the user's, and a
+    /// transcript attributes every line to whoever said it.
+    private func attachConversation(to record: SavedContext) {
+        // An in-flight turn has no answer yet. Storing half an exchange would
+        // read later as Max having been asked something and said nothing.
+        let finished = turns.filter { !$0.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !finished.isEmpty else { return }
+
+        for (order, turn) in finished.enumerated() {
+            let stored = ConversationTurn(question: turn.question, answer: turn.answer, order: order)
+            stored.context = record
+            modelContext.insert(stored)
+        }
+    }
+
     private func recordAnswer(_ text: String, for turnID: UUID) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].answer = text
@@ -563,6 +583,7 @@ final class CompanionViewModel {
         record.project = currentProject
 
         modelContext.insert(record)
+        attachConversation(to: record)
         do {
             try modelContext.save()
         } catch {

@@ -25,6 +25,9 @@ struct LibraryView: View {
     /// models so a store change cannot leave this holding stale objects.
     @State private var semanticMatchIDs: [PersistentIdentifier] = []
 
+    /// Whether the detail pane is showing the graph instead of one save.
+    @State private var isShowingGraph = false
+
     /// Which slice of the library the sidebar is showing.
     private enum Scope: Hashable {
         case everything
@@ -122,7 +125,17 @@ struct LibraryView: View {
             }
             .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         } detail: {
-            if let selection {
+            if isShowingGraph {
+                GraphView(contexts: inScope) { identifier in
+                    // Tapping a save in the graph is a way of navigating to it,
+                    // so it leaves the graph rather than selecting invisibly
+                    // behind it.
+                    if let match = contexts.first(where: { $0.reminderIdentifier == identifier }) {
+                        selection = match
+                        isShowingGraph = false
+                    }
+                }
+            } else if let selection {
                 ContextDetailView(context: selection)
             } else if case let .project(identifier) = scope,
                       let project = projects.first(where: { $0.identifier == identifier }) {
@@ -140,6 +153,14 @@ struct LibraryView: View {
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")
         .frame(minWidth: 820, minHeight: 520)
         .toolbar {
+            ToolbarItem {
+                Button {
+                    isShowingGraph.toggle()
+                } label: {
+                    Label("Connections", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .help("See how projects, topics and apps connect what you kept")
+            }
             ToolbarItem {
                 Menu {
                     Button("New project…") { isNamingProject = true }
@@ -518,6 +539,27 @@ private struct ContextDetailView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                    }
+                }
+
+                if !context.conversation.isEmpty {
+                    section("What you asked about it") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(context.orderedConversation) { turn in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    // Attributed on both sides, because a
+                                    // transcript is the one place the user's
+                                    // words and the model's sit together.
+                                    Text(turn.question)
+                                        .font(.callout.weight(.medium))
+                                    Text(turn.answer)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
                 }
 

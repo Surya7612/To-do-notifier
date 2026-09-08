@@ -1128,6 +1128,25 @@ unfamiliar interface while you are taken through it.
 - [x] A named assistant, Max, as tone in the prompt and the UI
 - [x] Spoken answers, local, off by default (see Phase 2)
 - [x] A proposed change to one user-picked file, applied only from a diff
+- [x] Conversations kept with the save they were about (`ConversationTurn`)
+- [x] A graph view of saves, projects, topics and apps, on the existing
+      relationships rather than a graph database
+
+**Conversations are kept, not collected.** §2 always listed conversations among
+the things the context layer should relate, and Phase 9 initially built them as
+panel state that Esc discarded. They are now written by ⌘S and only by ⌘S: most
+summons are throwaway, and saving all of them would fill the library with
+material the user never chose to keep, which inverts the rule the rest of the
+app runs on. The transcript joins literal search but deliberately not the
+embedding source — most of its length is the model's words, and embedding those
+would let what Max said drive what gets resurfaced.
+
+**The graph needed a view, not a store.** §7 says not to introduce Neo4j merely
+because relationships exist, and this is the check on that: the edges were
+already there in SwiftData, so a graph database would have added infrastructure
+and no information. The layout is deterministic so the same library always draws
+the same picture, which is the difference between a diagram you can learn and
+one that is only a demo.
 
 **History is capped.** The screen text already dominates the prompt, so an
 unbounded transcript would push it out of a small local model's context window
