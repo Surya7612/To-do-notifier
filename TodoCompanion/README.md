@@ -359,7 +359,9 @@ Build it once on the phone, in the Share Sheet so it can accept a screenshot:
    | `source` | `iPhone` |
 
 5. **Save File** into the folder you linked, with **Ask Where to Save** off and the name set to
-   anything unique — the date works.
+   anything unique that **ends in `.json`** — the date works, so `2026-09-08T15-06-00.json`. The
+   extension is not cosmetic: the importer only looks at `.json` files, so a manifest saved without
+   it is skipped silently and Settings will report nothing waiting while the file sits in the folder.
 
 Use the **Dictionary** action rather than building the JSON as text. Shortcuts serializes a dictionary
 correctly, whereas a text template breaks the moment your reason contains a quote or a newline.
