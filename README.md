@@ -39,7 +39,7 @@ The native companion has [its own README](TodoCompanion/README.md).
 
 | Area | Behavior |
 | --- | --- |
-| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications; project labels and filter from the companion |
+| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications; project labels and filter from the companion, and reminders it asked to be turned into tasks |
 | **Focus** | Pomodoro timer with optional ambient sound |
 | **Companion** | Always-on desktop pet (drag anywhere; corner / perch / body-double modes) |
 | **Voice** | **⌘G** talk / **Esc** stop — commands + short chat over open work |
@@ -68,7 +68,7 @@ flowchart LR
 
   subgraph C["TodoCompanion — owns the context"]
     CD[("SwiftData<br/>saves · projects · transcripts")]
-    CP[("companion-projects.json<br/>project list")]
+    CP[("companion-projects.json<br/>projects · reminders to import")]
   end
 
   ED -->|"read-only, via security-scoped bookmark"| CD
@@ -78,6 +78,13 @@ flowchart LR
 
 So a project created in the companion appears here as a label and filter on the tasks you put in it,
 and a task deleted here simply stops resolving over there.
+
+Reminders cross the same way, and it is worth being precise about how. Saying "remind me to text voice
+bugs at 10" to the companion creates a **real task here**, completable like any other — but the
+companion does not create it. It publishes the request, and this app, which owns `app-data.json`, makes
+the task itself. Importing rather than mirroring is the whole point: a read-only list would have looked
+identical and could not have been ticked off. Once the task exists this app does the notifying and the
+companion cancels its own, so one thing pings once.
 
 ### Inside the Electron app
 
@@ -227,6 +234,9 @@ The companion's suite covers pure logic only — no screen, no microphone, no mo
 runs in well under a second. `electron/lib/companionProjects.test.ts` and `ProjectExportTests` are the
 two halves of the same cross-language contract, pinning the published JSON's keys on one side and
 every shape of bad input on the other, since neither language compiles against the other.
+`electron/lib/companionTasks.test.ts` covers the reminder import, where a mistake is persisted and
+compounding rather than wrong once — importing twice on every window focus, or resurrecting a task
+already completed.
 
 ---
 

@@ -98,6 +98,22 @@ export interface AppSettings {
  * owns the grouping; this app owns the tasks and only resolves `todoIDs`
  * against them. Neither writes the other's file.
  */
+/**
+ * A reminder set in the companion, offered here as a task.
+ *
+ * Offered rather than written: the companion cannot touch `app-data.json`, so
+ * it publishes these and this app creates tasks of its own from them. That is
+ * what makes them completable here like anything else, where a mirrored
+ * read-only list would have looked identical and done nothing.
+ *
+ * `title` is the user's own stated reason, never the companion's AI summary.
+ */
+export interface CompanionTaskRequest {
+  id: string;
+  title: string;
+  dueAt: string;
+}
+
 export interface CompanionProject {
   id: string;
   name: string;

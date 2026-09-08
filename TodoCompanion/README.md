@@ -208,6 +208,17 @@ Reminders are local notifications, so they need this Mac awake when they fire.
 Reminders respect the quiet hours you configured in the To-Do Notifier, and a reminder landing inside
 that window shows the moved time rather than the one you asked for.
 
+A reminder also **becomes a real task in the To-Do Notifier**, so "remind me to text voice bugs" shows
+up in the list you actually work from and can be ticked off there like anything else. The companion
+cannot write that app's data file, so it publishes the request and the To-Do Notifier creates the task
+itself — the same "propose, don't write" rule that governs file edits. If the save was filed under a
+project, the task carries that project's label.
+
+Once the task exists, the To-Do Notifier does the notifying and the companion cancels its own, so one
+thing pings once. It waits until it can actually see the task rather than standing aside as soon as it
+publishes: the other app imports when it launches and when its window comes forward, so handing over
+any earlier would mean no reminder at all for anyone who doesn't open it for a week.
+
 ### Projects
 
 A project is a named thing you are working on. You pick the current one in the panel before saving,
@@ -326,8 +337,13 @@ In Settings, point **Your to-do app** at the Electron app's `app-data.json`, nor
 sandboxed app access, so it cannot be done silently.
 
 The companion then reads your open tasks, notes, and quiet-hours setting — and only ever reads them.
-Traffic in the other direction is a separate file it writes with its project list, which the Electron
-app reads. Each app owns one file and reads the other's; neither writes the other's.
+Traffic in the other direction is a separate file it writes, carrying its project list and any
+reminders it would like turned into tasks, which the Electron app reads and acts on. Each app owns one
+file and reads the other's; neither writes the other's.
+
+That asymmetry is the reason for the shape of it. `app-data.json` belongs to a running Electron process
+that holds it in memory and rewrites it whole, with no locking between the two apps, so a second writer
+would eventually lose an edit or truncate the file.
 
 ## Capturing from your phone
 

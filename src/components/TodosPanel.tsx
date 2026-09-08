@@ -4,6 +4,7 @@ import type { AppData, TodoItem } from "../shared/types";
 import { bumpTraining } from "../shared/types";
 import { playSfx } from "../lib/sound";
 import { useCompanionProjects } from "../hooks/useCompanionProjects";
+import { useCompanionTasks } from "../hooks/useCompanionTasks";
 
 function dueBadge(todo: TodoItem, leadMinutes: number) {
   if (todo.status === "done") return null;
@@ -47,6 +48,7 @@ export function TodosPanel({
   const [projectFilter, setProjectFilter] = useState<string>(ALL_PROJECTS);
   const lead = data.settings.reminderLeadMinutes || 60;
   const { projects, projectByTodoId } = useCompanionProjects();
+  useCompanionTasks();
 
   const sorted = useMemo(() => {
     return [...data.todos].sort((a, b) => {

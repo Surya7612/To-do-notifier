@@ -96,7 +96,83 @@ describe("companionProjects", () => {
   it("reports no projects when the companion has never run", () => {
     const out = loadCompanionProjects("/nonexistent/companion-projects.json");
     expect(out.projects).toEqual([]);
+    expect(out.requestedTasks).toEqual([]);
     expect(out.updatedAt).toBeNull();
+  });
+
+  it("reads the reminders offered as tasks", () => {
+    const out = parseCompanionProjects(
+      JSON.stringify({
+        projects: [],
+        requestedTasks: [
+          { id: "r1", title: "Text voice bugs", dueAt: "2026-09-09T10:00:00-04:00" },
+        ],
+      })
+    );
+
+    expect(out.requestedTasks).toHaveLength(1);
+    expect(out.requestedTasks[0]).toEqual({
+      id: "r1",
+      title: "Text voice bugs",
+      dueAt: "2026-09-09T10:00:00-04:00",
+    });
+  });
+
+  it("labels an imported reminder with its project", () => {
+    // The companion publishes the id the imported task will have, which is
+    // derivable from the reminder's own. That is what lets the existing
+    // project labelling work on a task this app has not created yet.
+    const out = parseCompanionProjects(
+      JSON.stringify({
+        projects: [{ id: "p1", name: "Engram", todoIDs: ["t1", "companion:r1"] }],
+        requestedTasks: [
+          { id: "r1", title: "Text voice bugs", dueAt: "2026-09-09T10:00:00Z" },
+        ],
+      })
+    );
+
+    expect(out.projects[0].todoIDs).toContain("companion:r1");
+  });
+
+  it("has no requested tasks when an older companion wrote the file", () => {
+    // The field was added after the first version, so its absence is ordinary
+    // and must not take the projects down with it.
+    const out = parseCompanionProjects(
+      JSON.stringify({ projects: [{ id: "p1", name: "Engram" }] })
+    );
+
+    expect(out.projects).toHaveLength(1);
+    expect(out.requestedTasks).toEqual([]);
+  });
+
+  it("refuses a request it could not turn into a usable task", () => {
+    const out = parseCompanionProjects(
+      JSON.stringify({
+        projects: [],
+        requestedTasks: [
+          { id: "", title: "No id", dueAt: "2026-09-09T10:00:00Z" },
+          { id: "r2", title: "   ", dueAt: "2026-09-09T10:00:00Z" },
+          { id: "r3", title: "No date" },
+          { id: "r4", title: "Unparseable date", dueAt: "next tuesday" },
+          { id: "r5", title: "Keeper", dueAt: "2026-09-09T10:00:00Z" },
+          null,
+        ],
+      })
+    );
+
+    expect(out.requestedTasks.map((task) => task.title)).toEqual(["Keeper"]);
+  });
+
+  it("treats a malformed task list as none, keeping the projects", () => {
+    const out = parseCompanionProjects(
+      JSON.stringify({
+        projects: [{ id: "p1", name: "Engram" }],
+        requestedTasks: "nope",
+      })
+    );
+
+    expect(out.projects).toHaveLength(1);
+    expect(out.requestedTasks).toEqual([]);
   });
 
   it("looks inside the companion's sandbox container", () => {

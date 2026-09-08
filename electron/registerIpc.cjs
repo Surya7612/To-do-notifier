@@ -7,6 +7,7 @@ const {
   EMPTY_TODO_REPLY,
 } = require("./lib/companionChat.cjs");
 const { loadCompanionProjects } = require("./lib/companionProjects.cjs");
+const { importCompanionTasks } = require("./lib/companionTasks.cjs");
 
 /**
  * Every ipcMain handler for the app, wired to the services created in main.cjs.
@@ -63,6 +64,31 @@ function registerIpc(deps) {
   // a separate process that can create a project at any moment, and there is
   // no signal from it when that happens.
   ipcMain.handle("companion:projects", () => loadCompanionProjects());
+
+  // Reminders the user set in the companion, turned into tasks this app owns.
+  //
+  // The companion cannot write `app-data.json` — this process holds it in
+  // memory and rewrites it whole — so it publishes what it would like and this
+  // decides. Kept separate from `companion:projects` rather than folded into
+  // it, because a handler that reads a list should not also create tasks.
+  ipcMain.handle("companion:import-tasks", () => {
+    const { requestedTasks } = loadCompanionProjects();
+    if (requestedTasks.length === 0) return { created: 0 };
+
+    const prev = loadData();
+    const { todos, created } = importCompanionTasks(prev.todos, requestedTasks);
+    // Nothing new is the ordinary case, since this runs on every focus and a
+    // reminder stays published until it fires. Saving anyway would rewrite the
+    // file and re-render the list every time the window came forward.
+    if (created.length === 0) return { created: 0 };
+
+    const merged = mergeAppData(DEFAULT_SETTINGS, prev, { ...prev, todos });
+    saveData(merged);
+    broadcast("data:changed", merged);
+    rebuildTrayMenu();
+
+    return { created: created.length };
+  });
 
   ipcMain.handle("data:set", (_e, next) => {
     if (!next || typeof next !== "object") {

@@ -148,6 +148,36 @@ than something read off the pixels, it outscores every individual screen signal 
 names itself in the reason — "in Engram". Deleting a project nullifies rather than cascades, so its
 saves are unfiled instead of destroyed.
 
+**A reminder becomes a task the other app owns, because Max proposes and the owner writes.** A
+reminder set here is a time on a kept screenshot, not a to-do, and it used to leave no trace in the app
+that owns tasks — so "remind me to text voice bugs" was invisible in the only list the user actually
+works from. `ProjectExport` therefore publishes `requestedTasks` alongside the projects, and
+`electron/lib/companionTasks.cjs` creates real tasks from them. Importing rather than mirroring is the
+whole point: a task created over there is genuinely that app's, so it can be completed, rescheduled and
+notified like any other, where a read-only mirror would have looked identical and done none of it. This
+is the same rule as file edits — the companion still never writes `app-data.json`, because that file
+belongs to a process holding it in memory and rewriting it whole.
+
+Idempotency rests entirely on the id: the task is `companion:` plus `SavedContext.reminderIdentifier`,
+which is stable across launches and store migrations. The importer runs on launch *and* every window
+focus, and a reminder stays published until it fires, so anything less stable would add the same task
+repeatedly. An already-imported id counts whether the task is open or **done** — re-adding something
+the user has ticked off is the failure that would make the feature unusable. `importCompanionTasks`
+returns the original array when nothing is new, so the caller can skip the write rather than rewriting
+the file and re-rendering the list on every focus.
+
+A fired reminder is dropped from the export rather than kept: publishing one already past asks for a
+task that was due yesterday, and a stable id means the other app would then hold it forever. The
+prefixed id is *also* appended to its project's `todoIDs`, which is derivable before the task exists —
+that is what carries the project label across without teaching the importer anything about projects.
+
+**The hand-over waits until it is visible.** The to-do app owns the notification once it has the task,
+so Max cancels its own — but only when it can actually *see* that task through `TodoBridge`, not when
+it publishes the request. The other app imports on launch and on focus, so standing aside early would
+leave someone who does not open it for a week with no reminder at all. A reminder is a promise this app
+made, and a silent failure is the one outcome worse than a duplicate ping. Cancelling is idempotent, so
+`handOverAdoptedReminders` runs on every summon without tracking what it has already handed over.
+
 **Quiet hours are mirrored, not reinvented.** The user configured a do-not-disturb window once, in the
 app that owns notification preferences. `QuietHours.contains` deliberately reproduces `inQuietHours` in
 `electron/lib/dataMerge.cjs`, down to treating an equal start and end as *never* quiet rather than always
@@ -514,7 +544,7 @@ the screen, it is the wrong change.
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
-| `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
+| `Store/ProjectExport.swift` | ~150 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Also reads back which of them it took over. |
 | `Support/AppSettings.swift` | ~190 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
 | `Support/DesignSystem.swift` | ~59 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
@@ -591,11 +621,18 @@ What is covered, and why these pieces specifically:
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
 | `DictationHintsTests` | Which on-screen words are offered to the recognizer | Both failure modes are invisible: too few and the feature does nothing, too many and the budget is spent biasing towards words that were never going to be misheard. Pins that ordinary capitalised UI text is dropped and that an identifier survives truncation. Asserts nothing about recognition accuracy, which is Apple's model rather than this logic. |
 | `InboxImporterTests` | Parsing the phone's JSON manifest | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. |
-| `ProjectExportTests` | The published JSON's keys and date format | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
+| `ProjectExportTests` | The published JSON's keys and date format, and the reminders offered as tasks | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
 
 The Electron side has its own suite, run with `npm test` (vitest), and
 `electron/lib/companionProjects.test.ts` is the other half of that same contract: it pins that every
-shape of bad or absent input lands on "no projects" rather than breaking the task list.
+shape of bad or absent input lands on "no projects" rather than breaking the task list, and that a
+missing `requestedTasks` — which older versions of the file have — does not take the projects with it.
+
+`electron/lib/companionTasks.test.ts` covers the import itself, where the failure is *persisted and
+compounding* rather than merely wrong once: an import that is not idempotent adds the same task on
+every window focus, and one that is too eager brings back a task the user has already completed. It
+also pins that nothing is written when nothing is new, since that is what keeps returning to the window
+from rewriting the file.
 
 Two conventions worth keeping:
 

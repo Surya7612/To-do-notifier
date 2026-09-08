@@ -1090,6 +1090,9 @@ does not own. Completing a task stays where tasks live.
 - [x] Read them there (`electron/lib/companionProjects.cjs`) and label tasks by project
 - [x] Filter the task list by project
 - [x] Tests on both sides of the contract
+- [x] Publish reminders as task requests, and create real tasks from them there
+      (`electron/lib/companionTasks.cjs`), keyed on the reminder's own identifier
+- [x] Hand the notification over once the task exists, so one thing pings once
 
 A grouping only the companion could see was half a feature: the point of putting
 tasks in a project is to look at that project's work, and the to-do list is where
@@ -1115,6 +1118,34 @@ The consequence to keep in mind: the to-do app shows project **labels and a
 filter**, and nothing more. It cannot create a project or move a task between
 them, because it does not own the list. That asymmetry is deliberate and should
 stay visible in the UI rather than being smoothed over.
+
+### Reminders as tasks
+
+A reminder set in the companion is a time on a kept screenshot, not a to-do, and
+for a while it left no trace in the app that owns tasks — so "remind me to text
+voice bugs" was invisible in the only list the user actually works from. The fix
+follows the rule that already governs file edits: **the companion proposes, the
+owner writes.** `ProjectExport` publishes `requestedTasks`, and the to-do app
+creates real tasks from them.
+
+Importing rather than mirroring is the point. A task created there is genuinely
+that app's, so it can be completed, rescheduled and notified like any other,
+where a read-only list would have looked identical and done none of it. The
+companion still never writes `app-data.json`.
+
+Idempotency rests on the id — `companion:` plus the reminder's own identifier,
+which is stable across launches and store migrations. The import runs on launch
+and on every window focus, and a reminder stays published until it fires, so
+anything less stable would add the same task over and over. An already-imported
+id counts whether the task is open or **done**: bringing back something the user
+has ticked off is the failure that would make this unusable.
+
+The notification is handed over rather than split. The to-do app owns it once the
+task exists, so the companion cancels its own — but only when it can *see* that
+task through the read-only bridge, not when it publishes the request. That app
+imports on launch and on focus, so standing aside any earlier would leave someone
+who does not open it for a week with no reminder at all, and a reminder is a
+promise the app made.
 
 Later:
 
