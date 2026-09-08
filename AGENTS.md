@@ -132,8 +132,16 @@ leaving for a diagram or an unfamiliar interface. It also carries the "Send the 
 is the setting that decides whether a visual question can be answered *at all* — OpenAI sees the screen
 only if the screenshot goes with it, and otherwise receives OCR text and guesses at anything that is not
 words. Both were previously only reachable through a settings window, which the click that opens it
-dismisses. A provider selected with no key in the Keychain falls back to local and the menu says so,
-because the badge would otherwise read "Local" with no explanation.
+dismisses.
+
+**A choice that cannot be honoured is stated, not silently downgraded.** Selecting OpenAI with no key
+in the Keychain falls back to the local model. Labelling that "Local" was a real bug rather than an
+honest simplification: the user flipped a switch, nothing on screen moved, and the fallback was
+indistinguishable from the control being broken. `AppSettings.AnswerDestination` therefore has three
+cases, not two — `cloudWithoutKey` is its own state, reads "OpenAI — no key" in the problem colour,
+and names what is answering instead. It is a pure function of the provider and whether a key exists,
+so it is testable without a Keychain, and it is derived from the same two facts as `makeBrain()` so
+the badge cannot name one model while another answers.
 
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
@@ -146,16 +154,16 @@ from the screenshot along with the panel.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~131 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `App/SettingsView.swift` | ~159 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
 | `Companion/CompanionPanelController.swift` | ~157 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~416 | Panel UI: status header with the who-answers menu, ask field, dictation and save buttons, save options, related-context strip, answer area. |
-| `Companion/CompanionViewModel.swift` | ~600 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
+| `Companion/CompanionView.swift` | ~420 | Panel UI: status header with the who-answers menu, ask field, dictation and save buttons, save options, related-context strip, answer area. |
+| `Companion/CompanionViewModel.swift` | ~618 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, dictation, region selection, presets, the current project, and reminders. |
 | `Capture/ScreenCapture.swift` | ~218 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. |
 | `Capture/TextRecognizer.swift` | ~24 | Vision OCR. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~112 | `Brain` protocol, `AskContext`, and the shared prompt text. |
+| `Brain/Brain.swift` | ~116 | `Brain` protocol, `AskContext`, and the shared prompt text. |
 | `Brain/OllamaBrain.swift` | ~84 | Streaming Ollama client. Also the only place summaries are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Voice/SpeechDictation.swift` | ~218 | On-device push-to-talk dictation, plus a level meter that detects a silent input device. |
@@ -166,7 +174,7 @@ from the screenshot along with the panel.
 | `Store/ContextRetriever.swift` | ~115 | Explainable relevance scoring against the current screen. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
-| `Support/AppSettings.swift` | ~97 | `UserDefaults` keys, defaults, and the provider choice. |
+| `Support/AppSettings.swift` | ~154 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
 | `Support/DesignSystem.swift` | ~51 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
@@ -211,6 +219,7 @@ What is covered, and why these pieces specifically:
 | `PromptTests` | Prompt construction | Where the "user intent outranks inference" rule actually lives. Regressions here surface as subtly worse answers, not errors. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
+| `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
 | `ProjectExportTests` | The published JSON's keys and date format | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
 
 The Electron side has its own suite, run with `npm test` (vitest), and

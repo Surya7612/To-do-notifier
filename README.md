@@ -10,6 +10,19 @@ Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode —
 
 ---
 
+## Two apps in this repository
+
+| | |
+| --- | --- |
+| **This app** (`electron/`, `src/`) | Where work is **created and completed**: todos, notes, flashcards, streaks, the pomodoro timer, the pet, and notification preferences. |
+| **[TodoCompanion](TodoCompanion/README.md)** (`TodoCompanion/`) | A native Swift menu bar app where context is **captured and connected**: it answers questions about what is on screen and remembers things with your stated reason for keeping them. Active development. |
+
+They are separate products sharing one task list, not two versions of the same thing. Merging them was considered and rejected — see [the design document](docs/TO_DO_NOTIFIER_UPDATED_PLAN.md).
+
+Each owns one file and reads the other's, and **neither writes the other's**. The companion reads this app's `app-data.json` for open tasks, notes, and quiet hours; this app reads the companion's project list to label and filter its own task list. So a project you create in the companion shows up here on the tasks you put in it.
+
+---
+
 ## Screenshots
 
 | Todos & reminders | Focus (Pomodoro) |
@@ -24,7 +37,7 @@ Desktop app (Electron) for todos, focus sessions, and Rubber Duck study mode —
 
 | Area | Behavior |
 | --- | --- |
-| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications |
+| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications; project labels and filter from the companion |
 | **Focus** | Pomodoro timer with optional ambient sound |
 | **Companion** | Always-on desktop pet (drag anywhere; corner / perch / body-double modes) |
 | **Voice** | **⌘G** talk / **Esc** stop — commands + short chat over open work |
@@ -154,6 +167,7 @@ npm run check
 - With voice on, mic audio goes to **OpenAI** for STT.
 - Spoken replies may use **ElevenLabs** if configured.
 - API keys belong in Settings (or optional `.env` locally) — never commit them. See `.env.example`.
+- The native companion is stricter and has [its own posture](TodoCompanion/README.md#privacy-posture): no cloud transcription, no analytics, no background capture, and no background work routed to a cloud model.
 
 ---
 

@@ -704,7 +704,7 @@ Let Xcode manage:
 - [x] Save it inside the existing repository
 - [x] Open the native project folder in Cursor
 - [x] Confirm build/run from Xcode
-- [ ] Create clean Git branch for native work
+- [x] Create clean Git branch for native work (`native-companion`)
 
 Actual path:
 
@@ -812,13 +812,17 @@ The companion should answer:
 
 using:
 
-- Todos
-- Due dates
-- Focus session
-- Notes
-- Current project
+- [x] Todos (`TodoBridge`, read-only through a security-scoped bookmark)
+- [x] Due dates (overdue tasks are labelled as such in the prompt)
+- [x] Notes
+- [x] Current project (narrows the task list to that project's own tasks)
+- [ ] Focus session — lives in the Electron app's runtime, not in its data file,
+      so there is nothing to read. Would need an IPC channel between the two
+      apps, which is more coupling than "what should I work on" is worth.
 
-At this stage, begin deciding how old Electron data migrates into the new native store.
+The migration question this phase left open answered itself: nothing migrates.
+The two apps stay separate and exchange one file each, for the reasons in
+"Why the two apps were not merged" below.
 
 ---
 
@@ -973,13 +977,14 @@ is built to avoid.
 it — a field that implied a feature that was not there. Worth noting as a failure
 mode of its own: schema is not behaviour.
 
+- [x] Quiet hours (mirrored from the Electron app rather than reinvented)
+
 What is still genuinely remote-only, and therefore still open:
 
 - [ ] Minimal cloud reminder model
 - [ ] Email channel
 - [ ] Retry logic
 - [ ] Delivery state
-- [ ] Quiet hours
 - [ ] Escalation logic
 - [ ] Optional experimental self-iMessage
 
@@ -1108,7 +1113,11 @@ Do not build:
 - Multi-user authentication unless needed for remote sync
 - Cursor-pointing / element-highlighting overlays (see §2, rejected from Clicky)
 - Anything requiring Accessibility permission
-- Cloud speech-to-text or hosted LLMs
+- Cloud speech-to-text
+- Hosted LLMs doing **background** work — summaries, categorisation, anything
+  unprompted. Answering a question the user explicitly asked is now allowed and
+  opt-in; see the third pass in §2 for why that ban was narrowed rather than
+  kept whole
 - Usage analytics of any kind
 
 This is a **personal project first**.
