@@ -293,6 +293,9 @@ struct CompanionView: View {
                     Label(preset.buttonLabel, systemImage: preset.glyph)
                 }
                 .disabled(!viewModel.hasCapture || viewModel.isBusy)
+                .help(viewModel.presetWouldAskTypedText
+                      ? "Asks what you typed — your words are used, not this preset"
+                      : preset.question)
             }
         }
         .controlSize(.small)

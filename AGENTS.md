@@ -229,6 +229,15 @@ would otherwise refuse with the field looking empty for no visible reason. Prese
 user's reason for keeping something would break precisely the stated-versus-inferred distinction the
 app exists to maintain. That is what `Turn.isFromPreset` is for; the model never sees it.
 
+**A preset never overwrites what the user typed.** `presetAsk` returns the typed text when there is
+any, and the preset's wording only when the field is empty — a preset is a shortcut past typing
+"explain this", not a replacement for a question already asked. Assigning `preset.question` over the
+field discarded the user's own words, and did so most damagingly right after dictation, where a
+sentence vanishing gives no hint that a button caused it. It also mislabelled the turn as
+`isFromPreset`, which put the wrong sentence in front of `savableReason`. Consequence: with text in
+the field both presets do the same thing, so the buttons say as much in their tooltip rather than
+appearing to offer a choice that no longer exists.
+
 **`stopSpeaking` on an idle synthesizer wedges it.** `AVSpeechSynthesizer.stopSpeaking(at:)` called
 when nothing is being spoken leaves the instance in a state where every later `speak` is accepted and
 silently never heard. `SpeechPlayback.stop()` runs at the top of every question, so the unconditional

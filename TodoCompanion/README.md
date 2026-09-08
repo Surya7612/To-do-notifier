@@ -30,8 +30,13 @@ Answer streams into the panel · ⌘P boxes the control it named, on screen
 ```
 
 Press **⌘R** to drag out one region and ask about that instead. It crops the screenshot already in
-memory rather than capturing again. **Explain** and **Next step** are the two questions worth a
-button.
+memory rather than capturing again. The region stays selected across follow-ups, so you can keep
+asking about the same rectangle.
+
+**Explain** and **Next step** are the two questions worth a button, and they are shortcuts for when
+you have nothing specific to ask. If you have already typed or dictated something, that is what gets
+asked — a preset never overwrites your own words, so with text in the field both buttons do the same
+thing as pressing Return.
 
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.

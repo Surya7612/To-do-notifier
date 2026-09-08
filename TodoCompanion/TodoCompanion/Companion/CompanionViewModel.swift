@@ -299,7 +299,10 @@ final class CompanionViewModel {
 
     /// Ready-made questions for the two things worth asking about a region.
     /// Typing "explain this" every time is friction on the most common action.
-    enum Preset: String, CaseIterable, Identifiable {
+    ///
+    /// `nonisolated` because it is pure data read from `presetAsk`, which is
+    /// itself nonisolated so the choice can be tested without a container.
+    nonisolated enum Preset: String, CaseIterable, Identifiable {
         case explain
         case nextStep
 
@@ -331,9 +334,35 @@ final class CompanionViewModel {
         }
     }
 
+    /// What pressing a preset button should actually ask.
+    ///
+    /// A preset is wording for the case where the user has nothing specific to
+    /// ask — "Explain" is a shortcut past typing "explain this" every time.
+    /// Once they have typed or dictated a question, that *is* the question, and
+    /// overwriting the field with this app's sentence threw their words away
+    /// silently. Discarding the user's own words is the one thing this app must
+    /// not do, and it is worse here than anywhere: dictating a sentence and
+    /// watching it vanish gives no hint that a button was the cause.
+    ///
+    /// Pure so the decision is testable without a model container.
+    nonisolated static func presetAsk(typed: String,
+                                      preset: Preset) -> (question: String, isFromPreset: Bool) {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty else { return (trimmed, false) }
+        return (preset.question, true)
+    }
+
     func ask(_ preset: Preset) {
-        question = preset.question
-        submit(isFromPreset: true)
+        let asked = Self.presetAsk(typed: question, preset: preset)
+        question = asked.question
+        submit(isFromPreset: asked.isFromPreset)
+    }
+
+    /// Whether the preset buttons would ask the user's own words instead.
+    /// The buttons say so, since otherwise both would appear to do the same
+    /// thing once something has been typed.
+    var presetWouldAskTypedText: Bool {
+        !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Narrows the capture to a rectangle the user drags out.
