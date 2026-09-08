@@ -434,10 +434,11 @@ the screen, it is the wrong change.
 ## Build & run
 
 ```bash
-# Native companion
+# Native companion. The architecture override is required for Release — see below.
 cd TodoCompanion
 xcodebuild -project TodoCompanion.xcodeproj -scheme TodoCompanion \
-           -configuration Release -destination 'platform=macOS' build
+ -configuration Release -destination 'platform=macOS' \
+ ARCHS=arm64 EXCLUDED_ARCHS=x86_64 build
 
 # Electron app
 npm install
@@ -446,6 +447,16 @@ npm run dev
 
 Terminal builds are safe here — see the TCC note above. Ollama must be running (`ollama serve`) for the
 companion to answer anything.
+
+**Release builds are Apple Silicon only, and the architecture must be forced on the command line.**
+FluidAudio does not compile for x86_64 — it reaches for `Float16`, which the standard library marks
+unavailable there — so the app is arm64-only now, which the project states through `ARCHS` and
+`EXCLUDED_ARCHS`. Those settings do *not* reach the package: Xcode builds a Swift package for every
+architecture in the build request and ignores the arch settings of the project depending on it, which
+was verified against `ARCHS`, `EXCLUDED_ARCHS` and `ONLY_ACTIVE_ARCH` at project level and a
+`arch=arm64` destination, all of which still produced an x86_64 compile of FluidAudio. Only a
+build-request-level override works. Debug escapes this because `ONLY_ACTIVE_ARCH` is already `YES`,
+which is why `xcodebuild test` needs no override.
 
 ## Tests
 

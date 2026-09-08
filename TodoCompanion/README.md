@@ -270,6 +270,11 @@ xcodebuild -project TodoCompanion.xcodeproj -scheme TodoCompanion \
   -configuration Debug -destination 'platform=macOS' build
 ```
 
+This is an Apple Silicon app. A **Release** build additionally needs `ARCHS=arm64 EXCLUDED_ARCHS=x86_64`
+on the command line, because FluidAudio has no x86_64 support and Xcode compiles a Swift package for
+every architecture in the build request regardless of what the depending project asks for. Debug builds
+only the active architecture already, so they need nothing extra.
+
 Tests:
 
 ```sh
