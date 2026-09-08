@@ -217,12 +217,28 @@ rejected: this one swaps a Mac-only notification for delivery to every device, w
 one Mac notifier for another.
 
 The permission needs a **hand-written entitlements file**, which is why `TodoCompanion.entitlements`
-exists at all. Xcode's generated entitlements cover Calendars (`ENABLE_RESOURCE_ACCESS_CALENDARS`) and
-have no Reminders equivalent, and without `com.apple.security.personal-information.reminders` macOS
-refuses even to *show* the prompt — tccd logs that `kTCCServiceReminders` requires the entitlement and
-denies access silently, so the feature reads as broken rather than unpermitted. Because that file now
-replaces generation, the keys the `ENABLE_*` settings used to produce are restated in it and have to be
-kept in step; a mismatch surfaces as a sandbox violation at runtime, not as a build failure.
+exists at all. Xcode has no build setting that emits a Reminders entitlement, and without
+`com.apple.security.personal-information.reminders` macOS refuses even to *show* the prompt. Because
+that file replaces generation, the keys the `ENABLE_*` settings used to produce are restated in it and
+have to be kept in step; a mismatch surfaces as a sandbox violation at runtime, not as a build failure.
+
+**Reminders also needs the Calendars entitlement, and this was measured rather than reasoned.** With
+`personal-information.reminders` alone, `requestFullAccessToReminders()` throws `NSMachErrorDomain`
+4099 — the XPC connection refused — immediately, before any prompt appears. An iCloud reminder list is
+served by CalendarAgent over CalDAV, and the sandbox will not let the app reach that agent on the
+reminders key alone, so `personal-information.calendars` is required too. Worth knowing because of how
+it presents: the switch turns itself back off in a fraction of a second, `tccd` logs nothing, and
+nothing is thrown that reaches the user. It reads as a dead control rather than a missing entitlement.
+Two things follow. `requestAccess` propagates its error instead of swallowing it with `try?`, since
+"refused" and "threw" need different words in front of someone — one is fixable in System Settings and
+the other is not. And the activation-policy dance `FilePicker` needs is **not** needed here: a TCC
+prompt is presented by the system rather than by this app, so it appears for an accessory app
+perfectly well. That was tried while chasing this bug and removed once the entitlement proved to be
+the cause; it only made the Settings window lose focus mid-click.
+
+A grant is also keyed to the code signature, so stale `kTCCServiceReminders` records from earlier
+builds accumulate and a denial among them makes the request fail instantly with no prompt. Clear them
+with `tccutil reset Reminders surya.TodoCompanion` when the symptom looks like the above.
 
 **Quiet hours are mirrored, not reinvented.** The user configured a do-not-disturb window once, in the
 app that owns notification preferences. `QuietHours.contains` deliberately reproduces `inQuietHours` in

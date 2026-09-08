@@ -463,7 +463,9 @@ Accessibility permission is requested or used — the global hotkey, the click-o
 the on-screen highlight were each built to avoid needing it.
 
 The App Sandbox is enabled. The only added entitlements are outgoing network, microphone,
-user-selected file access, and — if you turn on the Apple Reminders mirror — Reminders.
+user-selected file access, and — for the Apple Reminders mirror — Reminders and Calendars. Calendars
+is there because an iCloud reminder list is served by CalendarAgent, not because anything here reads
+your calendar; nothing does.
 
 ## Not built yet
 
