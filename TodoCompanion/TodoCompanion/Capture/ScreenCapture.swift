@@ -59,7 +59,13 @@ struct ScreenObservation {
     /// Other displays are dropped: once someone has pointed at a specific
     /// rectangle, text from a different monitor is noise rather than context.
     func cropped(to selection: CGRect, on screen: NSScreen) -> ScreenObservation? {
-        let frame = screen.frame
+        cropped(to: selection, inDisplayFrame: screen.frame)
+    }
+
+    /// The coordinate arithmetic, split out from `NSScreen` because that class
+    /// cannot be constructed in a test and this conversion is the easiest thing
+    /// here to get subtly wrong.
+    func cropped(to selection: CGRect, inDisplayFrame frame: CGRect) -> ScreenObservation? {
         guard frame.width > 0, frame.height > 0 else { return nil }
 
         // The capture is the whole display at backing scale; derive the factor

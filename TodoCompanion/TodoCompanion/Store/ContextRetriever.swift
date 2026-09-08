@@ -52,9 +52,13 @@ enum ContextRetriever {
                 reasons.append("same app")
             }
 
+            // 1.2 rather than 1.0 so that two distinctive shared words clear the
+            // threshold on their own. At 0.8 it took three, which made the best
+            // signal available — the user's own reason echoing what is on screen
+            // — weaker than the weakest one, being in the same application.
             let overlap = tokenize(candidate.intent).intersection(visible)
             if !overlap.isEmpty {
-                score += min(3.0, 0.8 * Double(overlap.count))
+                score += min(3.0, 1.2 * Double(overlap.count))
                 reasons.append("mentions \(overlap.sorted().prefix(2).joined(separator: ", "))")
             }
 

@@ -57,7 +57,17 @@ final class CompanionPanelController {
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
-            Task { @MainActor in self?.hide() }
+            Task { @MainActor in
+                guard let self else { return }
+
+                // Dismissing mid-sentence would end the recording and, worse,
+                // take any failure message down with it. macOS puts its own
+                // microphone and speech prompts up as separate windows, so
+                // clicking Allow counts as a click outside this app.
+                guard !self.viewModel.isListening else { return }
+
+                self.hide()
+            }
         }
     }
 

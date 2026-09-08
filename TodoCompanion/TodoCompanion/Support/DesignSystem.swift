@@ -32,7 +32,9 @@ enum DS {
     }
 
     enum Size {
-        static let panelWidth: CGFloat = 420
+        /// Wide enough for the region controls and both presets to sit in one
+        /// row at their natural size.
+        static let panelWidth: CGFloat = 468
         /// Past this the answer scrolls rather than growing the window forever.
         static let maxAnswerHeight: CGFloat = 320
         static let indicator: CGFloat = 110

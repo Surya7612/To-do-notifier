@@ -748,10 +748,11 @@ for when a vision model is pulled.
 
 Still open from this phase:
 
-- [ ] Visual "listening"/streaming animation beyond the status dot
+- [x] Visual "listening"/streaming animation beyond the status dot (a ring at the
+      cursor: blue while capturing, pink with a live audio waveform while listening)
 - [x] Configurable hotkey (a picker of non-reserved combos in Settings)
-- [ ] Multi-monitor: capture the display under the cursor is done; capturing *all*
-      displays for one question is not
+- [x] Multi-monitor: every attached display is captured for one question, with the
+      one under the cursor as primary and the others supplied as labelled text
 
 This teaches:
 
@@ -771,13 +772,23 @@ This teaches:
 
 Add:
 
-- [ ] Push-to-talk
-- [ ] Speech-to-text
-- [ ] Voice response
-- [ ] Visual listening state
-- [ ] Stop / cancel control
+- [x] Push-to-talk (⌘D, or the mic button, toggles a dictation session)
+- [x] Speech-to-text (`SFSpeechRecognizer` forced on-device; the panel says which)
+- [ ] Voice response — not built, and no longer obviously wanted. Reading four
+      sentences aloud is slower than reading them, and the panel is already on
+      screen by the time the answer arrives.
+- [x] Visual listening state (pink ring at the cursor, driven by real input level
+      so a muted or wrong input device is visible rather than silent)
+- [x] Stop / cancel control (⌘D again, Esc, or silence)
 
 Do not add wake-word monitoring immediately.
+
+Two things worth recording from building this. The audio engine has to be
+recreated per session — a retained `AVAudioEngine` caches a zero-channel input
+format and then yields silence forever. And the input level meter turned out to
+matter more than the waveform it draws: dictation failing because the default
+input is a pair of AirPods in another room is indistinguishable from dictation
+being broken, unless the UI shows that no sound is arriving.
 
 ---
 
@@ -861,7 +872,7 @@ the current screen using signals the user can reason about:
 | A `#topic` literally visible on screen | 3.0 each |
 | Same window title | 2.5 |
 | Same application | 2.0 |
-| Words shared between the saved reason and the screen | up to 3.0 |
+| Words shared between the saved reason and the screen | 1.2 each, up to 3.0 |
 | Recency | up to 1.0, decaying over 30 days |
 
 Anything under 2.0 is dropped. Every match carries a human-readable reason
@@ -873,6 +884,15 @@ Embeddings would improve recall but cannot tell you *why* something came back.
 
 Known rough edge to tune with real use: "same app" alone clears the threshold, so
 once there are many saves from one editor the top three may be dominated by it.
+A test pins that behaviour deliberately, so changing it has to be a decision
+rather than a drift.
+
+Writing those tests corrected one of these weights. Shared words were originally
+worth 0.8 each against a threshold of 2.0, which meant the user's own reason had
+to echo **three** distinctive words on screen before it counted for anything —
+while sitting in the same application, which says nothing about relevance,
+qualified on its own at 2.0. The strongest available signal was weaker than the
+weakest one. Two shared words now clear the bar; one still does not.
 
 ---
 

@@ -8,6 +8,7 @@ final class CompanionViewModel {
     enum Phase: Equatable {
         case idle
         case reading
+        case startingDictation
         case thinking
         case answering
         case saved(String)
@@ -79,6 +80,7 @@ final class CompanionViewModel {
         switch phase {
         case .idle: return contextLabel
         case .reading: return "Reading your screen…"
+        case .startingDictation: return "Turning the microphone on…"
         case .thinking: return "Thinking…"
         case .answering: return "Answering…"
         case let .saved(message): return message
@@ -133,10 +135,19 @@ final class CompanionViewModel {
     /// Ready-made questions for the two things worth asking about a region.
     /// Typing "explain this" every time is friction on the most common action.
     enum Preset: String, CaseIterable, Identifiable {
-        case explain = "Explain this"
-        case nextStep = "What's the next step?"
+        case explain
+        case nextStep
 
         var id: String { rawValue }
+
+        /// Kept short deliberately. These sit in a row with the region controls
+        /// inside a 420pt panel, and the full question does not fit.
+        var buttonLabel: String {
+            switch self {
+            case .explain: "Explain"
+            case .nextStep: "Next step"
+            }
+        }
 
         var glyph: String {
             switch self {
@@ -209,6 +220,10 @@ final class CompanionViewModel {
             return
         }
 
+        // Stated before anything can go wrong, so a failure that arrives later
+        // replaces a visible "starting" rather than appearing out of nowhere.
+        phase = .startingDictation
+
         Task {
             onListeningBegan?()
             do {
@@ -226,6 +241,7 @@ final class CompanionViewModel {
                 isListening = dictation.isListening
                 dictationIsOnDevice = dictation.isOnDevice
                 inputDeviceName = dictation.inputDeviceName
+                if phase == .startingDictation { phase = .idle }
                 if !isListening { endListening() }
             } catch {
                 endListening()

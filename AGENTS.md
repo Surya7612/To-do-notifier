@@ -128,6 +128,36 @@ npm run dev
 Terminal builds are safe here — see the TCC note above. Ollama must be running (`ollama serve`) for the
 companion to answer anything.
 
+## Tests
+
+```bash
+cd TodoCompanion
+xcodebuild test -project TodoCompanion.xcodeproj -scheme TodoCompanion -destination 'platform=macOS'
+```
+
+`TodoCompanionTests/` uses Swift Testing (`import Testing`, `@Test`, `#expect`). The whole suite runs in
+well under a second because it covers only pure logic — no screen, no microphone, no Ollama, no network.
+
+What is covered, and why these pieces specifically:
+
+| Suite | Covers | Why it needs a test |
+|-------|--------|---------------------|
+| `ScreenObservationTests` | Region crop coordinate math | Converts AppKit's bottom-left origin to CoreGraphics' top-left with a pixel scale factor. A flipped crop still returns a correctly sized image of the wrong thing, so the fixtures assert on **pixels**, not geometry. |
+| `ContextRetrieverTests` | Relevance scoring and stated reasons | Decides what the app volunteers unprompted. Weights are unassertable by eye, and the failure modes are silent. |
+| `TodoBridgeTests` | Parsing the Electron app's `app-data.json` | Another app owns that file and can change or truncate it. Also pins that the OpenAI key in the same file never reaches prompt data. |
+| `PromptTests` | Prompt construction | Where the "user intent outranks inference" rule actually lives. Regressions here surface as subtly worse answers, not errors. |
+| `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
+
+Two conventions worth keeping:
+
+- Assert on **behaviour** — ordering, inclusion, the reason string — rather than exact scores, so weights
+  stay tunable without rewriting tests.
+- When a test pins a known rough edge rather than a desired property, say so in a comment. See
+  `sameAppAloneClearsTheThreshold`, which exists so that changing that behaviour is a visible decision.
+
+Anything requiring `NSScreen`, a real capture, or a running model is deliberately **not** tested; that is
+why `cropped(to:inDisplayFrame:)` exists alongside the `NSScreen` convenience overload.
+
 ## Conventions
 
 ### Comments

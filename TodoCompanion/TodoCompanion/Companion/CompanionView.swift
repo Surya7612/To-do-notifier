@@ -45,6 +45,7 @@ struct CompanionView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: DS.Spacing.tight)
+            destinationBadge
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.semibold))
@@ -118,36 +119,39 @@ struct CompanionView: View {
                     Image(systemName: "xmark.circle.fill")
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .help("Back to the whole screen")
             }
+
+            Spacer(minLength: DS.Spacing.hair)
 
             ForEach(CompanionViewModel.Preset.allCases) { preset in
                 Button {
                     viewModel.ask(preset)
                 } label: {
-                    Label(preset.rawValue, systemImage: preset.glyph)
+                    Label(preset.buttonLabel, systemImage: preset.glyph)
                 }
                 .disabled(!viewModel.hasCapture || viewModel.isBusy)
             }
-
-            Spacer(minLength: DS.Spacing.hair)
-
-            destinationBadge
         }
         .controlSize(.small)
         .labelStyle(.titleAndIcon)
         .font(.caption)
+        // Without this the row silently compresses its buttons to illegible
+        // slivers instead of asking the panel for the width it needs.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Says plainly whether asking will send the screen off this Mac. A
     /// question that leaves the device must never look like one that does not.
     private var destinationBadge: some View {
         Label(
-            viewModel.answersLeaveTheMachine ? viewModel.brainLabel : "On this Mac",
+            viewModel.answersLeaveTheMachine ? viewModel.brainLabel : "Local",
             systemImage: viewModel.answersLeaveTheMachine ? "cloud" : "lock.laptopcomputer"
         )
         .font(.caption2)
+        .lineLimit(1)
+        .fixedSize()
         .foregroundStyle(viewModel.answersLeaveTheMachine ? DS.Status.busy : Color.secondary)
         .help(viewModel.answersLeaveTheMachine
               ? "Your question and the captured screen go to \(viewModel.brainLabel). Saved summaries stay local."
@@ -236,7 +240,7 @@ struct CompanionView: View {
         if viewModel.isListening { return DS.Status.listening }
         switch viewModel.phase {
         case .idle: return DS.Status.ready
-        case .reading, .thinking, .answering: return DS.Status.busy
+        case .reading, .thinking, .answering, .startingDictation: return DS.Status.busy
         case .saved: return DS.Status.saved
         case .needsPermission, .failed: return DS.Status.problem
         }
