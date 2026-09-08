@@ -51,6 +51,79 @@ struct ReminderPhraseTests {
         #expect(question.matchedText == nil, "a fallback time is not a stated one")
     }
 
+    /// Durations, which the system parser does not handle at all.
+    ///
+    /// "Remind me to send an email in one minute" was answered by the model
+    /// saying it could not schedule reminders and suggesting the user set a
+    /// timer themselves, while the panel offered *tomorrow at 9 AM*. One gap
+    /// caused all of it: `NSDataDetector` matches "in 3 days" but nothing
+    /// below a day and nothing spelled out, so no time was found, the fallback
+    /// guessed a morning, and a fallback states no time so it did not qualify
+    /// as an instruction.
+    @Test("a duration in minutes is a stated time")
+    func minutesAreStated() throws {
+        let result = try #require(suggestion("remind me to send an email in one minute"))
+
+        #expect(result.wasExplicitlyRequested)
+        #expect(result.matchedText == "in one minute", "shown, so the reading is visible")
+
+        // Within a few seconds of a minute out, and emphatically not tomorrow.
+        let seconds = result.date.timeIntervalSince(now)
+        #expect(seconds > 50 && seconds < 70)
+    }
+
+    @Test("digits, spelled-out numbers and abbreviations all work")
+    func everyWayOfWritingADuration() throws {
+        let equivalent = ["in 5 minutes", "in five minutes", "in 5 mins", "in 5 min"]
+        for phrase in equivalent {
+            let result = try #require(suggestion("remind me \(phrase)"), "\(phrase)")
+            let minutes = result.date.timeIntervalSince(now) / 60
+            #expect(minutes > 4.5 && minutes < 5.5, "\(phrase)")
+            #expect(result.matchedText != nil, "\(phrase)")
+        }
+    }
+
+    @Test("an hour, half an hour, and a bare article")
+    func hoursAndHalves() throws {
+        let hour = try #require(suggestion("remind me in an hour"))
+        #expect(abs(hour.date.timeIntervalSince(now) - 3_600) < 30)
+
+        let half = try #require(suggestion("remind me in half an hour"))
+        #expect(abs(half.date.timeIntervalSince(now) - 1_800) < 30)
+    }
+
+    @Test("a duration of days or more still lands in the morning")
+    func longDurationsGetAMorning() throws {
+        // Anything a day out states no time of day, so it gets the same
+        // treatment a bare "friday" does rather than firing at this instant
+        // three days from now.
+        let result = try #require(suggestion("remind me in three days"))
+        #expect(calendar.component(.hour, from: result.date) == 9)
+        #expect(calendar.component(.minute, from: result.date) == 0)
+    }
+
+    @Test("a stated duration outranks a clock time being talked about")
+    func durationBeatsAMentionedTime() throws {
+        // The hour is when the user wants this back; the 3pm is part of what
+        // they are describing.
+        let result = try #require(suggestion("remind me in an hour about the 3pm meeting"))
+
+        #expect(result.matchedText == "in an hour")
+        #expect(abs(result.date.timeIntervalSince(now) - 3_600) < 30)
+    }
+
+    @Test("duration-shaped words that state no amount are not times")
+    func nonAmountsAreNotDurations() throws {
+        // The amount group accepts any word, so this has to be rejected on
+        // lookup rather than on shape — and must not stop a later real
+        // duration from being found.
+        let vague = try #require(suggestion("remind me what happens in the minutes after launch"))
+        #expect(vague.matchedText == nil, "no amount was stated, so this stays a question")
+
+        let both = try #require(suggestion("remind me what happens in the minutes after launch, in 10 minutes"))
+        #expect(both.matchedText == "in 10 minutes")
+    }
+
     @Test("asking to be reminded, with a day, is an explicit request")
     func explicitRequestWithDate() throws {
         let result = try #require(suggestion("remind me to follow up on this tomorrow"))

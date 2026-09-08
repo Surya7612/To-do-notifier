@@ -4,6 +4,11 @@
   "private": true,
   "description": "macOS productivity companion with voice chat and local AI tutoring",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Surya7612/To-do-notifier.git"
+  },
+  "homepage": "https://github.com/Surya7612/To-do-notifier#readme",
   "main": "electron/main.cjs",
   "author": "Surya Nediyadeth",
   "scripts": {
@@ -27,7 +32,7 @@
   "build": {
     "appId": "com.surya.todonotifier",
     "productName": "To-Do Notifier",
-    "copyright": "Copyright © 2026 Surya Nediyadeth",
+    "copyright": "Copyright \u00a9 2026 Surya Nediyadeth",
     "afterPack": "./scripts/after-pack-sign.cjs",
     "directories": {
       "output": "release",

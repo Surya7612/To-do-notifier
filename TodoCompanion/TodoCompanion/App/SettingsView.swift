@@ -13,8 +13,10 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.embeddingModel) private var embeddingModel = AppSettings.defaultEmbeddingModel
     @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
     @AppStorage(AppSettings.Key.voiceIdentifier) private var voiceIdentifier = ""
+    @AppStorage(AppSettings.Key.voiceEngine) private var voiceEngine = AppSettings.VoiceEngine.system.rawValue
     @AppStorage(AppSettings.Key.dictationEngine) private var dictationEngine =
         AppSettings.DictationEngine.apple.rawValue
+    @AppStorage(AppSettings.Key.mirrorsToAppleReminders) private var mirrorsToAppleReminders = false
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
@@ -25,6 +27,8 @@ struct SettingsView: View {
     @State private var canImportKey = false
     @State private var inboxFolder: String?
     @State private var inboxWaiting = 0
+    @State private var mirrorDestination: AppleReminders.Destination?
+    @State private var mirrorProblem: String?
 
     /// Derived from the stored name on appear rather than persisted, since
     /// "custom" is a state of this window and not a preference.
@@ -104,15 +108,34 @@ struct SettingsView: View {
                 Toggle("Have \(Prompt.assistantName) read answers out loud", isOn: $speaksAnswers)
 
                 if speaksAnswers {
-                    Picker("Voice", selection: $voiceIdentifier) {
-                        Text("System default").tag("")
-                        ForEach(SpeechPlayback.availableVoices, id: \.identifier) { voice in
-                            Text(voice.name).tag(voice.identifier)
+                    Picker("Voice", selection: $voiceEngine) {
+                        ForEach(AppSettings.VoiceEngine.allCases) { engine in
+                            Text(engine.displayName).tag(engine.rawValue)
                         }
+                    }
+
+                    Text(AppSettings.VoiceEngine(rawValue: voiceEngine)?.detail ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if voiceEngine == AppSettings.VoiceEngine.system.rawValue {
+                        Picker("System voice", selection: $voiceIdentifier) {
+                            Text("System default").tag("")
+                            ForEach(SpeechPlayback.availableVoices, id: \.identifier) { voice in
+                                Text(voice.name).tag(voice.identifier)
+                            }
+                        }
+                    } else if !KokoroVoiceSynthesizer.isSupportedBySystem {
+                        // Stated here rather than only on failure, since the
+                        // alternative is a setting that looks fine and produces
+                        // silence at the moment an answer arrives.
+                        Text("Needs macOS 26.6 or later. On this Mac the system voice will be used.")
+                            .font(.caption)
+                            .foregroundStyle(DS.Status.problem)
                     }
                 }
 
-                Text("Uses the speech voices built into macOS, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")
+                Text("Both voices run on this Mac, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -221,6 +244,37 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Reminders away from this Mac") {
+                Toggle("Copy dated tasks into Apple Reminders", isOn: $mirrorsToAppleReminders)
+                    .disabled(!isLinked)
+                    .onChange(of: mirrorsToAppleReminders) { _, isOn in
+                        Task { await applyMirrorSetting(isOn) }
+                    }
+
+                if !isLinked {
+                    Text("Link your to-do app above first — these are its tasks.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let problem = mirrorProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if mirrorsToAppleReminders, let destination = mirrorDestination {
+                    // Says which account, because a *local* Reminders account
+                    // syncs nowhere and every other part of this would still
+                    // look like it was working.
+                    Text(destination.reachesOtherDevices
+                         ? "Tasks due in the future are copied into a \u{201C}\(ReminderMirror.listTitle)\u{201D} list in \(destination.account), so your iPhone and Watch alert you even when this Mac is asleep. \(Prompt.assistantName) stops announcing anything Reminders has taken on, so one thing pings once."
+                         : "Reminders is using the \u{201C}\(destination.account)\u{201D} account on this Mac, which does not sync, so the list will not reach your phone. Turn on iCloud for Reminders in System Settings.")
+                    .font(.caption)
+                    .foregroundStyle(destination.reachesOtherDevices ? Color.secondary : Color.orange)
+                } else {
+                    Text("Local notifications need this Mac awake at the due time. Copying a task into an iCloud Reminders list lets Apple deliver it to your other devices instead. Only tasks still ahead of them are copied, and completing one there leaves the task open in the to-do app.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Capture from your phone") {
                 HStack {
                     Text(inboxFolder ?? "Not linked")
@@ -274,12 +328,55 @@ struct SettingsView: View {
             refreshLinkedSummary()
             refreshInbox()
             canImportKey = !keyIsStored && TodoBridge.importableOpenAIKey() != nil
+            if mirrorsToAppleReminders, AppleReminders.isAuthorized {
+                mirrorDestination = AppleReminders.destination()
+            }
         }
     }
 
     private func refreshInbox() {
         inboxFolder = InboxImporter.folderName
         inboxWaiting = InboxImporter.pendingCount
+    }
+
+    /// Asks for the permission at the moment the switch is flipped, and undoes
+    /// the switch if it is refused.
+    ///
+    /// A toggle left on with no access is the "silently downgraded" failure this
+    /// app avoids elsewhere: nothing would reach the phone, and the setting
+    /// would say it should.
+    private func applyMirrorSetting(_ isOn: Bool) async {
+        mirrorProblem = nil
+
+        guard isOn else {
+            // Takes back exactly what it added. Leaving a stale list behind
+            // would keep alerting for tasks this app is no longer tracking.
+            try? await AppleReminders.withdrawAll()
+            mirrorDestination = nil
+            return
+        }
+
+        guard await AppleReminders.requestAccess() else {
+            mirrorsToAppleReminders = false
+            mirrorProblem = AppleReminders.isDenied
+                ? "Reminders access is off for \(Prompt.assistantName) in System Settings → Privacy & Security → Reminders."
+                : "Reminders access was not granted, so nothing will be copied."
+            return
+        }
+
+        mirrorDestination = AppleReminders.destination()
+        guard mirrorDestination != nil else {
+            mirrorsToAppleReminders = false
+            mirrorProblem = "No Reminders account was found on this Mac."
+            return
+        }
+
+        let work = TodoBridge.load()
+        do {
+            try await AppleReminders.sync(openTodos: work.todos, quietHours: work.quietHours)
+        } catch {
+            mirrorProblem = error.localizedDescription
+        }
     }
 
     private func refreshLinkedSummary() {

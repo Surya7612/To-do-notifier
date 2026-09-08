@@ -39,9 +39,9 @@ The native companion has [its own README](TodoCompanion/README.md).
 
 | Area | Behavior |
 | --- | --- |
-| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications; project labels and filter from the companion |
+| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications; project labels and filter from the companion, and reminders it asked to be turned into tasks |
 | **Focus** | Pomodoro timer with optional ambient sound |
-| **Companion** | Always-on desktop pet (drag anywhere; corner / perch / body-double modes) |
+| **Pet** | Always-on desktop sprite (drag anywhere; corner / perch / body-double modes) |
 | **Voice** | **⌘G** talk / **Esc** stop — commands + short chat over open work |
 | **Tutor** | Rubber Duck mode: explain out loud; optional Socrates probing questions |
 | **Study** | Notes + flashcards generated from what you said or typed |
@@ -68,7 +68,7 @@ flowchart LR
 
   subgraph C["TodoCompanion — owns the context"]
     CD[("SwiftData<br/>saves · projects · transcripts")]
-    CP[("companion-projects.json<br/>project list")]
+    CP[("companion-projects.json<br/>projects · reminders to import")]
   end
 
   ED -->|"read-only, via security-scoped bookmark"| CD
@@ -78,6 +78,19 @@ flowchart LR
 
 So a project created in the companion appears here as a label and filter on the tasks you put in it,
 and a task deleted here simply stops resolving over there.
+
+Reminders cross the same way, and it is worth being precise about how. Saying "remind me to text voice
+bugs at 10" to the companion creates a **real task here**, completable like any other — but the
+companion does not create it. It publishes the request, and this app, which owns `app-data.json`, makes
+the task itself. Importing rather than mirroring is the whole point: a read-only list would have looked
+identical and could not have been ticked off. The announcing stays with the companion, which scheduled
+a notification when the reminder was set, so this app's nag sweep skips those tasks and one thing pings
+once.
+
+Both apps notify locally, which means a due task needs this Mac awake to reach you. The companion can
+optionally copy dated tasks into an **iCloud Reminders list**, and Apple then delivers them to an
+iPhone or Watch whether the Mac is on or not — no server, nothing to pay for. Off by default; see the
+companion's README for what it does and does not promise.
 
 ### Inside the Electron app
 
@@ -214,7 +227,9 @@ npm run check
 
 ### Tests
 
-Both suites run in CI on every push.
+CI runs the Electron suite on pushes to `main` and on pull requests. The companion's suite is run
+locally, deliberately: it targets a macOS release newer than GitHub's runners provide, so putting it
+in the workflow could only ever produce a failure that says nothing about the code.
 
 ```bash
 npm test                                                    # Electron — Vitest
@@ -227,6 +242,10 @@ The companion's suite covers pure logic only — no screen, no microphone, no mo
 runs in well under a second. `electron/lib/companionProjects.test.ts` and `ProjectExportTests` are the
 two halves of the same cross-language contract, pinning the published JSON's keys on one side and
 every shape of bad input on the other, since neither language compiles against the other.
+`electron/lib/companionTasks.test.ts` covers the reminder import, where a mistake is persisted and
+compounding rather than wrong once — adding the same task on every tick, or resurrecting one already
+completed — and `electron/lib/remindersService.test.ts` pins that an imported reminder is announced by
+the companion and not a second time here.
 
 ---
 

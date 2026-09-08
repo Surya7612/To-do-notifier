@@ -85,6 +85,119 @@ import Testing
         #expect(payload.projects[0].name == "Engram Notes")
     }
 
+    // MARK: - Reminders offered as tasks
+
+    private func reminder(_ intent: String, dueIn seconds: TimeInterval) -> SavedContext {
+        let record = SavedContext(intent: intent, imageData: Data(), sourceApp: "Cursor")
+        record.remindAt = Date().addingTimeInterval(seconds)
+        return record
+    }
+
+    @Test func offersAPendingReminderAsATask() throws {
+        let record = reminder("Text voice bugs", dueIn: 3_600)
+        let payload = ProjectExport.payload(for: [], pendingReminders: [record])
+
+        let request = try #require(payload.requestedTasks.first)
+        // The id has to be the reminder's own, since the importer keys on it to
+        // avoid creating the same task twice.
+        #expect(request.id == record.reminderIdentifier)
+        #expect(request.title == "Text voice bugs")
+    }
+
+    @Test func titleIsTheUsersWordsNotASummary() throws {
+        let record = reminder("Text voice bugs", dueIn: 3_600)
+        record.aiSummary = "The user is tracking issues with speech input."
+        let payload = ProjectExport.payload(for: [], pendingReminders: [record])
+
+        // This becomes a row in a list of things the user said they would do.
+        // A model's gloss standing in for their own words there is the exact
+        // confusion the whole app exists to prevent.
+        #expect(payload.requestedTasks.first?.title == "Text voice bugs")
+    }
+
+    @Test func aJustFiredReminderIsStillOffered() {
+        // The bug this fixes was total for short reminders: offering only
+        // future ones meant "remind me in one minute" left the export a minute
+        // later, so the task was never created unless the other app happened to
+        // be opened inside that minute. It shows there as overdue, which is
+        // that app's whole idiom.
+        let payload = ProjectExport.payload(for: [], pendingReminders: [
+            reminder("Revisit the code", dueIn: -3_600),
+        ])
+
+        #expect(payload.requestedTasks.count == 1)
+    }
+
+    @Test func aLongStaleReminderIsDropped() {
+        // Bounded because the import keys on a stable id: a task the user
+        // deleted over there would otherwise come back on every launch, for
+        // good.
+        let stale = -ProjectExport.offerWindowAfterDue - 60
+        let payload = ProjectExport.payload(for: [], pendingReminders: [
+            reminder("Ancient history", dueIn: stale),
+        ])
+
+        #expect(payload.requestedTasks.isEmpty)
+    }
+
+    @Test func aSaveWithNoReminderIsNotATask() {
+        // Most saves are just kept material. Only an armed reminder is the
+        // user saying they want to come back to something.
+        let record = SavedContext(intent: "Just keeping this", imageData: Data(), sourceApp: "Safari")
+        let payload = ProjectExport.payload(for: [], pendingReminders: [record])
+
+        #expect(payload.requestedTasks.isEmpty)
+    }
+
+    @Test func aFiledReminderJoinsItsProjectsTaskList() throws {
+        // So a task created from the reminder carries the project's label in
+        // the other app, through the labelling that already exists there rather
+        // than through anything new on that side.
+        let one = project(named: "Engram", todoIDs: ["t1"])
+        let record = reminder("Text voice bugs", dueIn: 3_600)
+        record.project = one
+
+        let payload = ProjectExport.payload(for: [one], pendingReminders: [record])
+        let published = try #require(payload.projects.first)
+
+        #expect(published.todoIDs == ["t1", "companion:\(record.reminderIdentifier)"])
+    }
+
+    @Test func anUnfiledReminderJoinsNoProject() {
+        let one = project(named: "Engram", todoIDs: ["t1"])
+        let payload = ProjectExport.payload(
+            for: [one],
+            pendingReminders: [reminder("Text voice bugs", dueIn: 3_600)]
+        )
+
+        #expect(payload.projects.first?.todoIDs == ["t1"])
+    }
+
+    @Test func offeredTasksEncodeTheKeysTheImporterReads() throws {
+        let record = reminder("Text voice bugs", dueIn: 3_600)
+        let data = try ProjectExport.encode(
+            ProjectExport.payload(for: [], pendingReminders: [record])
+        )
+        let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let tasks = try #require(root["requestedTasks"] as? [[String: Any]])
+        let first = try #require(tasks.first)
+
+        #expect(first["id"] as? String == record.reminderIdentifier)
+        #expect(first["title"] as? String == "Text voice bugs")
+
+        // The importer rejects a date it cannot parse, so this is the field
+        // most likely to break the contract silently.
+        let dueAt = try #require(first["dueAt"] as? String)
+        #expect(ISO8601DateFormatter().date(from: dueAt) != nil)
+    }
+
+    @Test func theImportPrefixMatchesTheOtherApp() {
+        // Mirrored in electron/lib/companionTasks.cjs, where it is what stops
+        // that app nagging about a task this one already announces. If the two
+        // drift, one reminder is announced twice.
+        #expect(ProjectExport.importedTaskPrefix == "companion:")
+    }
+
     @Test func writesInsideThisAppsOwnContainer() {
         // Anywhere else needs a second file prompt from the user, and the
         // sandbox would refuse the write besides.

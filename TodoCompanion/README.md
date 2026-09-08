@@ -47,6 +47,15 @@ Neural Engine and keeps up across pauses, at the cost of fetching a model of a l
 megabytes the first time you use it. The choice is quality against disk space; your voice is not sent
 anywhere either way.
 
+Parakeet loads onto the Neural Engine on the first **⌘D** of each run of the app, which takes a few
+seconds and is captioned while it happens. Every press after that opens the microphone immediately.
+
+Because the question is about the screen, Apple's recognizer is told which words to expect: the
+distinctive ones OCR just read off it, plus your project names. It is the difference between "Swift
+data" and `SwiftData`, or "fair light" and Fairlight — the proper nouns you are most likely to say are
+the ones a general English model is least likely to get right, and this app happens to have already
+read them.
+
 ### Keeping asking
 
 The answer is not the end of it. Ask a follow-up and the earlier turns go with it, so "why that one?"
@@ -81,9 +90,16 @@ already make.
 ### Hearing it
 
 Turn on **Have Max read answers out loud** in Settings and answers are spoken as they arrive, a
-sentence at a time, using the speech voices built into macOS. Nothing is sent anywhere for this —
-the ban on cloud transcription applies just as much in reverse, since a hosted voice would export
-whatever is on your screen to a company that is not even answering the question.
+sentence at a time. Nothing is sent anywhere for this — the ban on cloud transcription applies just as
+much in reverse, since a hosted voice would export whatever is on your screen to a company that is not
+even answering the question.
+
+Two voices are offered, and both run on this Mac. **System** is the default and uses the voices built
+into macOS: nothing to download, and audibly robotic even on the premium ones. **Kokoro** runs
+Kokoro-82M on the Neural Engine and sounds markedly more natural, at the cost of fetching about 174 MB
+of model the first time you use it. It is refused on **macOS 26.4 and 26.5**, which carry an Apple bug
+that crashes this kind of synthesis intermittently; Settings says so rather than risking the app taking
+itself down mid-sentence. Every other release runs it.
 
 It is off by default, stops the moment you dictate, ask something else, or close the panel, and there
 is a button in the panel header to stop it mid-sentence. Code blocks are announced rather than read
@@ -191,6 +207,44 @@ Reminders are local notifications, so they need this Mac awake when they fire.
 
 Reminders respect the quiet hours you configured in the To-Do Notifier, and a reminder landing inside
 that window shows the moved time rather than the one you asked for.
+
+A reminder also **becomes a real task in the To-Do Notifier**, so "remind me to text voice bugs" shows
+up in the list you actually work from and can be ticked off there like anything else. The companion
+cannot write that app's data file, so it publishes the request and the To-Do Notifier creates the task
+itself — the same "propose, don't write" rule that governs file edits. If the save was filed under a
+project, the task carries that project's label.
+
+The **notification comes from the companion**, which scheduled it the moment you set the reminder. The
+To-Do Notifier shows the task, sorts it and lets you complete it, but stays quiet about it, so one
+thing pings once and you always know which app to go to if you want that changed.
+
+The To-Do Notifier picks up new requests when it starts and every half minute after, so it does not
+have to be open at the time. A reminder whose time has already passed still becomes a task — overdue,
+which is how that list already talks about anything you missed.
+
+### Getting reminded away from this Mac
+
+A local notification needs this Mac awake when it fires. If you are out and a task comes due, nothing
+happens — which is the honest limit of doing this without a server.
+
+Turn on **Copy dated tasks into Apple Reminders** in Settings and Apple delivers them instead. Tasks
+with a due time are written into a "To-Do Notifier" list in your iCloud account, so your iPhone and
+Watch alert you at the right moment whether this Mac is asleep, shut, or somewhere else. There is no
+server involved, nothing to pay for, and no account beyond the iCloud one you already have.
+
+Worth knowing:
+
+- **Only tasks still ahead of them are copied.** An alarm set to a time already gone is delivered the
+  moment it syncs, so copying a backlog would set off every overdue task at once on every device.
+- **Reminders has to be on iCloud.** If it is using a local account, Settings says so rather than
+  leaving you to discover that nothing reached your phone.
+- **Ticking one off on your phone silences that alert and leaves the task open here.** Reminders is a
+  way of delivering the alert, not a second copy of your list.
+- **The list is only as fresh as the last time you summoned Max.** Anything already
+  copied keeps its alarm regardless, since Apple takes it from there.
+- Reminders it copies are ones **it** stops announcing, so one thing still pings once. Your own tasks
+  keep being nagged about by the To-Do Notifier as before.
+- Turning the switch off takes back everything it added and leaves anything you wrote yourself alone.
 
 ### Projects
 
@@ -310,8 +364,13 @@ In Settings, point **Your to-do app** at the Electron app's `app-data.json`, nor
 sandboxed app access, so it cannot be done silently.
 
 The companion then reads your open tasks, notes, and quiet-hours setting — and only ever reads them.
-Traffic in the other direction is a separate file it writes with its project list, which the Electron
-app reads. Each app owns one file and reads the other's; neither writes the other's.
+Traffic in the other direction is a separate file it writes, carrying its project list and any
+reminders it would like turned into tasks, which the Electron app reads and acts on. Each app owns one
+file and reads the other's; neither writes the other's.
+
+That asymmetry is the reason for the shape of it. `app-data.json` belongs to a running Electron process
+that holds it in memory and rewrites it whole, with no locking between the two apps, so a second writer
+would eventually lose an edit or truncate the file.
 
 ## Capturing from your phone
 
@@ -343,7 +402,9 @@ Build it once on the phone, in the Share Sheet so it can accept a screenshot:
    | `source` | `iPhone` |
 
 5. **Save File** into the folder you linked, with **Ask Where to Save** off and the name set to
-   anything unique — the date works.
+   anything unique that **ends in `.json`** — the date works, so `2026-09-08T15-06-00.json`. The
+   extension is not cosmetic: the importer only looks at `.json` files, so a manifest saved without
+   it is skipped silently and Settings will report nothing waiting while the file sits in the folder.
 
 Use the **Dictionary** action rather than building the JSON as text. Shortcuts serializes a dictionary
 correctly, whereas a text template breaks the moment your reason contains a quote or a newline.
@@ -366,11 +427,11 @@ put is the only signal anything went wrong.
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
-| `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and spoken answers |
-| `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing, the to-do bridge, phone import, diffing and the editable file |
+| `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and the system and Kokoro voices |
+| `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing and the Apple Reminders mirror, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, graph, and manage what you've kept |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |
-| `Support/` | Settings, design tokens, Keychain, notifications, image encoding |
+| `Support/` | Settings, design tokens, Keychain, notifications, EventKit, file dialogs, image encoding |
 
 New `.swift` files anywhere under `TodoCompanion/` are added to the target automatically — the project
 uses a file-system synchronized group, so `project.pbxproj` does not need editing.
@@ -390,8 +451,9 @@ than by convention: `summarize` is absent from the `Brain` protocol and exists o
 so no cloud provider can be attached to it. That is why summaries of everything you keep stay local
 even when OpenAI is answering your questions.
 
-Answers are spoken by the speech voices built into macOS, so enabling that sends nothing anywhere.
-There is no wake word and no always-listening mode: the microphone opens when you open it.
+Both voices that can read an answer aloud run on this Mac — the macOS system voices and Kokoro-82M on
+the Neural Engine — so enabling that sends nothing anywhere. There is no wake word and no
+always-listening mode: the microphone opens when you open it.
 
 Max can write to exactly one file, chosen by you through a file dialog, and only when you press Apply
 on a diff. Inference never writes to disk on its own.
@@ -400,13 +462,14 @@ Nothing is drawn over your screen unless you ask for it, and your pointer is nev
 Accessibility permission is requested or used — the global hotkey, the click-outside dismissal, and
 the on-screen highlight were each built to avoid needing it.
 
-The App Sandbox is enabled, with outgoing network, microphone, and user-selected file access as the
-only added entitlements.
+The App Sandbox is enabled. The only added entitlements are outgoing network, microphone,
+user-selected file access, and — if you turn on the Apple Reminders mirror — Reminders.
 
 ## Not built yet
 
-- **Remote reminders.** Reminders are local, so they need this Mac awake when they fire. A hosted
-  scheduler is the one thing that would fix that, and the only reason to build one.
+- **Reminders that know whether they arrived.** Copying them into Apple Reminders covers being away
+  from this Mac, which was the part that actually hurt, but nothing here tracks delivery, retries a
+  failure, or escalates one you ignored. Those still need a hosted scheduler.
 - **A wake word.** Saying "hey Max" would mean an always-hot microphone, which sits badly beside an
   app whose screen capture is explicit and whose mic state is deliberately visible. The hotkey is one
   keystroke and needs no Accessibility permission. The Electron app in this repository has a wake word

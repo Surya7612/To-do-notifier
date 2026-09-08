@@ -193,6 +193,11 @@ final class CompanionViewModel {
                 ? "Listening via \(mic) (on-device)"
                 : "Listening via \(mic) (Apple servers)"
         }
+        // A voice that could not load is stated rather than left as silence,
+        // for the same reason the badge names a provider with no key: the user
+        // switched something on and nothing happened.
+        if let voiceFailure = speech.failure, phase == .idle { return voiceFailure }
+
         switch phase {
         case .idle: return contextLabel
         case .reading: return "Reading your screen…"
@@ -249,6 +254,7 @@ final class CompanionViewModel {
                                                    inProject: currentProject)
                 linkedWork = TodoBridge.load()
                 if phase == .reading { phase = .idle }
+                mirrorTasksToAppleReminders()
 
                 // Both run after the panel is already usable. Meaning matching
                 // needs a round trip to the local model, and making every
@@ -440,6 +446,14 @@ final class CompanionViewModel {
             onListeningBegan?()
             do {
                 try await dictation.start(
+                    // The question is about the screen, so the words on it are
+                    // the ones most likely to be said and least likely to be
+                    // recognized. Project names come too, being the user's own
+                    // coinages by definition.
+                    expecting: DictationHints.from(
+                        screenText: observation?.recognizedText ?? "",
+                        projectNames: projects.map(\.name)
+                    ),
                     onTranscript: { [weak self] text in
                         self?.question = text
                         self?.dictationHint = ""
@@ -714,6 +728,47 @@ final class CompanionViewModel {
 
         if let reminder {
             scheduleReminder(for: record, at: reminder, destination: destination, tagSuffix: tagSuffix)
+        }
+    }
+
+    /// Copies dated tasks into Apple Reminders, so iCloud can alert the user on
+    /// a device this Mac is not.
+    ///
+    /// Runs on summon, which is also when the task list is read: the mirror is
+    /// only ever as fresh as the last time this app looked, and saying so is
+    /// better than a background poll in an app whose rule is that it acts when
+    /// summoned. Anything already mirrored keeps its alarm regardless, since
+    /// Apple owns delivery from that point and needs nothing further from here.
+    private func mirrorTasksToAppleReminders() {
+        guard AppSettings.mirrorsToAppleReminders, AppleReminders.isAuthorized else { return }
+
+        let todos = linkedWork.todos
+        let quietHours = linkedWork.quietHours
+
+        Task {
+            do {
+                let armed = try await AppleReminders.sync(openTodos: todos, quietHours: quietHours)
+                standDown(forMirrored: armed)
+            } catch {
+                // Deliberately silent. The panel was summoned to answer a
+                // question, and a failure to reach a Reminders database is not
+                // an answer to it. Settings is where the state of this is told.
+                NSLog("[AppleReminders] mirror failed: \(error)")
+            }
+        }
+    }
+
+    /// Stops announcing a reminder Apple has taken on.
+    ///
+    /// Only for this app's own reminders, and only once they are *confirmed* in
+    /// the mirror. This is not the local hand-over the plan rejected, which
+    /// swapped one Mac-only notifier for another and bought nothing: Apple
+    /// delivers to the phone and the watch as well, so the notification kept
+    /// here would be the strictly weaker duplicate of the two, firing at the
+    /// same second with the same words.
+    private func standDown(forMirrored taskIDs: [String]) {
+        for identifier in ProjectExport.reminderIdentifiers(inTaskIDs: taskIDs) {
+            Reminders.cancel(id: identifier)
         }
     }
 

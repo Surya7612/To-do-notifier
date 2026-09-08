@@ -56,8 +56,15 @@ enum Reminders {
         content.userInfo = [contextIDKey: id]
         content.categoryIdentifier = categoryID
 
-        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute],
-                                                         from: date)
+        // Seconds included deliberately. Truncating to the minute fires a
+        // reminder up to 59 seconds early, and for anything less than a minute
+        // out it rounds the target into the *past*, where a non-repeating
+        // calendar trigger has no next matching date and simply never fires.
+        // "Remind me in one minute" is a real thing to ask for.
+        let components = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: date
+        )
         let request = UNNotificationRequest(
             identifier: id,
             content: content,

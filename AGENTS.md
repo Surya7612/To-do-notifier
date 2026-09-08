@@ -1,7 +1,7 @@
 # To-Do Notifier — Agent Instructions
 
 <!-- Single source of truth for AI coding agents working in this repo. -->
-<!-- AGENTS.md spec: https://agents.md — read by Cursor, Claude Code, Copilot, and others. -->
+<!-- AGENTS.md spec: https://agents.md -->
 
 ## Overview
 
@@ -80,7 +80,10 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
  or Parakeet on the Neural Engine via FluidAudio. Both on device
 - **Persistence**: SwiftData, with screenshots in `.externalStorage`
 - **Cross-app**: the Electron store is reached through a security-scoped bookmark from a user-chosen
-  file, which is what keeps the sandbox intact
+ file, which is what keeps the sandbox intact
+- **Off-Mac delivery**: EventKit, publishing dated tasks into an iCloud Reminders list so Apple can
+ alert a phone this Mac cannot. Opt-in, write-only, and the only thing here that leaves the machine
+ without a question having been asked — which is why it is a switch the user throws, not a default
 
 ### Key architecture decisions
 
@@ -148,6 +151,79 @@ than something read off the pixels, it outscores every individual screen signal 
 names itself in the reason — "in Engram". Deleting a project nullifies rather than cascades, so its
 saves are unfiled instead of destroyed.
 
+**A reminder becomes a task the other app owns, because Max proposes and the owner writes.** A
+reminder set here is a time on a kept screenshot, not a to-do, and it used to leave no trace in the app
+that owns tasks — so "remind me to text voice bugs" was invisible in the only list the user actually
+works from. `ProjectExport` therefore publishes `requestedTasks` alongside the projects, and
+`electron/lib/companionTasks.cjs` creates real tasks from them. Importing rather than mirroring is the
+whole point: a task created over there is genuinely that app's, so it can be completed, rescheduled and
+notified like any other, where a read-only mirror would have looked identical and done none of it. This
+is the same rule as file edits — the companion still never writes `app-data.json`, because that file
+belongs to a process holding it in memory and rewriting it whole.
+
+Idempotency rests entirely on the id: the task is `companion:` plus `SavedContext.reminderIdentifier`,
+which is stable across launches and store migrations. The importer runs repeatedly by design, so
+anything less stable would add the same task over and over. An already-imported id counts whether the
+task is open or **done** — re-adding something the user has ticked off is the failure that would make
+the feature unusable. `importCompanionTasks` returns the original array when nothing is new, so the
+caller skips the write rather than rewriting the file and re-rendering the list on every tick.
+
+**The import runs in the main process, not behind the window.** It is on the same tick as the reminder
+sweep and runs once at startup, because it must not depend on which panel is on screen or on there
+being a window at all — the app can start hidden into the tray. Hanging it off the to-do panel mounting
+was the actual bug behind "the reminder never showed up": Max published the request correctly, and
+nothing on the other side ever asked. The IPC handler survives only so that returning to the window
+picks up a reminder set moments ago instead of waiting for the next tick.
+
+A fired reminder keeps being offered for `offerWindowAfterDue`, and that is not a nicety: offering only
+*future* ones meant "remind me in one minute" left the export a minute later, so unless the to-do app
+happened to be open inside that minute the task was never created. An overdue task is exactly what
+that app is good at putting in front of someone. The window is bounded rather than indefinite because
+the import keys on a stable id — a task deleted over there would otherwise return on every launch,
+forever. The prefixed id is *also* appended to its project's `todoIDs`, which is derivable before the
+task exists, and that is what carries the project label across without teaching the importer anything
+about projects.
+
+**Max announces its own reminders; the other app only shows them.** It scheduled a notification when
+the user set the reminder, so `remindersService` skips a `companion:` task in its sweep — the two apps
+would otherwise alert separately for one thing asked about once, and nothing on screen would say which
+of them to go and silence. The skip is per task rather than a bail-out, since stopping the sweep on
+meeting one would silence every task after it. This replaced a hand-over in which Max watched for the
+task through `TodoBridge` and then cancelled its own notification: it worked, but it made a reminder's
+delivery depend on whether a second app had run yet, which is a lot of machinery to decide something
+the user has an opinion about anyway. Ownership stated once, in the app that took the request, is the
+simpler answer.
+
+**A reminder that has to arrive off this Mac is written into Apple Reminders.** This is the one thing
+`UNUserNotificationCenter` cannot do — it needs this machine awake at the due time, which plan §Phase 7
+admits outright and earmarks a hosted scheduler to fix. Apple already runs that scheduler: a reminder in
+an **iCloud** list is delivered to the phone and the watch with no server, no push certificate, and no
+paid developer programme. `ReminderMirror` decides what belongs there and `AppleReminders` writes it, on
+the same publish-only footing as `ProjectExport` — completion is never read back, because that would
+make Reminders a second source of truth for what is done. Off by default, since it is the only feature
+here that puts the user's task titles into another company's sync.
+
+Four things about it are load-bearing. **Only tasks still ahead of us are copied**: an `EKAlarm` whose
+date has passed is delivered as soon as it syncs, so mirroring a backlog would fire every overdue task
+at once on every device the moment the switch was flipped. **Withdrawal keys on the task leaving the
+to-do app's open list, not on it ceasing to be mirrorable** — a task simply falling due drops out of
+`mirrorable`, and treating that as withdrawal deletes each reminder at the moment it was worth having.
+**The list is created in a syncing source**, preferring iCloud, because `defaultCalendarForNewReminders`
+may sit in the *local* account, where every part of this works and the phone never hears about any of
+it; `Destination.thisMacOnly` is its own state and Settings says so. And **Max stands down for a
+mirrored reminder of its own**, but only once `sync` confirms it, since standing down for something that
+turned out not to be mirrored loses the reminder altogether. That is not the local hand-over the plan
+rejected: this one swaps a Mac-only notification for delivery to every device, where that one swapped
+one Mac notifier for another.
+
+The permission needs a **hand-written entitlements file**, which is why `TodoCompanion.entitlements`
+exists at all. Xcode's generated entitlements cover Calendars (`ENABLE_RESOURCE_ACCESS_CALENDARS`) and
+have no Reminders equivalent, and without `com.apple.security.personal-information.reminders` macOS
+refuses even to *show* the prompt — tccd logs that `kTCCServiceReminders` requires the entitlement and
+denies access silently, so the feature reads as broken rather than unpermitted. Because that file now
+replaces generation, the keys the `ENABLE_*` settings used to produce are restated in it and have to be
+kept in step; a mismatch surfaces as a sandbox violation at runtime, not as a build failure.
+
 **Quiet hours are mirrored, not reinvented.** The user configured a do-not-disturb window once, in the
 app that owns notification preferences. `QuietHours.contains` deliberately reproduces `inQuietHours` in
 `electron/lib/dataMerge.cjs`, down to treating an equal start and end as *never* quiet rather than always
@@ -174,6 +250,24 @@ Note that `NSDataDetector` takes no reference date and always resolves relative 
 clock, which is why the tests assert relative facts instead of fixed timestamps. A fixture that states a
 clock time has to state a future day alongside it for the same reason: a stated hour already gone is
 rejected by design, so `"at 10 AM today"` made the suite pass every morning and fail every afternoon.
+
+**`NSDataDetector` does not understand durations shorter than a day, at all.** Measured, not assumed:
+it matches `in 3 days`, `in 2 weeks`, `next tuesday at 4` and `tomorrow`, and returns *nothing* for
+`in an hour`, `in 10 min`, `in 90 seconds` or `in 1 hour 30 minutes`. It also requires digits, so
+`in three days` and `in a week` fail while `in 3 days` works. This is why `ReminderPhrase` carries its
+own `durationPattern`, and why that runs **before** the detector rather than after: a stated duration
+is the user saying when they want something back, whereas a clock time elsewhere in the sentence is
+usually part of what they are describing — "remind me in an hour about the 3pm meeting" means an hour.
+A duration of a day or more still gets the morning treatment a bare "friday" does, because it states
+no time of day; anything shorter means exactly what it says and must not be moved. The failure this
+fixes was total rather than partial: with no time found, "remind me to send an email in one minute"
+fell to the tomorrow-morning fallback, and because a fallback states no time it also failed
+`isReminderInstruction`, so it went to the model — which replied that it could not set reminders.
+
+**A notification trigger built from date components must include `.second`.** Truncating to the minute
+fires every reminder up to 59 seconds early, and for anything less than a minute out it rounds the
+target into the *past*, where a non-repeating `UNCalendarNotificationTrigger` has no next matching
+date and so never fires at all — silently, since scheduling itself succeeds.
 
 **Who answers is switchable from the panel, not only from Settings.** The badge in the panel header is a
 menu, because the choice is per-question in practice: the local model reads text back fine and is worth
@@ -280,9 +374,10 @@ naming it and watching it for silence is identical whoever transcribes, and it w
 get right, so `SpeechDictation` keeps all of it and hands buffers to a `DictationRecognizer`. Apple's
 backend stays the default because it needs nothing downloaded — asking for a hundred megabytes before
 anyone has tried the feature is the wrong trade for a default — and `AppSettings.DictationEngine`
-switches to Parakeet, which runs on the Neural Engine through FluidAudio, this project's first and
-only Swift package dependency. Both run on this Mac; the choice is quality against disk space, never
-privacy, and neither may be swapped for a hosted service.
+switches to Parakeet, which runs on the Neural Engine through FluidAudio, this project's only Swift
+package dependency — it later earned its place twice over by also supplying the Kokoro voice. Both run
+on this Mac; the choice is quality against disk space, never privacy, and neither may be swapped for a
+hosted service.
 
 The recognizer is **kept between sessions**, and rebuilt only when the setting changes. Parakeet's
 models take tens of seconds to load onto the Neural Engine, so constructing one per session paid that
@@ -296,6 +391,25 @@ audio is *copied* rather than its buffer retained, which is not an optimization 
 buffer is only valid for the duration of the callback, and this backend looks at the audio a fraction
 of a second later, on an interval, because the recognizer is an actor and the render thread cannot
 await. Apple's backend escapes this only because `append` copies synchronously.
+
+**The screen is a vocabulary, not just a subject.** The user is dictating a question *about the
+window in front of them*, and OCR has already read it, so the proper nouns they are most likely to say
+are sitting in the capture — and those are exactly the words a general English model gets wrong.
+`SFSpeechAudioBufferRecognitionRequest.contextualStrings` takes them, so `DictationHints` picks the
+distinctive ones and `SpeechDictation.start` passes them down. Only distinctive: `contextualStrings` is
+a small budget that *biases* the model, so spending it on ordinary English both wastes the slot and
+skews the model towards a word it was going to get right anyway. Interior capitals and letter-digit
+mixes (`SwiftData`, `qwen3`) are the whole point — a recognizer hears "Swift data" — and are kept in
+preference to plain capitalised nouns when the list has to be cut, since OCR produces those in bulk
+from every line of UI text. Project names come first and are never truncated away, being the user's own
+coinages by definition. Parakeet's streaming manager takes no vocabulary, so it ignores them rather
+than the caller having to know which backend it holds.
+
+`addsPunctuation` is likewise **off** by default, which is why dictated text arrived as one
+unpunctuated run-on. That is not only how the sentence reads: this text becomes a saved reason, a
+reminder phrase and a prompt, so a missing full stop degrades everything downstream. `taskHint` is set
+to `.dictation` for the same reason — the default assumes a search query. Neither affects where audio
+goes; `requiresOnDeviceRecognition` still decides that.
 
 **A dictation pause starts a new segment from empty.** `SFSpeechRecognizer` finalizes a segment when
 the speaker pauses, and the next result's `bestTranscription` begins again from nothing. Assigning it
@@ -311,15 +425,62 @@ second region measured the new selection against the whole display while the ima
 scaling by the wrong factor and offsetting by the first crop's origin — so re-selecting after a mis-drag
 cropped somewhere unrelated or failed as "too small to read".
 
-**Speech out is local, like speech in.** `AVSpeechSynthesizer` rather than a hosted voice. The ban on
-cloud transcription applies in reverse — routing every answer through a speech vendor would export the
-contents of the user's screen to a third party that is not even answering the question. It speaks a
-sentence at a time so playback starts about a second in, rather than per word, which the synthesizer
-renders as a stilted list because its prosody needs a full clause. It is off by default, stops on
-`.immediate`, and stops when dictation starts: the synthesizer plays through the speakers and the mic
-would transcribe it, so Max would otherwise dictate to itself. Markup is stripped before speaking, and
-a fenced block is announced rather than read, since reading code aloud character by character is both
-unbearable and too long to interrupt.
+**Speech out is local, like speech in.** The ban on cloud transcription applies in reverse — routing
+every answer through a speech vendor would export the contents of the user's screen to a third party
+that is not even answering the question. So the picker has two entries rather than three, and
+`VoiceEngineTests` pins that neither describes a hosted service. It speaks a sentence at a time so
+playback starts about a second in, rather than per word, which comes out as a stilted list because
+prosody needs a full clause. It is off by default, stops on `.immediate`, and stops when dictation
+starts: the voice plays through the speakers and the mic would transcribe it, so Max would otherwise
+dictate to itself. Markup is stripped before speaking, and a fenced block is announced rather than
+read, since reading code aloud character by character is both unbearable and too long to interrupt.
+
+`SpeechPlayback` decides *what* is spoken and when; a `VoiceSynthesizer` says it, on the same split as
+dictation and for the same reason — clause-breaking and markup-stripping are identical whoever talks.
+The system voices stay the default because they need nothing downloaded, and **Kokoro-82M** is the
+answer to their being audibly robotic. It is reached through **FluidAudio**, which is already here for
+Parakeet, so the better voice costs no new dependency. The two Swift ports of Kokoro that look like the
+obvious choice were both tried and rejected: their manifests declare local path dependencies, which SPM
+rejects in a remote package, and the grapheme-to-phoneme engine underneath them (`MisakiSwift`, for its
+out-of-vocabulary fallback network) pulls in MLX, which needs a Metal toolchain that Xcode no longer
+ships by default. That would have put a multi-gigabyte toolchain download between a clone and a build.
+FluidAudio runs the same model with its own CoreML phonemizer and none of that.
+
+The clause is also the unit of work: Kokoro synthesizes one at a time on the Neural Engine, so one
+sentence is generated while the previous plays, and audio is queued through an `AVAudioPlayerNode`
+because scheduling buffers keeps them in order for free. `isSpeaking` only clears when the queue is
+empty *and* nothing is still playing — the worker finishes generating well before the sound ends, so
+the obvious version turned the stop button off mid-sentence.
+
+**How the answer is cut up is what makes it sound human, and one clause per synthesis is too fine a
+cut.** Sending each clause the moment it ended was right for `AVSpeechSynthesizer`, which queues
+utterances and shapes them itself, and audibly wrong for Kokoro: every piece gets its own intonation
+contour and its own padding of near-silence at both ends, so a paragraph arrived as a sequence of
+announcements. `SpeechPlayback.nextChunk` therefore sends the *first* sentence immediately — that is
+what makes speech start about a second in — and accumulates to `minimumChunk` after it.
+
+It is bounded at the other end too, and that bound is not cosmetic: Kokoro **throws** on a phoneme
+sequence over 510 characters and a failed clause is dropped rather than spoken, so an unbounded chunk
+is silently missing speech. Hence `maximumChunk`, a break at a word gap when a single sentence
+exceeds it, and a test asserting nothing longer ever leaves. A colon is deliberately not a boundary —
+it introduces the clause after it, so splitting there puts the pause in the wrong place — and a period
+only counts when whitespace follows, or every decimal point and file extension ends a sentence.
+
+`trimmedWithTail` cuts the model's padding off both ends and appends a fixed one. Taking the tail from
+whatever the synthesis happened to leave was the same bug in a quieter form, because some clauses come
+back with almost none and those ran together.
+
+**Kokoro is refused outright on macOS 26.4 and 26.5.** Those releases carry an Apple bug that crashes
+Kokoro synthesis inside libBNNS *intermittently*, whatever the compute units are set to; 26.6 fixes it.
+FluidAudio only logs a warning. A wrong answer here does not look like a broken voice, it looks like the
+app vanishing once in a while, which is a far worse outcome than a plainer voice — so
+`isSupportedBySystem` decides for itself, Settings says so before the switch is flipped, and the
+deployment target being lower than 26.6 is exactly why the check has to exist.
+
+No Kokoro **voice** picker, though, unlike the OpenAI model list: voice packs are fetched individually
+and nothing in the app can see which ones the downloaded bundle actually carries, so a list would be
+offering choices that may not resolve — and a voice that fails to resolve drops the clause silently.
+The bundle's own default is used until that is verifiable.
 
 **Max may propose a file edit; only the user writes one.** This is deliberately *not* the autonomous
 computer-use agent the plan rejects, and the argument is about product quality as much as safety: this
@@ -396,11 +557,11 @@ the screen, it is the wrong change.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~274 | Hotkey, provider choice, Ollama and OpenAI settings, and the to-do app link. |
+| `App/SettingsView.swift` | ~389 | Hotkey, provider choice, Ollama and OpenAI settings, the to-do app link, and the Apple Reminders mirror. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
 | `Companion/CompanionView.swift` | ~640 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~963 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, and the control an answer named. |
+| `Companion/CompanionViewModel.swift` | ~1088 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, and the control an answer named. |
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
 | `Capture/ScreenTextLocator.swift` | ~165 | Finds the control an answer named among those boxes, and maps one onto the screen. Pure. |
@@ -411,23 +572,28 @@ the screen, it is the wrong change.
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
-| `Voice/SpeechPlayback.swift` | ~116 | Reads answers aloud with `AVSpeechSynthesizer`, sentence by sentence, on device. |
-| `Voice/SpeechDictation.swift` | ~167 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition. |
-| `Voice/DictationRecognizer.swift` | ~206 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
-| `Voice/ParakeetDictationRecognizer.swift` | ~146 | The Parakeet backend, on the Neural Engine through FluidAudio. |
+| `Voice/SpeechPlayback.swift` | ~266 | Decides what of a streaming answer gets read aloud, and when. Strips markup, sizes clauses. |
+| `Voice/VoiceSynthesizer.swift` | ~133 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
+| `Voice/KokoroVoiceSynthesizer.swift` | ~212 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
+| `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
+| `Voice/DictationRecognizer.swift` | ~241 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
+| `Voice/DictationHints.swift` | ~96 | Picks the words on screen worth telling the recognizer to expect. Pure. |
+| `Voice/ParakeetDictationRecognizer.swift` | ~148 | The Parakeet backend, on the Neural Engine through FluidAudio. |
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
-| `Store/ReminderPhrase.swift` | ~150 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
-| `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
+| `Store/ReminderPhrase.swift` | ~272 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
+| `Store/ReminderMirror.swift` | ~140 | Which of the to-do app's tasks belong in Apple Reminders, and what to withdraw. Pure. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
-| `Store/ProjectExport.swift` | ~90 | Publishes the project list as JSON for the Electron app to read. Write-only half of the bridge. |
-| `Support/AppSettings.swift` | ~190 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
+| `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
+| `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
+| `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
+| `Support/AppSettings.swift` | ~289 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
 | `Support/DesignSystem.swift` | ~59 | Spacing, radius, alpha, and status colour tokens. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
@@ -474,7 +640,10 @@ xcodebuild test -project TodoCompanion.xcodeproj -scheme TodoCompanion -destinat
 `TodoCompanionTests/` uses Swift Testing (`import Testing`, `@Test`, `#expect`). The whole suite runs in
 well under a second because it covers only pure logic — no screen, no microphone, no Ollama, no network.
 
-What is covered, and why these pieces specifically:
+What is covered, and why these pieces specifically. The table is keyed by the **file** a suite lives
+in, and several files hold more than one `@Suite` — `PromptTests.swift` alone carries the conversation,
+persona, savable-reason and preset suites — so a suite name absent here is usually grouped rather than
+untested. `TestSupport.swift` is fixtures, not a suite.
 
 | Suite | Covers | Why it needs a test |
 |-------|--------|---------------------|
@@ -494,18 +663,39 @@ What is covered, and why these pieces specifically:
 | `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
 | `ScreenRectTests` | Normalized box → screen coordinates | Vision and AppKit share a bottom-left origin where `cropped(to:)` needs a flip, so the mistake is a box a mirrored distance up the screen, which looks plausible. Also pins that a cropped capture maps into the *selection*. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
+| `ReminderMirrorTests` | What is copied into Apple Reminders, and what is taken back | The only place this app writes into something Apple syncs, so every failure lands in the user's pocket rather than on screen. Pins that a backlog is *not* copied, since an alarm already past is delivered on sync and would alert for everything at once, and that a task merely falling due is not mistaken for one that was finished. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
+| `VoiceEngineTests` | Which systems the Kokoro voice will run on, how an answer is cut into things to say, and the join between them | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. The chunking decides whether the delivery sounds like a person or a station announcement, which is inaudible from the code, and an over-long chunk is *dropped* rather than spoken — so it pins the upper bound as well as the lower. Also pins that neither offered voice is a hosted service. |
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
+| `DictationHintsTests` | Which on-screen words are offered to the recognizer | Both failure modes are invisible: too few and the feature does nothing, too many and the budget is spent biasing towards words that were never going to be misheard. Pins that ordinary capitalised UI text is dropped and that an identifier survives truncation. Asserts nothing about recognition accuracy, which is Apple's model rather than this logic. |
 | `InboxImporterTests` | Parsing the phone's JSON manifest | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. |
-| `ProjectExportTests` | The published JSON's keys and date format | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
+| `ProjectExportTests` | The published JSON's keys and date format, and the reminders offered as tasks | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
 
 The Electron side has its own suite, run with `npm test` (vitest), and
 `electron/lib/companionProjects.test.ts` is the other half of that same contract: it pins that every
-shape of bad or absent input lands on "no projects" rather than breaking the task list.
+shape of bad or absent input lands on "no projects" rather than breaking the task list, and that a
+missing `requestedTasks` — which older versions of the file have — does not take the projects with it.
+
+`electron/lib/companionTasks.test.ts` covers the import itself, where the failure is *persisted and
+compounding* rather than merely wrong once: an import that is not idempotent adds the same task on
+every tick, and one that is too eager brings back a task the user has already completed. It also pins
+that nothing is written when nothing is new, since that is what keeps a 30-second tick from rewriting
+the file.
+
+`electron/lib/remindersService.test.ts` pins who announces what. An imported reminder must produce no
+notification here, because Max already scheduled one — and the same sweep must go on announcing every
+ordinary task around it. Both failures are inaudible from the code and obvious to the user: one alert
+arriving twice, or a task going quiet for no stated reason.
+
+The rest of that suite predates the companion and covers the Electron app's own edges:
+`dataMerge.test.ts` on merging a stored file with current defaults and on the external-URL allowlist,
+`safeWindow.test.ts` on not addressing a destroyed `BrowserWindow`, `companionChat.test.ts` on the
+chat helpers, and `src/lib/voiceParse.test.ts` on turning a spoken sentence into a command. They are
+listed here so "what is tested" can be answered from this file alone.
 
 Two conventions worth keeping:
 
@@ -544,10 +734,9 @@ Keep argument names the same as the variables they came from rather than abbrevi
 
 - Commit messages are prose explaining *why*, in the imperative mood. No bullet lists, no `feat:`
   prefixes, no emoji
-- **Never** add `Co-authored-by` trailers or any attribution to an AI tool. History must show only
-  the repository owner. Cursor's git wrapper re-injects this trailer, so commits are made with
-  `git commit-tree` plumbing to bypass it, then verified with
-  `git log --format='%B' | rg -i 'co-authored-by'`
+- **Never** add `Co-authored-by` trailers or any other attribution. History shows the repository
+  owner. Some tooling appends one unasked, so verify with
+  `git log --format='%B' -1 | rg -i 'co-authored-by'` and amend if it appears
 - Do not force-push shared branches
 
 ### Do not
@@ -555,7 +744,7 @@ Keep argument names the same as the variables they came from rather than abbrevi
 - Do not add cloud **transcription** or **speech synthesis**, or analytics. Voice and usage data stay
  on the machine
 - Do not add a wake word or any always-listening mode. The mic opens when the user opens it. Note the
- Electron app's own wake word (`ilEnabled`) ships **off by default**, which is the evidence, not the
+ Electron app's own wake word (`wakeWordEnabled`) ships **off by default**, which is the evidence, not the
  counter-example
 - Do not let inference write to disk. Max proposes a file change, the user is shown a diff, and only a
  button press writes anything. Do not extend editing past one explicitly-picked file

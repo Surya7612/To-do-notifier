@@ -33,6 +33,7 @@ function registerIpc(deps) {
     tts,
     ollama,
     setConversationActive,
+    syncCompanionTasks,
   } = deps;
 
   const { broadcast, notify, createMainWindow, showPanel, hidePanel } = windows;
@@ -63,6 +64,15 @@ function registerIpc(deps) {
   // a separate process that can create a project at any moment, and there is
   // no signal from it when that happens.
   ipcMain.handle("companion:projects", () => loadCompanionProjects());
+
+  // Reminders the user set in the companion, turned into tasks this app owns.
+  //
+  // The work happens in `main.cjs`, on a timer and at startup, because it must
+  // not depend on a window existing. This handler exists so returning to the
+  // window picks up a reminder set moments ago rather than waiting for the next
+  // tick. Kept separate from `companion:projects`, because a handler that reads
+  // a list should not also create tasks.
+  ipcMain.handle("companion:import-tasks", () => syncCompanionTasks());
 
   ipcMain.handle("data:set", (_e, next) => {
     if (!next || typeof next !== "object") {

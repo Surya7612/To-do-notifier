@@ -430,7 +430,9 @@ Do not depend on the home Mac being awake for critical remote reminders.
 
 The Mac can sleep, reboot, lose Wi-Fi, or the app can close.
 
-Remote reminders should eventually come from a small cloud scheduler/service.
+Most of this is now answered without a server: dated tasks are mirrored into Apple Reminders through
+EventKit, so the alert arrives on the phone and the watch whatever this Mac is doing. See Phase 7. A
+small cloud scheduler is still the only thing that would buy delivery state, retry, and escalation.
 
 Only minimal reminder data needs to leave the Mac:
 
@@ -646,15 +648,14 @@ Only migrate older features when the native architecture benefits from it.
 
 ---
 
-# 10. Xcode + Cursor Workflow
+# 10. Editor and Xcode
 
-Use both.
+Use both, on the split below. They edit the same files on disk, so the only thing that matters is
+which one owns the project file.
 
-## Cursor
+## The editor
 
-Primary source-code editor / AI coding environment.
-
-Use it for:
+Primary place source is written:
 
 - Swift source
 - SwiftUI
@@ -681,17 +682,17 @@ Use for:
 - Target settings
 - Project configuration
 
-Both edit the same files on disk.
-
 ### Important
 
-Avoid letting Cursor blindly modify:
+Do not hand-edit:
 
 ```text
 project.pbxproj
 ```
 
-unless necessary.
+unless there is no alternative. New `.swift` files never require it — the target uses a file-system
+synchronized group — so in practice this comes up only for package dependencies and entitlements,
+both of which were done by hand here and both of which are easy to corrupt.
 
 Let Xcode manage:
 
@@ -711,7 +712,6 @@ Let Xcode manage:
 - [x] Install Xcode
 - [x] Create native macOS project
 - [x] Save it inside the existing repository
-- [x] Open the native project folder in Cursor
 - [x] Confirm build/run from Xcode
 - [x] Create clean Git branch for native work (`native-companion`)
 
@@ -799,6 +799,13 @@ Add:
       an interface means looking at the interface, not at the panel, and a
       hosted voice was never on the table — the ban on cloud transcription
       applies in reverse.
+- [x] A second engine at each end, both still on this Mac, because the defaults
+      that need no download are also the weaker ones. Parakeet transcribes and
+      Kokoro-82M speaks, both on the Neural Engine through FluidAudio — one
+      dependency, added for the recognizer and later earning its place twice by
+      supplying the voice. Apple's backends stay the default: asking for
+      hundreds of megabytes before anyone has tried the feature is the wrong
+      trade. The choice is quality against disk space, never privacy.
 - [x] Visual listening state (pink ring at the cursor, driven by real input level
       so a muted or wrong input device is visible rather than silent)
 - [x] Stop / cancel control (⌘D again, Esc, or silence)
@@ -1046,6 +1053,9 @@ mode of its own: schema is not behaviour.
 
 - [x] Quiet hours (mirrored from the Electron app rather than reinvented)
 
+- [x] Delivery to other devices, by writing dated tasks into an iCloud
+      Reminders list (`ReminderMirror`, `AppleReminders`)
+
 What is still genuinely remote-only, and therefore still open:
 
 - [ ] Minimal cloud reminder model
@@ -1055,9 +1065,31 @@ What is still genuinely remote-only, and therefore still open:
 - [ ] Escalation logic
 - [ ] Optional experimental self-iMessage
 
-The honest limitation of the local version: a reminder needs this Mac awake at
-the time it fires. That is the one thing a hosted scheduler would actually buy,
-and it is the reason to build one eventually rather than now.
+The honest limitation of a local notification is that it needs this Mac awake at
+the time it fires, and that was named here as the one thing a hosted scheduler
+would actually buy. Most of what it would buy turns out to be purchasable for
+nothing: Apple runs a scheduler already, and a reminder written into an iCloud
+list is delivered to the phone and the watch with no server, no push
+certificate, and no paid developer programme. So the away-from-Mac case is now
+covered by a publish into Apple Reminders, on the same footing as
+`ProjectExport` — one-way, never read back as truth.
+
+That does not close the rest of this phase, and it is worth being clear about
+what it does not buy. There is no delivery state, so nothing here knows whether
+an alert was seen; there is no escalation and no retry; and the mirror is only
+as current as the last time the app was summoned, because this app reads the
+task list on summon rather than polling. A hosted scheduler is still the answer
+to those. It is no longer the answer to "I am not at my Mac", which was the only
+part of it the user actually felt.
+
+Two consequences worth recording, because both are the kind of thing that reads
+as a broken feature rather than a refused one. Only tasks **still ahead** are
+copied: an `EKAlarm` whose date has passed is delivered as soon as it syncs, so
+mirroring a backlog would set off every overdue task at once, on every device,
+the moment the switch was flipped. And the list must be created in a **syncing**
+source — `defaultCalendarForNewReminders` may sit in the local account, where
+everything here works and nothing ever reaches the phone, so that state is named
+in Settings instead of discovered later.
 
 Native reminders respect the quiet hours already configured in the Electron app,
 read through the same read-only bridge. Two notification systems disagreeing
@@ -1090,6 +1122,10 @@ does not own. Completing a task stays where tasks live.
 - [x] Read them there (`electron/lib/companionProjects.cjs`) and label tasks by project
 - [x] Filter the task list by project
 - [x] Tests on both sides of the contract
+- [x] Publish reminders as task requests, and create real tasks from them there
+      (`electron/lib/companionTasks.cjs`), keyed on the reminder's own identifier
+- [x] Keep the announcing in the companion, and skip those tasks in the to-do
+      app's nag sweep, so one thing pings once
 
 A grouping only the companion could see was half a feature: the point of putting
 tasks in a project is to look at that project's work, and the to-do list is where
@@ -1115,6 +1151,49 @@ The consequence to keep in mind: the to-do app shows project **labels and a
 filter**, and nothing more. It cannot create a project or move a task between
 them, because it does not own the list. That asymmetry is deliberate and should
 stay visible in the UI rather than being smoothed over.
+
+### Reminders as tasks
+
+A reminder set in the companion is a time on a kept screenshot, not a to-do, and
+for a while it left no trace in the app that owns tasks — so "remind me to text
+voice bugs" was invisible in the only list the user actually works from. The fix
+follows the rule that already governs file edits: **the companion proposes, the
+owner writes.** `ProjectExport` publishes `requestedTasks`, and the to-do app
+creates real tasks from them.
+
+Importing rather than mirroring is the point. A task created there is genuinely
+that app's, so it can be completed, rescheduled and notified like any other,
+where a read-only list would have looked identical and done none of it. The
+companion still never writes `app-data.json`.
+
+Idempotency rests on the id — `companion:` plus the reminder's own identifier,
+which is stable across launches and store migrations. The import runs repeatedly
+by design, so anything less stable would add the same task over and over. An
+already-imported id counts whether the task is open or **done**: bringing back
+something the user has ticked off is the failure that would make this unusable.
+
+Two things were got wrong first time round and are worth recording, because both
+failed *silently* in the direction of the feature appearing not to exist.
+
+The import was hung off the to-do panel mounting, so it only ran when that panel
+was on screen — and the app can start hidden into the tray, with no window at
+all. It now runs in the main process, at startup and on the same tick as the
+reminder sweep; the IPC handler remains only so that returning to the window
+picks up something set moments ago. And only *future* reminders were published,
+which meant "remind me in one minute" left the export a minute later: unless the
+to-do app happened to be open inside that minute, the task was never created. A
+fired reminder is now still offered for a bounded window, and arrives overdue —
+which is how that list already talks about anything missed. Bounded, because the
+import keys on a stable id, so an unbounded offer would resurrect a task the user
+deleted, forever.
+
+The notification stays with the companion, which scheduled it when the user set
+the reminder; the to-do app shows and completes the task but skips it in its nag
+sweep. The first design handed ownership over instead — the companion watched for
+the task through the read-only bridge and then cancelled its own notification —
+which worked, but made delivery of a reminder depend on whether a second app had
+run yet. Stating ownership once, in the app that took the request, does the same
+job with none of that.
 
 Later:
 
@@ -1319,16 +1398,18 @@ Do not build:
   app whose screen capture is explicit and whose mic state is deliberately
   visible, and the hotkey is already one keystroke with no Accessibility
   requirement. The Electron app's own wake word ships off by default
-- Cloud speech **synthesis**. Spoken answers are built, using the macOS voices;
-  a hosted voice would export the screen to a vendor that is not answering the
-  question
+- Cloud speech **synthesis**. Spoken answers are built, using either the macOS
+  voices or Kokoro-82M on the Neural Engine; a hosted voice would export the
+  screen to a vendor that is not answering the question
 - Calendar/email integrations immediately
 - Social features
 - SaaS billing
 - YC pitch deck
 - Startup branding exercise
 - Multi-user authentication unless needed for remote sync
-- Cursor-pointing / element-highlighting overlays (see §2, rejected from Clicky)
+- Moving the user's pointer to a control (see §2, rejected from Clicky). Only the
+  *pointing* half was rejected; Phase 10 ships an on-screen highlight, which is
+  drawn from a button press and names its match first
 - Anything requiring Accessibility permission
 - Cloud speech-to-text
 - Hosted LLMs doing **background** work — summaries, categorisation, anything

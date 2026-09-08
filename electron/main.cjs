@@ -33,6 +33,8 @@ const { createPetRuntime } = require("./petRuntime.cjs");
 const { createTrayRuntime } = require("./trayRuntime.cjs");
 const { registerIpc } = require("./registerIpc.cjs");
 const { createVoiceHotkeys } = require("./lib/voiceHotkeys.cjs");
+const { loadCompanionProjects } = require("./lib/companionProjects.cjs");
+const { importCompanionTasks } = require("./lib/companionTasks.cjs");
 
 // Some shells set this and break Electron GUI launches
 delete process.env.ELECTRON_RUN_AS_NODE;
@@ -224,6 +226,41 @@ if (!gotLock) {
       createMainWindow: windows.createMainWindow,
     });
 
+    /**
+     * Turns reminders set in the companion into tasks this app owns.
+     *
+     * Lives here rather than only behind the renderer's request because it must
+     * not depend on which panel happens to be on screen — or on there being a
+     * window at all, since this app can start hidden into the tray. That was
+     * the bug: the import was wired to the todo panel mounting, so a reminder
+     * set in the companion simply never arrived until that panel was opened.
+     *
+     * Writes nothing when nothing is new, which is the ordinary case on a
+     * 30-second tick.
+     */
+    const syncCompanionTasks = () => {
+      try {
+        const { requestedTasks } = loadCompanionProjects();
+        if (requestedTasks.length === 0) return { created: 0 };
+
+        const prev = loadData();
+        const { todos, created } = importCompanionTasks(prev.todos, requestedTasks);
+        if (created.length === 0) return { created: 0 };
+
+        const merged = mergeAppData(DEFAULT_SETTINGS, prev, { ...prev, todos });
+        saveData(merged);
+        windows.broadcast("data:changed", merged);
+        tray.rebuildTrayMenu();
+
+        return { created: created.length };
+      } catch (err) {
+        // The companion may not be installed, may never have run, or may be
+        // midway through publishing. None of that is worth a dialog.
+        console.error("[companionTasks]", err);
+        return { created: 0 };
+      }
+    };
+
     registerIpc({
       ctx,
       app,
@@ -245,6 +282,7 @@ if (!gotLock) {
       tts,
       ollama,
       setConversationActive: voiceHotkeys.setConversationActive,
+      syncCompanionTasks,
     });
     tray.buildTray();
     windows.createPetWindow();
@@ -271,8 +309,15 @@ if (!gotLock) {
 
     void ollama.ensureOllamaRunning(boot.settings.ollamaModel);
 
-    ctx.reminderTimer = setInterval(reminders.checkReminders, 30_000);
-    setTimeout(reminders.checkReminders, 1500);
+    // Import first, so a task that has just arrived is a task the sweep can
+    // already see.
+    const tick = () => {
+      syncCompanionTasks();
+      reminders.checkReminders();
+    };
+
+    ctx.reminderTimer = setInterval(tick, 30_000);
+    setTimeout(tick, 1500);
 
     app.on("activate", () => {
       windows.createMainWindow({ show: true });

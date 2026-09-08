@@ -1,4 +1,5 @@
 const { pickLine } = require("./random.cjs");
+const { isCompanionTodoId } = require("./companionTasks.cjs");
 
 /**
  * Due-soon / overdue reminder sweep and its "mom voice" copy.
@@ -52,6 +53,12 @@ function createRemindersService({
 
     for (const todo of data.todos) {
       if (todo.status === "done") continue;
+      // A task imported from a reminder is announced by the companion, which
+      // scheduled a notification for it when the user set it. This list is
+      // where the task gets *worked*, not where it gets announced — nagging
+      // here as well would mean two alerts for one thing the user asked about
+      // once. It still shows, sorts and completes like any other task.
+      if (isCompanionTodoId(todo.id)) continue;
       const due = new Date(todo.dueAt).getTime();
       if (Number.isNaN(due)) continue;
 

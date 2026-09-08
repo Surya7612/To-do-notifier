@@ -40,7 +40,7 @@ function companionProjectsPath(homedir = os.homedir()) {
  * @param {string} raw
  */
 function parseCompanionProjects(raw) {
-  const empty = { projects: [], updatedAt: null };
+  const empty = { projects: [], requestedTasks: [], updatedAt: null };
 
   let parsed;
   try {
@@ -80,8 +80,42 @@ function parseCompanionProjects(raw) {
 
   return {
     projects,
+    requestedTasks: parseRequestedTasks(parsed.requestedTasks),
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : null,
   };
+}
+
+/**
+ * Reminders the companion is offering as tasks.
+ *
+ * Absent from older versions of the file, so a missing or malformed list is an
+ * empty one rather than a reason to reject the projects alongside it. Every
+ * field is required: a request with no title would become a blank row in the
+ * task list, and one with no id could not be imported twice without
+ * duplicating, which is the whole basis of the contract.
+ *
+ * @param {unknown} value
+ */
+function parseRequestedTasks(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "string" &&
+        item.id !== "" &&
+        typeof item.title === "string" &&
+        item.title.trim() !== "" &&
+        typeof item.dueAt === "string" &&
+        !Number.isNaN(Date.parse(item.dueAt))
+    )
+    .map((item) => ({
+      id: item.id,
+      title: item.title.trim(),
+      dueAt: item.dueAt,
+    }));
 }
 
 /**
@@ -91,12 +125,11 @@ function loadCompanionProjects(filePath = companionProjectsPath()) {
   try {
     return parseCompanionProjects(fs.readFileSync(filePath, "utf8"));
   } catch {
-    return { projects: [], updatedAt: null };
+    return { projects: [], requestedTasks: [], updatedAt: null };
   }
 }
 
 module.exports = {
-  COMPANION_BUNDLE_ID,
   companionProjectsPath,
   parseCompanionProjects,
   loadCompanionProjects,
