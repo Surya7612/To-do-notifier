@@ -166,16 +166,33 @@ enum AppleReminders {
         var value: ExistingMirroredTask
     }
 
+    /// Carries EventKit's own objects off its callback queue and onto this actor.
+    ///
+    /// `EKReminder` is not `Sendable`, and the array arrives as a parameter from
+    /// a framework that gives no undertaking to have let go of it, so the
+    /// compiler cannot establish that the value is disconnected and the transfer
+    /// has to be asserted instead of checked.
+    ///
+    /// What makes the assertion sound is the shape of the call rather than a
+    /// hope: the completion handler does nothing whatever with the reminders
+    /// except hand them straight over, and every use of them afterwards — and
+    /// every use of `store` anywhere in this file — is on the main actor,
+    /// because the whole type is isolated to it. The objects are therefore only
+    /// ever touched from one place.
+    private struct FetchedReminders: @unchecked Sendable {
+        let reminders: [EKReminder]
+    }
+
     private static func fetchMirrored(in calendar: EKCalendar) async -> [String: Entry] {
         let predicate = store.predicateForReminders(in: [calendar])
-        let reminders: [EKReminder] = await withCheckedContinuation { continuation in
+        let fetched: FetchedReminders = await withCheckedContinuation { continuation in
             store.fetchReminders(matching: predicate) { found in
-                continuation.resume(returning: found ?? [])
+                continuation.resume(returning: FetchedReminders(reminders: found ?? []))
             }
         }
 
         var entries: [String: Entry] = [:]
-        for reminder in reminders {
+        for reminder in fetched.reminders {
             guard let taskID = ReminderMirror.taskID(from: reminder.url) else { continue }
             let alarmAt = reminder.alarms?.first?.absoluteDate
                 ?? reminder.dueDateComponents.flatMap(Calendar.current.date(from:))

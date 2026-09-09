@@ -816,6 +816,18 @@ Keep argument names the same as the variables they came from rather than abbrevi
 - This project builds with `MemberImportVisibility`, so import every module you use directly —
   notably `import SwiftData` in any file touching `mainContext` or `modelContainer`
 - Adding an early `return` to a `switch` expression means every branch now needs an explicit `return`
+- **The language mode is Swift 6**, so a data-race diagnostic is a build failure rather than a
+  warning. Two consequences come up constantly. `SWIFT_DEFAULT_ACTOR_ISOLATION` is `MainActor`, so a
+  pure value type needs an explicit `nonisolated` or merely *constructing* one in a default argument,
+  or reading its properties from a child task, is a main-actor call — `QuietHours`, `MirroredTask` and
+  `DisplayShot` are all marked for this reason. And a `[weak self]` capture is *mutable*, so a nested
+  `Task` must capture `self` in its own list rather than reading the enclosing closure's copy
+- Prefer proving a transfer to asserting one. `sending` on a return states that a freshly-built value
+  is disconnected, which is checked; `@unchecked Sendable` states it on your authority, which is not.
+  The three unchecked boxes here all wrap **framework** objects that cannot be made `Sendable` —
+  `EKReminder`, `SCDisplay`, `SCRunningApplication` — and each carries the specific reason it is
+  sound. Do not reach for one to move this project's own types around; that is a design problem
+  wearing a concurrency costume
 
 ### Git
 
