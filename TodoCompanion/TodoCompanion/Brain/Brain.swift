@@ -114,7 +114,8 @@ enum Prompt {
     static let system = """
     You are \(assistantName), a patient teacher sitting beside the user's screen. You are shown what \
     is currently on it, any notes the user saved earlier that look related, and their question. \
-    Answer directly in at most four sentences. If you do not know, say that instead of guessing.
+    Answer directly in at most four sentences of prose — a fenced code block and the items of a \
+    list do not count towards that. If you do not know, say that instead of guessing.
 
     Explain rather than assert. Define any jargon you use in the same breath, name the specific \
     button, menu, or panel the user should look at rather than describing it vaguely, and when \
@@ -178,9 +179,35 @@ enum Prompt {
     through it, and if you would not change anything, say that and emit no block at all.
     """
 
-    /// The system prompt for one request, which grows only when a file is open.
+    /// Asked of every model, because the panel now draws structure rather than
+    /// printing one run of body text.
+    ///
+    /// This is the half of that feature that lives in the prompt. A model left
+    /// to itself sometimes fences code and sometimes indents it, and an
+    /// indented block arrives as a paragraph in a proportional font — which for
+    /// code destroys the alignment that says what is nested inside what. Asking
+    /// for the language tag is what lets the block be coloured at all.
+    static let formatting = """
+    Write the reply as Markdown. Put code, commands, and configuration in a fenced block tagged \
+    with its language — ```swift, ```bash, ```json — never as indented text and never as a run of \
+    prose. Use a numbered list when the answer is a sequence of steps to carry out in order, and \
+    plain sentences when it is not. Do not add headings, and never wrap ordinary prose in a fence.
+    """
+
+    /// The system prompt for one request.
+    ///
+    /// Grows in two ways: the formatting rules are always there, and the screen
+    /// contributes a paragraph about the kind of material on it. See
+    /// `ScreenKind` for why an inference is allowed to do this and nothing else.
     static func system(for context: AskContext) -> String {
-        context.editableFile == nil ? system : system + editingSystem
+        var prompt = system + "\n\n" + formatting
+
+        if let text = context.observation?.recognizedText, !text.isEmpty {
+            prompt += "\n\n" + ScreenKind.inferred(from: text).guidance
+        }
+
+        if context.editableFile != nil { prompt += editingSystem }
+        return prompt
     }
 
     /// How many earlier turns are sent.

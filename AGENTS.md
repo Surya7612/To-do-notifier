@@ -420,6 +420,39 @@ about. It is resumed on the next summon within `conversationResumeWindow` and dr
 was answered is removed rather than kept, or it would sit in the transcript showing an ellipsis and
 go back to the model as something Max failed to answer.
 
+**An answer is drawn as the thing it is.** The panel used to render every reply as one run of
+proportional body text, which put backticks and asterisks on screen as literal characters and set code
+in a font where alignment carries meaning. `AnswerContent.blocks` splits a reply into paragraphs,
+headings, lists and fenced code, and `CodeHighlighter` colours the last of those. The parser runs again
+on every streamed chunk rather than incrementally, because a reply is a few hundred characters and the
+alternative is keeping a parser and a view in agreement about a half-written document — which is also
+why an *unclosed* fence is a first-class state rather than a parse failure: mid-stream it is the normal
+case, and treating it as unparseable would show raw backticks until the last token arrived and then
+snap them into place.
+
+The prompt is the other half of this and is not optional. A model left alone sometimes fences code and
+sometimes indents it, so `Prompt.formatting` asks outright for a fenced block with a language tag —
+without the tag there is nothing to colour by. The four-sentence cap had to say that code blocks and
+list items do not count towards it, or asking for brevity and asking for a code block are contradictory
+instructions. The highlighter is deliberately lexical and shallow: almost all of the value is in
+separating comments and string literals from structure, which needs no grammar, and its one hard
+guarantee is that the text comes back byte-for-byte — the user copies it into their editor.
+
+Quoted labels are coloured the same blue the on-screen box is drawn in. That is not decoration: those
+are the words the app is willing to point at, so the emphasis in the panel and the emphasis on the
+screen are making one claim.
+
+**The prompt is shaped by the kind of screen, and that is all inference may do here.** `ScreenKind`
+reads the OCR text and appends one paragraph to the system prompt — a terminal gets "lead with what
+went wrong", code gets "spell identifiers exactly", a document gets "quote the passage". It is bounded
+so that being wrong is cheap: every branch narrows *how* to answer and none of them changes whether to,
+so a misread screen costs an oddly-shaped answer rather than a refusal. This is the same line the rest
+of the app draws — inference may suggest, never act — and the reason it lands on the permitted side is
+that nothing here is stored as the user's words or drawn on their screen. Terminal is tested before
+code because a shell displays code, and "contains the word error" is deliberately *not* a terminal
+signal: an editor showing a diagnostic, a browser on Stack Overflow and a form with a failed validation
+all contain it.
+
 **Max is a name and a tone, never a licence.** The persona lives in `Prompt.system` and in UI copy. It
 is emphatically *not* the bundle name: renaming the bundle would invalidate the Screen Recording grant,
 which TCC keys to the signature and identifier, relocate the SwiftData container, and break
@@ -627,6 +660,25 @@ It highlights rather than moving the pointer, because moving it would be inferen
 fight anyone mid-drag, and it runs from a button rather than after every answer. The match is named on
 that button, so the user sees which words will be boxed before anything is drawn on their screen.
 
+**The box may follow the voice, and only a quoted label lets it.** Reading an answer aloud while the
+control it names sits unmarked on screen wastes the one advantage this app has over a chat window, so
+`AppSettings.followsAlongWhileSpeaking` moves the box from control to control as Max names them. That
+is drawing on the screen without a press immediately before it, which is the rule above, and two things
+are what keep it inside rather than beside that rule. It is off until the user throws the switch. And
+it matches with `requiringQuoted`, which drops the inferred-from-prose path entirely — so the only
+thing it can box is a label Max put in double quotes, which is Max stating what it meant rather than
+this app guessing from a sentence. The unquoted heuristics stay available to the button, where the
+match is named beforehand and the user chooses; they are exactly what must never draw unannounced.
+
+Three details follow from the mechanism. The clause is reported when it *starts being heard*, not when
+it is queued: Kokoro synthesizes a sentence ahead of the sound, so `KokoroVoiceSynthesizer` keeps
+`scheduledClauses` in playback order and names the head — reporting at enqueue would run the box a
+sentence ahead of the voice. A clause naming nothing leaves the previous box alone instead of clearing
+it, since most sentences of an answer are about the one control it already named and blinking the box
+off for each of them is worse than not having it. And the box is shown `untilHidden` rather than on the
+button's 2.4-second timer, because a clause takes longer to say than that — it comes down when
+`onSpeakingClause` reports silence.
+
 Matching is deliberately reluctant: a **quoted** label outranks everything, since `Prompt.system` asks
 Max to quote a control's label character for character, and that is the model stating what it meant
 rather than us inferring it from prose. An unquoted candidate must be six characters or multi-word, must
@@ -650,24 +702,27 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~389 | Hotkey, provider choice, Ollama and OpenAI settings, the to-do app link, and the Apple Reminders mirror. |
+| `App/SettingsView.swift` | ~409 | Hotkey, provider choice, Ollama and OpenAI settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~640 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~1088 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, and the control an answer named. |
+| `Companion/CompanionView.swift` | ~780 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
+| `Companion/CompanionViewModel.swift` | ~1165 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, and the box that follows the voice. |
+| `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
+| `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
-| `Capture/ScreenTextLocator.swift` | ~165 | Finds the control an answer named among those boxes, and maps one onto the screen. Pure. |
-| `Capture/ScreenHighlight.swift` | ~89 | The box drawn briefly around it. |
+| `Capture/ScreenTextLocator.swift` | ~218 | Finds the control an answer named among those boxes, and maps one onto the screen. `requiringQuoted` narrows it to labels Max quoted, for the follow-along box. Pure. |
+| `Capture/ScreenHighlight.swift` | ~101 | The box drawn around it, briefly on a button press or until hidden while Max is talking. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~254 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, and the file-editing rules. |
+| `Brain/Brain.swift` | ~286 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, and the file-editing rules. |
+| `Brain/ScreenKind.swift` | ~148 | What sort of material is on screen, and the paragraph of prompt guidance it earns. Pure. |
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
-| `Voice/SpeechPlayback.swift` | ~266 | Decides what of a streaming answer gets read aloud, and when. Strips markup, sizes clauses. |
-| `Voice/VoiceSynthesizer.swift` | ~133 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
-| `Voice/KokoroVoiceSynthesizer.swift` | ~212 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
+| `Voice/SpeechPlayback.swift` | ~277 | Decides what of a streaming answer gets read aloud, and when. Strips markup, sizes clauses, and reports which clause is being heard. |
+| `Voice/VoiceSynthesizer.swift` | ~152 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
+| `Voice/KokoroVoiceSynthesizer.swift` | ~234 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
 | `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
 | `Voice/DictationRecognizer.swift` | ~241 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
 | `Voice/DictationHints.swift` | ~96 | Picks the words on screen worth telling the recognizer to expect. Pure. |
@@ -686,8 +741,8 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 | `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
-| `Support/AppSettings.swift` | ~289 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
-| `Support/DesignSystem.swift` | ~59 | Spacing, radius, alpha, and status colour tokens. |
+| `Support/AppSettings.swift` | ~304 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
+| `Support/DesignSystem.swift` | ~80 | Spacing, radius, alpha, status and code-token colours. `nonisolated`, so pure layout code can read it. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
@@ -754,6 +809,10 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `ContextGraphTests` | Nodes and edges built from saves | A wrong edge is a wrong claim about how the user's material relates, and it is drawn large enough to be believed. Pins that shared tags collapse to one node and that filtering a kind removes its edges too. |
 | `GraphLayoutTests` | Force-directed placement | No assertable "correct" coordinates, so it pins the properties that make it usable: everything placed, nothing off-canvas, connected nodes closer than unconnected, and the same picture every time. |
 | `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
+| `FollowAlongMatchingTests` | What the box may point at while Max is speaking | The one path that draws on the screen without a press in front of it, so it pins the narrowing that makes that acceptable: a name the button believes on its own terms must be refused here unless Max quoted it. Also pins that the button's own behaviour is unchanged, since this added a parameter to the function it calls. |
+| `AnswerContentTests` | Splitting a reply into what the panel draws | Runs on every streamed chunk, against a document whose last fence is usually still open — so an unclosed fence must parse as code rather than as failure. The wrong-parse failures are silent: a block simply renders as the wrong thing. Found the bug where "3.5 GB free" parsed as list item three. |
+| `CodeHighlighterTests` | Colouring a fenced block | Colouring wrongly costs nothing, but the highlighter rebuilds the text character by character, so a scanner bug silently *drops* code the user is about to copy into their editor. Nearly all of it pins that the text survives intact; which token got which colour is barely asserted, so the palette stays free to change. |
+| `ScreenKindTests` | What sort of screen is being looked at, and what that adds to the prompt | Inference deciding how a question is answered, so the property that matters is harmlessness rather than accuracy: every branch must contribute guidance and none may withhold an answer. Pins that a shell outranks the code it displays, and that the word "error" alone is not a terminal. |
 | `ScreenRectTests` | Normalized box → screen coordinates | Vision and AppKit share a bottom-left origin where `cropped(to:)` needs a flip, so the mistake is a box a mirrored distance up the screen, which looks plausible. Also pins that a cropped capture maps into the *selection*. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderMirrorTests` | What is copied into Apple Reminders, and what is taken back | The only place this app writes into something Apple syncs, so every failure lands in the user's pocket rather than on screen. Pins that a backlog is *not* copied, since an alarm already past is delivered on sync and would alert for everything at once, and that a task merely falling due is not mistaken for one that was finished. |
@@ -862,7 +921,10 @@ Keep argument names the same as the variables they came from rather than abbrevi
  this reason, and `AXUIElement` stays out of the source
 - Do not draw on the user's screen unasked, or move their pointer at all. `ScreenHighlight` runs from
  a button press and names its match beforehand; a highlight after every answer would be the app
- acting on inference, which is the same rule that governs file edits
+ acting on inference, which is the same rule that governs file edits. Follow-along is the single
+ exception and shows the shape any future one has to take: switched on deliberately, and restricted to
+ labels Max quoted, so what reaches the screen is still something stated rather than something
+ inferred
 - Do not add continuous or background screen capture. Capture is always explicit and user-initiated
 - Do not make resurfacing proactive. Related material appears on summon and never otherwise; plan §
  Phase 6 is **closed at that form**, not pending. Without Accessibility the only trigger left is an

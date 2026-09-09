@@ -31,6 +31,7 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
 
     private(set) var isSpeaking = false
     var onFinishedSpeaking: (@MainActor () -> Void)?
+    var onStartedSpeaking: (@MainActor (String) -> Void)?
 
     /// Clauses waiting to be synthesized, and the worker draining them.
     ///
@@ -39,8 +40,14 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
     private var pending: [String] = []
     private var worker: Task<Void, Never>?
 
-    /// Buffers handed to the player that have not finished playing.
-    private var unplayedBuffers = 0
+    /// The words behind each buffer handed to the player that has not finished
+    /// playing, oldest first — so the head of this is what is being heard.
+    ///
+    /// Doubles as the count of unplayed buffers. Kept as the text rather than a
+    /// number because a clause is synthesized while the previous one is still
+    /// playing, so "which clause was most recently scheduled" runs a sentence
+    /// ahead of the sound and is the wrong thing to report.
+    private var scheduledClauses: [String] = []
 
     /// macOS 26.4 and 26.5 carry an Apple BNNS bug that intermittently crashes
     /// Kokoro synthesis with `EXC_BAD_ACCESS` inside libBNNS, whatever the
@@ -80,7 +87,7 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         worker?.cancel()
         worker = nil
         pending = []
-        unplayedBuffers = 0
+        scheduledClauses = []
         isSpeaking = false
 
         guard engineIsRunning else { return }
@@ -131,7 +138,7 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
             // may not resolve — and a voice that fails drops the clause.
             let result = try await manager.synthesizeDetailed(text: text)
             guard !Task.isCancelled else { return }
-            try schedule(result.samples, sampleRate: Double(result.sampleRate))
+            try schedule(result.samples, sampleRate: Double(result.sampleRate), saying: text)
         } catch is CancellationError {
             return
         } catch {
@@ -178,7 +185,7 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         return trimmed
     }
 
-    private func schedule(_ rawSamples: [Float], sampleRate: Double) throws {
+    private func schedule(_ rawSamples: [Float], sampleRate: Double, saying text: String) throws {
         let samples = Self.trimmedWithTail(rawSamples, sampleRate: sampleRate)
         guard !samples.isEmpty,
               let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
@@ -192,7 +199,11 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
             destination.update(from: source.baseAddress!, count: samples.count)
         }
 
-        unplayedBuffers += 1
+        // Nothing ahead of it in the queue means the player starts on it as
+        // soon as it is scheduled.
+        let startsImmediately = scheduledClauses.isEmpty
+        scheduledClauses.append(text)
+
         // The audio thread calls this, so the hop to the main actor is the
         // point. `self` is captured by the `Task` rather than read out of the
         // enclosing closure: a weak capture is mutable, and reading one across
@@ -200,16 +211,23 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.unplayedBuffers = max(0, self.unplayedBuffers - 1)
+                if !self.scheduledClauses.isEmpty { self.scheduledClauses.removeFirst() }
+                // One finishing is what tells us the next has begun; the player
+                // reports completion only.
+                if let nowPlaying = self.scheduledClauses.first {
+                    self.onStartedSpeaking?(nowPlaying)
+                }
                 self.settleIfDrained()
             }
         }
+
+        if startsImmediately { onStartedSpeaking?(text) }
     }
 
     /// Silence is only real once nothing is queued *and* nothing is still
     /// playing, since the worker finishes generating well before the audio ends.
     private func settleIfDrained() {
-        guard worker == nil, pending.isEmpty, unplayedBuffers == 0 else { return }
+        guard worker == nil, pending.isEmpty, scheduledClauses.isEmpty else { return }
         isSpeaking = false
         onFinishedSpeaking?()
     }

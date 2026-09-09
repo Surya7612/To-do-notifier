@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.semanticEnabled) private var semanticEnabled = false
     @AppStorage(AppSettings.Key.embeddingModel) private var embeddingModel = AppSettings.defaultEmbeddingModel
     @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
+    @AppStorage(AppSettings.Key.followsAlongWhileSpeaking) private var followsAlongWhileSpeaking = false
     @AppStorage(AppSettings.Key.voiceIdentifier) private var voiceIdentifier = ""
     @AppStorage(AppSettings.Key.voiceEngine) private var voiceEngine = AppSettings.VoiceEngine.system.rawValue
     @AppStorage(AppSettings.Key.dictationEngine) private var dictationEngine =
@@ -133,6 +134,13 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(DS.Status.problem)
                     }
+
+                    Toggle("Box each control on screen as \(Prompt.assistantName) names it",
+                           isOn: $followsAlongWhileSpeaking)
+
+                    Text("Only labels \(Prompt.assistantName) quotes exactly are boxed, so nothing is drawn on a guess. The box follows the sentence being read and disappears when the voice stops. Leave this off and the panel still offers a button to box the one control an answer named.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Text("Both voices run on this Mac, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")

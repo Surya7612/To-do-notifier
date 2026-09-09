@@ -22,7 +22,10 @@ final class CompanionViewModel {
     var onListeningBegan: (() -> Void)?
     var onListeningEnded: (() -> Void)?
     /// Draws a box around a place on screen, in global AppKit coordinates.
-    var onHighlight: ((CGRect) -> Void)?
+    /// `untilHidden` leaves it up rather than fading it out on a timer.
+    var onHighlight: ((CGRect, Bool) -> Void)?
+    /// Takes that box back down.
+    var onHighlightEnded: (() -> Void)?
 
     private let dictation = SpeechDictation()
     private let regionSelector = RegionSelector()
@@ -198,6 +201,7 @@ final class CompanionViewModel {
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         reloadProjects()
+        speech.onSpeakingClause = { [weak self] clause in self?.followAlong(with: clause) }
     }
 
     var isBusy: Bool { phase == .thinking || phase == .answering }
@@ -682,7 +686,36 @@ final class CompanionViewModel {
               let frame = observation?.primaryScreenFrame
         else { return }
 
-        onHighlight?(ScreenTextLocator.screenRect(for: pointerTarget.boundingBox, in: frame))
+        onHighlight?(ScreenTextLocator.screenRect(for: pointerTarget.boundingBox, in: frame), false)
+    }
+
+    /// Moves the box to whatever control the clause now being spoken names.
+    ///
+    /// The one place in the app that draws on the screen without a press
+    /// immediately before it, and the two conditions on it are what make that
+    /// acceptable rather than a hole in the rule. It is off unless the user
+    /// switched it on, and it matches with `requiringQuoted`, so the only thing
+    /// it can ever box is a label Max put in double quotes — Max stating which
+    /// words it meant, not this app inferring them from prose. A clause naming
+    /// nothing leaves the previous box where it is rather than clearing it,
+    /// since an answer is mostly sentences about the one control it named and
+    /// flickering the box off for each of them would be worse than useless.
+    private func followAlong(with clause: String?) {
+        guard AppSettings.followsAlongWhileSpeaking else { return }
+
+        guard let clause else {
+            onHighlightEnded?()
+            return
+        }
+
+        guard let observation,
+              let frame = observation.primaryScreenFrame,
+              let match = ScreenTextLocator.locate(named: clause,
+                                                   in: observation.primary.textRegions,
+                                                   requiringQuoted: true)
+        else { return }
+
+        onHighlight?(ScreenTextLocator.screenRect(for: match.boundingBox, in: frame), true)
     }
 
     private func recordAnswer(_ text: String, for turnID: UUID) {

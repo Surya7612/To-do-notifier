@@ -5,7 +5,13 @@ import SwiftUI
 /// The panel, the library, and the cursor ring are three separately-authored
 /// surfaces that have to look like one app. Naming the values is what keeps a
 /// corner radius from drifting to 17 in one of them.
-enum DS {
+///
+/// Explicitly `nonisolated` because the project defaults to main-actor
+/// isolation and the pure types that lay out an answer — `AnswerContent`,
+/// `CodeHighlighter` — read these colours while building an `AttributedString`
+/// off the main actor. They are constants of a `Sendable` type, so there is
+/// nothing for the isolation to protect.
+nonisolated enum DS {
     enum Spacing {
         static let hair: CGFloat = 5
         static let tight: CGFloat = 8
@@ -46,6 +52,21 @@ enum DS {
         /// A diff sits inside the answer area, so it gets a smaller share of it.
         static let maxDiffHeight: CGFloat = 200
         static let indicator: CGFloat = 110
+    }
+
+    /// Token colours for a fenced code block.
+    ///
+    /// Deliberately drawn from the system palette rather than from a named
+    /// editor theme: these have to stay legible against the panel's translucent
+    /// material in both appearances, which a theme tuned for an opaque
+    /// background does not.
+    enum Code {
+        static let keyword = Color.pink
+        static let string = Color.orange
+        static let number = Color.purple
+        static let type = Color.teal
+        static let comment = Color.secondary
+        static let punctuation = Color.secondary
     }
 
     /// One colour per meaning, so status is legible without reading the label.

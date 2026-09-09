@@ -175,6 +175,7 @@ was built, because on this project the rejections carry most of the reasoning.
 | An autonomous coding agent | It sees a screenshot, has no file tree, and cannot run your tests, so it would be strictly worse than the editor you already have open. It proposes one file, shows a diff, and writes only on a button press. |
 | An iCloud container for phone capture | Needs an entitlement requiring the paid Apple Developer Program. A *folder* inside iCloud Drive needs none and syncs identically. |
 | A wake word | An always-hot microphone sits badly beside explicit capture. The Electron app has one and ships it **off** by default, which is the evidence rather than the counter-example. |
+| Boxing whatever an answer seems to mention | Drawing on your screen is a confident claim about your pixels. The box appears on a button that names its match first — and when it follows the spoken answer instead, it is restricted to labels Max quoted character for character, so what gets drawn is something stated rather than something inferred. |
 
 ---
 

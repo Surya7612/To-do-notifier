@@ -24,7 +24,10 @@ final class CompanionPanelController {
             self?.indicator.show(.listening, level: { [weak self] in self?.viewModel.currentInputLevel ?? 0 })
         }
         viewModel.onListeningEnded = { [weak self] in self?.indicator.hide() }
-        viewModel.onHighlight = { [weak self] rect in self?.highlight.show(rect) }
+        viewModel.onHighlight = { [weak self] rect, untilHidden in
+            self?.highlight.show(rect, untilHidden: untilHidden)
+        }
+        viewModel.onHighlightEnded = { [weak self] in self?.highlight.hide() }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }

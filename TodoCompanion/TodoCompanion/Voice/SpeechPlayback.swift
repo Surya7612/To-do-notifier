@@ -18,6 +18,12 @@ final class SpeechPlayback {
 
     private(set) var isSpeaking = false
 
+    /// Called with each clause as it starts being heard, and with nil when the
+    /// voice falls silent. Both halves matter to a caller that is showing
+    /// something alongside the speech: without the nil it has no idea when to
+    /// take it down again.
+    var onSpeakingClause: (@MainActor (String?) -> Void)?
+
     /// Surfaced when a chosen voice could not be used at all, so a silent
     /// answer has a stated reason rather than looking like a dead setting.
     private(set) var failure: String?
@@ -40,6 +46,10 @@ final class SpeechPlayback {
             synthesizerEngine = engine
             synthesizer?.onFinishedSpeaking = { [weak self] in
                 self?.isSpeaking = false
+                self?.onSpeakingClause?(nil)
+            }
+            synthesizer?.onStartedSpeaking = { [weak self] clause in
+                self?.onSpeakingClause?(clause)
             }
         }
         // Safe: `makeSynthesizer` always returns one.
@@ -163,6 +173,7 @@ final class SpeechPlayback {
     func stop() {
         spokenPrefixLength = 0
         isSpeaking = false
+        onSpeakingClause?(nil)
         // A load in flight is deliberately left running: it is the expensive
         // part, it is what the next answer needs, and cancelling it halfway
         // through a download buys nothing.

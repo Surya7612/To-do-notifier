@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct CompanionView: View {
@@ -517,11 +518,66 @@ struct CompanionView: View {
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             } else {
-                Text(turn.answer)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                answerBody(turn.answer)
+            }
+        }
+    }
+
+    /// Max's reply, drawn according to what is in it.
+    ///
+    /// Re-parsed on every streamed chunk rather than incrementally, because the
+    /// text is a few hundred characters and the alternative is keeping a parser
+    /// and a view in agreement about a half-written document.
+    private func answerBody(_ answer: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+            ForEach(Array(AnswerContent.blocks(in: answer).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case let .heading(text):
+                    Text(AnswerContent.styled(text))
+                        .font(.callout.weight(.semibold))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                case let .paragraph(text):
+                    prose(text)
+
+                case let .bulleted(items):
+                    listView(items.enumerated().map {
+                        AnswerListRow(id: $0.offset, marker: "•", text: $0.element)
+                    })
+
+                case let .numbered(items):
+                    listView(items.enumerated().map {
+                        AnswerListRow(id: $0.offset, marker: "\($0.offset + 1).", text: $0.element)
+                    })
+
+                case let .code(code):
+                    CodeBlockView(code: code)
+                }
+            }
+        }
+    }
+
+    private func prose(_ text: String) -> some View {
+        Text(AnswerContent.styled(text))
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A list, with the marker in its own column so wrapped lines line up under
+    /// the text rather than under the bullet.
+    private func listView(_ rows: [AnswerListRow]) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.hair) {
+            ForEach(rows) { row in
+                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.tight) {
+                    Text(row.marker)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .frame(minWidth: 16, alignment: .trailing)
+                    prose(row.text)
+                }
             }
         }
     }
@@ -637,6 +693,87 @@ struct CompanionView: View {
         case .reading, .thinking, .answering, .startingDictation: return DS.Status.busy
         case .saved: return DS.Status.saved
         case .needsPermission, .failed: return DS.Status.problem
+        }
+    }
+}
+
+/// One line of a bulleted or numbered list.
+///
+/// A named type rather than a tuple because `ForEach` needs stable identity and
+/// the index is the only thing available: the same step can be written twice in
+/// one list.
+private struct AnswerListRow: Identifiable {
+    let id: Int
+    let marker: String
+    let text: String
+}
+
+/// A fenced code block: monospaced, on a recessed background, with the language
+/// named and the whole thing copyable in one press.
+///
+/// Copying matters more here than it looks. The panel is a floating window over
+/// whatever the user is working in, so the code in it is nearly always destined
+/// for the editor behind it, and selecting monospaced text inside a scroll view
+/// with the mouse is the slowest possible way to move it there.
+private struct CodeBlockView: View {
+    let code: AnswerContent.Code
+
+    @State private var hasCopied = false
+    @State private var resetCopiedLabel: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: DS.Spacing.tight) {
+                Text(code.language?.uppercased() ?? "CODE")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+
+                Spacer(minLength: DS.Spacing.hair)
+
+                // Said out loud, because a block that is still arriving looks
+                // exactly like a finished one that is missing its last lines.
+                if code.isStreaming {
+                    Text("writing…")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Button(action: copy) {
+                        Label(hasCopied ? "Copied" : "Copy",
+                              systemImage: hasCopied ? "checkmark" : "doc.on.doc")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(hasCopied ? DS.Status.ready : .secondary)
+                }
+            }
+            .padding(.horizontal, DS.Spacing.card)
+            .padding(.vertical, DS.Spacing.hair)
+
+            Divider().opacity(DS.Alpha.divider)
+
+            // Scrolled rather than wrapped: a wrapped line of code loses the
+            // indentation that says what is nested inside what.
+            ScrollView(.horizontal) {
+                Text(CodeHighlighter.highlight(code.text, language: code.language))
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(DS.Spacing.card)
+            }
+            .scrollIndicators(.never)
+        }
+        .background(.black.opacity(DS.Alpha.well), in: RoundedRectangle(cornerRadius: DS.Radius.control))
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code.text, forType: .string)
+
+        hasCopied = true
+        resetCopiedLabel?.cancel()
+        resetCopiedLabel = Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            hasCopied = false
         }
     }
 }

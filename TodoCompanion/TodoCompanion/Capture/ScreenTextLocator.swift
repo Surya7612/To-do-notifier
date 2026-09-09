@@ -37,11 +37,24 @@ nonisolated enum ScreenTextLocator {
     /// "Menu" printed somewhere unrelated.
     static let minimumUnquotedLength = 6
 
-    static func locate(named answer: String, in regions: [TextRegion]) -> Match? {
+    /// - Parameter requiringQuoted: Drops the inferred-from-prose path
+    ///   entirely, so only a label Max put in double quotes can match.
+    ///
+    ///   Used by the follow-along highlight, which draws while the answer is
+    ///   being read aloud and so cannot show the user its match beforehand the
+    ///   way the button does. A quoted label is not a guess — `Prompt.system`
+    ///   asks for a control's label character for character, so quoting is Max
+    ///   stating which words it meant. Requiring it is what keeps the standing
+    ///   rule intact: nothing unexplained is ever drawn on the screen.
+    static func locate(named answer: String,
+                       in regions: [TextRegion],
+                       requiringQuoted: Bool = false) -> Match? {
         guard !regions.isEmpty else { return nil }
 
         let haystack = answer.lowercased()
         let quoted = quotedPhrases(in: answer)
+        guard !requiringQuoted || !quoted.isEmpty else { return nil }
+
         var best: (score: Int, match: Match)?
 
         for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
@@ -52,7 +65,10 @@ nonisolated enum ScreenTextLocator {
                     let run = Array(words[start..<(start + length)])
                     let phrase = run.map(\.string).joined(separator: " ")
 
-                    guard let score = score(phrase: phrase, in: haystack, quoted: quoted),
+                    guard let score = score(phrase: phrase,
+                                            in: haystack,
+                                            quoted: quoted,
+                                            requiringQuoted: requiringQuoted),
                           score > (best?.score ?? 0)
                     else { continue }
 
@@ -81,7 +97,10 @@ nonisolated enum ScreenTextLocator {
     /// "Color Page" beats "Color", which beats "Page". Quoting outranks all of
     /// it, since that is Max stating which words it meant rather than us
     /// inferring them from prose.
-    private static func score(phrase: String, in haystack: String, quoted: Set<String>) -> Int? {
+    private static func score(phrase: String,
+                              in haystack: String,
+                              quoted: Set<String>,
+                              requiringQuoted: Bool = false) -> Int? {
         let cleaned = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count >= minimumLength, cleaned.contains(where: \.isLetter) else { return nil }
 
@@ -89,6 +108,7 @@ nonisolated enum ScreenTextLocator {
         guard haystack.containsWholeWord(needle) else { return nil }
 
         if quoted.contains(needle) { return cleaned.count + 100 }
+        guard !requiringQuoted else { return nil }
 
         // Unquoted, this is a guess drawn from ordinary prose, so it has to earn
         // it: long enough not to be a common word, never a word Max uses to talk
