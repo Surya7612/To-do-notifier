@@ -30,6 +30,15 @@ struct InboxItem: Equatable, Sendable {
 enum InboxImporter {
     private static let bookmarkKey = "inboxFolderBookmark"
 
+    /// Posted when at least one capture was brought in.
+    ///
+    /// The library window may already be open when a wake sweep or a summon
+    /// imports into the shared store. SwiftData's `@Query` does not always
+    /// notice inserts that happened outside that view's own turn, so the
+    /// library listens for this and remounts its query rather than waiting for
+    /// a relaunch.
+    static let didImportNotification = Notification.Name("InboxImporter.didImport")
+
     static var isLinked: Bool {
         UserDefaults.standard.data(forKey: bookmarkKey) != nil
     }
@@ -134,6 +143,9 @@ enum InboxImporter {
         }) else { return 0 }
 
         schedule(for: imported, now: now)
+        if !imported.isEmpty {
+            NotificationCenter.default.post(name: didImportNotification, object: nil)
+        }
         return imported.count
     }
 
