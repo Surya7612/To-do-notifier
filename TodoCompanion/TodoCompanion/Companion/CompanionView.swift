@@ -92,11 +92,12 @@ struct CompanionView: View {
                 Button {
                     viewModel.startNewConversation()
                 } label: {
-                    Image(systemName: "bubble.left.and.bubble.right")
+                    Label("Clear", systemImage: "trash")
+                        .font(.caption)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Start a new conversation about this screen (⌘K)")
+                .help("Clear this conversation (⌘K)")
                 .keyboardShortcut("k", modifiers: .command)
             }
             fileBadge
@@ -325,7 +326,9 @@ struct CompanionView: View {
                 .disabled(!viewModel.hasCapture || viewModel.isBusy)
                 .help(viewModel.presetWouldAskTypedText
                       ? "Asks what you typed — your words are used, not this preset"
-                      : preset.question)
+                      : (preset == .guidedTeach
+                         ? "Teach with boxes and move the pointer to each step as it is spoken"
+                         : preset.question))
             }
         }
         .controlSize(.small)
@@ -581,14 +584,11 @@ struct CompanionView: View {
         }
     }
 
-    /// Max's words. Kept a shade under full strength so the user's question
-    /// above still reads as the louder of the two, but well clear of
-    /// `.secondary`, which on a translucent panel over a bright window is
-    /// closer to unreadable than to quiet.
+    /// Max's words. Colour and weight live on the attributed string so quoted
+    /// labels can stay bold label-colour without a view-level `.foregroundStyle`
+    /// painting the whole reply — including the quotes — one flat tint.
     private func prose(_ text: String) -> some View {
         Text(AnswerContent.styled(text))
-            .font(.callout)
-            .foregroundStyle(.primary.opacity(0.82))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -619,35 +619,19 @@ struct CompanionView: View {
             Button {
                 viewModel.showPointerTarget()
             } label: {
-                Label("Show me “\(target.text)”", systemImage: "viewfinder.rectangular")
-                    .font(.caption)
+                Label {
+                    Text("Show me “\(target.text)”")
+                        .font(.caption.weight(.semibold))
+                } icon: {
+                    Image(systemName: "viewfinder.rectangular")
+                }
             }
             .buttonStyle(.plain)
-            .foregroundStyle(DS.Pointer.mark)
-            .help("Draw a box around “\(target.text)” on screen (⌘P)")
+            .foregroundStyle(.primary)
+            .help(TrustAccessibility.extrasAreActive
+                  ? "Box “\(target.text)” and move the pointer onto it (⌘P)"
+                  : "Draw a box around “\(target.text)” on screen (⌘P)")
             .keyboardShortcut("p", modifiers: .command)
-
-            if viewModel.axPointerTarget != nil {
-                Button {
-                    viewModel.movePointerToTarget()
-                } label: {
-                    Label("Move pointer", systemImage: "cursorarrow.click")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(DS.Pointer.mark)
-                .help("Move the pointer onto “\(target.text)” via Accessibility")
-
-                Button {
-                    viewModel.clickPointerTarget()
-                } label: {
-                    Label("Click", systemImage: "hand.tap")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(DS.Pointer.mark)
-                .help("Click “\(target.text)” via Accessibility")
-            }
 
             // Offered here rather than only in Settings, where it sat under a
             // section that appears after the voice is switched on and was

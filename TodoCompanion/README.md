@@ -46,8 +46,8 @@ the panel up with the microphone already open; twice again stops it. A single pr
 accidental brush does not start listening.
 
 With **Accessibility extras** enabled in Settings (and granted in System Settings), **Tab+Q** does
-the same — hold Tab, press Q — and the Show me row can also offer **Move pointer** and **Click** when
-the accessibility tree knows the control. OCR boxing stays the default either way.
+the same — hold Tab, press Q — and **Show me** also moves the pointer onto the named control. **Guided**
+Teach warps the cursor from step to step as Max speaks. OCR boxing stays available either way.
 
 This is not a wake word and will not become one. Nothing listens until you press the key; what the
 rule protects is whether the microphone is ever open when you did not open it, and a shortcut is you
@@ -452,7 +452,7 @@ The app has no Dock icon. Look for the icon in the menu bar.
 On first use macOS asks for **Screen Recording** permission. Grant it in System Settings → Privacy &
 Security → Screen Recording, then relaunch. The default global hotkeys use Carbon's
 `RegisterEventHotKey`, so no Accessibility permission is needed for basic use. **Accessibility extras**
-in Settings are opt-in and unlock Tab+Q plus Move pointer / Click. Dictation additionally asks for
+in Settings are opt-in and unlock Tab+Q plus Show me / Guided Teach pointer warps. Dictation additionally asks for
 Microphone and Speech Recognition.
 
 Signing is per-developer, so copy `Local.xcconfig.example` to `Local.xcconfig` and put your Apple
@@ -470,8 +470,8 @@ to `⌃⌥Space`; summoning straight into dictation defaults to `⌥⌘Q` presse
 `⌘Space` or `⌥⌘Space` is consumed by the system before the app sees it, and `RegisterEventHotKey`
 *still returns success*, so the shortcut silently does nothing rather than reporting an error.
 
-Turn on **Accessibility extras** for Tab+Q (summon + listen) and for Move pointer / Click beside Show
-me. Without that grant, Carbon shortcuts and OCR boxing keep working as before.
+Turn on **Accessibility extras** for Tab+Q (summon + listen) and for Show me / Guided Teach to move
+the pointer. Without that grant, Carbon shortcuts and OCR boxing keep working as before.
 
 Run only one copy at a time. Carbon hot keys are exclusive, so a second instance fails to claim the
 shortcut and the first one to launch keeps it.
@@ -611,8 +611,8 @@ Max can write to exactly one file, chosen by you through a file dialog, and only
 on a diff. Inference never writes to disk on its own.
 
 Nothing is drawn over your screen unless you ask for it. Your pointer is never moved unless you press
-**Move pointer** or **Click** (Accessibility extras, button-only). Follow-along and lessons never move
-it. Carbon hotkeys and OCR highlighting work with no Accessibility grant; Tab+Q and AX actions are
+**Show me** or **Guided** (Accessibility extras). Follow-along and plain Teach me never move it.
+Carbon hotkeys and OCR highlighting work with no Accessibility grant; Tab+Q and pointer warps are
 opt-in.
 
 The App Sandbox is enabled. The only added entitlements are outgoing network, microphone,
@@ -631,9 +631,9 @@ your calendar; nothing does.
   default, which is the evidence rather than the counter-example.
 - **Editing more than one file.** No project-wide agent, no running your tests, no applying a change
   you were not shown. See above for why that is a product judgement and not only a cautious one.
-- **Auto-moving your cursor while Max talks.** Move pointer / Click are button presses when
-  Accessibility extras are on. Follow-along still only draws OCR boxes, so your hands stay yours
-  mid-drag.
+- **Auto-moving your cursor while Max talks (except Guided).** Show me warps on a press; Guided Teach
+  follows steps because you pressed Guided. Plain Teach me and follow-along only draw OCR boxes, so
+  your hands stay yours mid-drag. Max never types into other apps or clicks Run for you.
 - **Speaking up on its own.** Related material appears when you summon the panel and never otherwise.
   An app-switch trigger says nothing about whether they need anything; acting on it would mean either
   matching on a window title, which is usually wrong, or capturing unasked, which contradicts the rule

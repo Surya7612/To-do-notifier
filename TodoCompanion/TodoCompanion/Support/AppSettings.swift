@@ -110,9 +110,9 @@ enum AppSettings {
         var detail: String {
             switch self {
             case .apple:
-                "Built in, nothing to download. Ends a phrase at every pause."
+                "Built in, nothing to download. Fastest to the first word."
             case .parakeet:
-                "Runs on the Neural Engine and keeps up across pauses. Downloads a model the first time."
+                "Neural Engine, keeps the sentence across pauses. First use downloads a model; live typing is usually a beat behind Apple."
             }
         }
 
@@ -212,8 +212,9 @@ enum AppSettings {
         ])
     }
 
-    /// Whether the user asked for Accessibility extras (Tab+Q, Move pointer,
-    /// Click). Still needs `TrustAccessibility.isTrusted` before anything runs.
+    /// Whether the user asked for Accessibility extras (Tab+Q, Show me warping
+    /// the pointer, Guided Teach cursor follow). The grant is still required
+    /// separately in System Settings; this flag alone is not enough.
     static var accessibilityExtrasEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: Key.accessibilityExtrasEnabled) }
         set { UserDefaults.standard.set(newValue, forKey: Key.accessibilityExtrasEnabled) }

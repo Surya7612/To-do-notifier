@@ -45,9 +45,9 @@ nonisolated enum DS {
     }
 
     enum Size {
-        /// Wide enough for the region controls and both presets to sit in one
-        /// row at their natural size.
-        static let panelWidth: CGFloat = 468
+        /// Wide enough for the region controls and the preset row to sit in one
+        /// line at their natural size (Explain / Next step / Teach me / Guided).
+        static let panelWidth: CGFloat = 500
         /// Past this the answer scrolls rather than growing the window forever.
         static let maxAnswerHeight: CGFloat = 320
         /// A diff sits inside the answer area, so it gets a smaller share of it.
@@ -90,8 +90,8 @@ nonisolated enum DS {
         static let problem = Color.red
     }
 
-    /// Everything that says "this, here": the box drawn on the screen, the
-    /// labels Max quoted, the row offering to point, and a lesson's marks.
+    /// Everything that says "this, here" on the user's screen: the box drawn
+    /// around a control, the row offering to point, and a lesson's marks.
     ///
     /// Its own colour rather than `Status.saved`, which it used to borrow.
     /// Those are two different claims — one is about a record in the library,
@@ -104,6 +104,10 @@ nonisolated enum DS {
     /// One Dark spends blue on types and purple on keywords. Warm sits against
     /// all of it. These particular values are Primer's attention pair, which
     /// carry their contrast ratios with them.
+    ///
+    /// Quoted labels in the *panel* answer are not this colour — they are bold
+    /// primary text so they read as emphasis without looking like a second
+    /// on-screen mark.
     enum Pointer {
         static let mark = Color.adaptive(dark: 0xE3B341, light: 0x9A6700)
     }

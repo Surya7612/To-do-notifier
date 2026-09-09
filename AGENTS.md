@@ -521,17 +521,19 @@ instructions. The highlighter is deliberately lexical and shallow: almost all of
 separating comments and string literals from structure, which needs no grammar, and its one hard
 guarantee is that the text comes back byte-for-byte — the user copies it into their editor.
 
-Quoted labels are coloured the same as the on-screen box. That is not decoration: those are the words
-the app is willing to point at, so the emphasis in the panel and the emphasis on the screen are making
-one claim.
+Quoted labels in the panel are **bold primary** (near-black in Light Mode), not amber. That is
+deliberate: those are still the words the app is willing to point at, but colouring them the same as
+the on-screen box made the answer look like it was already marking the screen. The box keeps
+`DS.Pointer.mark`. Colour and weight are set on the `AttributedString` itself — a view-level
+`.foregroundStyle` on the answer `Text` used to paint the quotes the same flat tint as the body.
 
-That colour is `DS.Pointer.mark` rather than `DS.Status.saved`, which it used to borrow, and the split
-is worth keeping. They are two different claims — one is about a record in the library, the other is
-the app indicating a place on the user's screen — and while they shared a name they could not be tuned
-apart. It is **amber**, which is a legibility decision rather than a taste one: nearly all interface
-chrome is blue, so a blue mark competes with whatever it is drawn over, and syntax highlighting makes
-that worse, since One Dark spends blue on types and purple on keywords. The values are Primer's
-attention pair, so they arrive with their contrast ratios already measured.
+That on-screen colour is `DS.Pointer.mark` rather than `DS.Status.saved`, which it used to borrow, and
+the split is worth keeping. They are two different claims — one is about a record in the library, the
+other is the app indicating a place on the user's screen — and while they shared a name they could not
+be tuned apart. It is **amber**, which is a legibility decision rather than a taste one: nearly all
+interface chrome is blue, so a blue mark competes with whatever it is drawn over, and syntax
+highlighting makes that worse, since One Dark spends blue on types and purple on keywords. The values
+are Primer's attention pair, so they arrive with their contrast ratios already measured.
 
 **The code well is opaque, and it is the only opaque thing in the panel.** That is a constraint rather
 than a preference: the panel is translucent, so a tinted overlay takes its brightness from whatever
@@ -771,10 +773,14 @@ are the default because Max is shown a screenshot — the words it names are wor
 and AX is thin or absent in exactly the apps pointing is most useful for (Qt, Electron, games).
 `ScreenTextLocator` matches against per-word `TextRegion`s and draws a box from a button press.
 
-When Accessibility extras are enabled and trusted, `AXControlLocator` may also resolve the same label
-in the frontmost app's tree. **Move pointer** and **Click** then appear beside Show me — still
-button-only. Follow-along and lessons never move the pointer; that would be inference acting and would
-fight anyone mid-drag. The match is named on the button before anything is drawn or moved.
+When Accessibility extras are enabled and trusted, **Show me** also warps the pointer onto the OCR
+box for the named control (after activating the app that was captured). There are no separate Move
+pointer / Click buttons — Show me is the whole gesture, and the user clicks. Max holds key focus when
+the row is pressed, so the warp settles briefly after activating the context app; warping in the same
+turn used to land on Max or on a half-switched app. `AXControlLocator` supplies the warp primitive.
+Ordinary follow-along and plain Teach me never move the pointer. **Guided Teach** is the exception:
+the user pressed Guided, so the cursor may follow each step's first box as Max speaks — still never
+clicks for them.
 
 Vision normalizes from the bottom left and so does AppKit, so `screenRect` needs **no** vertical flip,
 unlike `cropped(to:)` which targets a `CGImage`; the two conversions look alike and are not.
@@ -831,6 +837,17 @@ silently does not appear; reusing the list means a reply that ignored every inst
 perfectly good answer, drawn the way answers always are. **The model never says where anything is.**
 It names, and Vision's OCR boxes decide the pixels, which is what keeps a feature that draws
 continuously on the same footing as one that draws once.
+
+**Teach me forces speech for that answer**, even when Speak answers is off. The lesson advances by
+matching the clause being heard; without a voice there was nothing to match, so teaching drew step 1
+and sat still — which read as follow-along being broken. The Settings toggle is left alone; only the
+session override flips. The lesson is also started as soon as the streamed reply parses, *before*
+speech consumes the next chunk, so clauses are not spoken against a nil lesson.
+
+**Guided** is a second teach preset that keeps all of the above and also warps the cursor to each
+step's first OCR box as Max speaks (Accessibility extras required for the warp; boxes still work
+without it). Plain Teach me stays the default and never moves the pointer. Neither mode types into
+the editor, clicks Run, or judges output — Max names and points; the user acts.
 
 Refusing is most of the logic. Fewer than three steps is a list rather than a lesson, and playing it
 costs a mode to escape from to show a box ⌘P would have given. A list where *no* step quotes anything
@@ -900,7 +917,7 @@ the edge is the only part of this that fails invisibly.
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
 | `Capture/ScreenTextLocator.swift` | ~283 | Finds the control an answer named among those boxes, and maps one onto the screen. `requiringQuoted` narrows it to labels Max quoted; `locate(labels:)` resolves every label a lesson step names. Pure. |
-| `Capture/AXControlLocator.swift` | ~200 | Opt-in AX tree lookup for Move pointer / Click. Ranking is pure and tested; live walk needs Accessibility trust. |
+| `Capture/AXControlLocator.swift` | ~200 | Pointer warp (and unused click primitive) for Show me / Guided Teach. Ranking helpers remain pure and tested. |
 | `Capture/ScreenHighlight.swift` | ~101 | The box drawn around it, briefly on a button press or until hidden while Max is talking. |
 | `Capture/LessonOverlay.swift` | ~230 | The click-through layer a lesson draws on: the current step's boxes numbered and captioned, arrows between them where Max stated one, the steps already covered left faint. |
 | `Teaching/Lesson.swift` | ~115 | Reads a lesson out of a numbered answer — its steps, their quoted anchors, each one's caption and whether Max joined two labels with an arrow — and says which step a spoken clause belongs to. Pure. |
@@ -1113,12 +1130,15 @@ Keep argument names the same as the variables they came from rather than abbrevi
   when the user has opted in. This rule replaced a blanket ban on hosted models once local vision
   proved too weak to explain what is on screen; the ban on *unprompted* export did not change
 - Do not *require* Accessibility permission for basic use. Carbon hotkeys and OCR pointing work
- without it. Extras (Tab+Q, Move pointer, Click) are opt-in via Settings and still need a deliberate
- System Settings grant. Do not auto-move the pointer during follow-along or lessons
-- Do not draw on the user's screen unasked, or move their pointer unasked. `ScreenHighlight` and AX
- move/click run from a button press and name their match beforehand; a highlight after every answer
- would be the app acting on inference. Follow-along is the single draw exception and shows the shape
- any future one has to take: switched on deliberately, and restricted to labels Max quoted
+ without it. Extras (Tab+Q, Show me warping the pointer, Guided Teach cursor follow) are opt-in via
+ Settings and still need a deliberate System Settings grant. Do not auto-move the pointer during
+ follow-along or plain Teach me — only Show me (a press) and Guided Teach (a press) may warp
+- Do not draw on the user's screen unasked, or move their pointer unasked. `ScreenHighlight` runs
+ from a button press and names its match beforehand; a highlight after every answer would be the app
+ acting on inference. Follow-along is the draw exception (opt-in, quoted labels only). Guided Teach
+ is the pointer-follow exception (opt-in via the Guided preset, OCR boxes only, never clicks)
+- Do not type into other apps via Accessibility, click Run/Debug for the user, or judge program
+ output. Max proposes file edits through one user-picked file and a confirmed diff only
 - Do not add continuous or background screen capture. Capture is always explicit and user-initiated
 - Do not make resurfacing proactive. Related material appears on summon and never otherwise; plan §
  Phase 6 is **closed at that form**, not pending. An app-switch trigger says nothing about need, and

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// An answer, split into the pieces the panel draws differently.
@@ -166,14 +167,25 @@ extension AnswerContent {
     /// The quoting is not decoration. `Prompt.system` asks for a control's exact
     /// on-screen label in double quotes, and `ScreenTextLocator` trusts a quoted
     /// phrase over anything it infers from prose — so these are precisely the
-    /// words the app is willing to draw a box around. Colouring them the same
-    /// blue as that box means the emphasis in the panel and the emphasis on the
-    /// screen are making the same claim.
+    /// words the app is willing to draw a box around. They are drawn **bold
+    /// label colour** (near-black in Light Mode) so they read as emphasis in the
+    /// answer rather than as another amber mark competing with the box on
+    /// screen — that box keeps `DS.Pointer.mark`.
+    ///
+    /// Colour and weight are applied on the `AttributedString` itself. Putting
+    /// `.foregroundStyle` / `.font` on the `Text` that draws this wiped the
+    /// per-run attributes, so quotes either vanished into the body or kept
+    /// looking like the old amber depending on the OS.
     static func styled(_ text: String) -> AttributedString {
         var attributed = (try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(text)
+
+        attributed.font = .callout
+        // Quieter than the user's question above, without a view-level
+        // foregroundStyle that would also recolour the quotes.
+        attributed.foregroundColor = Color.primary.opacity(0.82)
 
         // Collected before mutating, since changing an attribute invalidates
         // the run boundaries being iterated.
@@ -186,8 +198,9 @@ extension AnswerContent {
         }
 
         for range in quotedRanges(in: attributed) {
-            attributed[range].foregroundColor = DS.Pointer.mark
-            attributed[range].font = .callout.weight(.medium)
+            // `labelColor` tracks Light/Dark; plain `.black` would vanish at night.
+            attributed[range].foregroundColor = Color(nsColor: .labelColor)
+            attributed[range].font = .callout.weight(.bold)
         }
 
         return attributed

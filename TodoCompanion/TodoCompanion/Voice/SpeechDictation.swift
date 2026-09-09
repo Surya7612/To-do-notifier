@@ -43,8 +43,9 @@ final class SpeechDictation {
 
     /// False means something other than this Mac is transcribing; the UI says
     /// so. Only Apple's recognizer can report false, and only when its
-    /// on-device model is missing for the language.
-    private(set) var isOnDevice = true
+    /// on-device model is missing for the language — including mid-session if
+    /// a required on-device attempt had to fall back.
+    var isOnDevice: Bool { recognizer?.runsOnDevice ?? true }
 
     /// Named in the UI because the system default input is often not the one the
     /// user assumes — AirPods sitting in their case are still the default input,
@@ -82,7 +83,6 @@ final class SpeechDictation {
         // permission prompt or a first-run model download happens and neither
         // should run with the input device held open.
         try await recognizer.prepare()
-        isOnDevice = recognizer.runsOnDevice
 
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure.micDenied }
 

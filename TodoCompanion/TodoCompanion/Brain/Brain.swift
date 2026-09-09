@@ -32,8 +32,10 @@ struct AskContext: Sendable {
     var history: [Turn] = []
     /// The file the user opened for editing, if any.
     var editableFile: EditableFileContext?
-    /// Whether the user pressed "Teach me" rather than asking a question.
+    /// Whether the user pressed "Teach me" or "Guided" rather than asking a question.
     var isTeaching = false
+    /// Whether that teach press was Guided — cursor follows each step's box.
+    var isGuidedTeaching = false
 }
 
 /// One exchange. Kept as a pair rather than a flat list of messages because
@@ -215,6 +217,19 @@ enum Prompt {
     themselves next time.
     """
 
+    /// Appended on top of `teachingSystem` when the user pressed Guided.
+    ///
+    /// Asks for the *why* of each line up front so the caption beside the box
+    /// carries the logic, not only a label. Still no coordinates and still no
+    /// instruction to type or click — the app moves the pointer; the user acts.
+    static let guidedTeachingSystem = """
+
+    This is a guided walk: the pointer will move to each quoted label as you speak the step. Lead \
+    every step with why that line or control exists — the logic behind it — in the opening words, \
+    then the quote. Do not tell the user to run the program, click buttons, or type code; they will \
+    do that themselves after understanding the step.
+    """
+
     /// Asked of every model, because the panel now draws structure rather than
     /// printing one run of body text.
     ///
@@ -247,7 +262,10 @@ enum Prompt {
         }
 
         if context.editableFile != nil { prompt += editingSystem }
-        if context.isTeaching { prompt += teachingSystem }
+        if context.isTeaching {
+            prompt += teachingSystem
+            if context.isGuidedTeaching { prompt += guidedTeachingSystem }
+        }
         return prompt
     }
 

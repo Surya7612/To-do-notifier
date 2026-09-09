@@ -43,7 +43,7 @@ struct SettingsView: View {
             return "Off. Carbon shortcuts and OCR pointing work without Accessibility."
         }
         if accessibilityTrusted {
-            return "On — Tab+Q is active. Move pointer and Click appear when AX finds the control."
+            return "On — Tab+Q is active. Show me also moves the pointer onto the named control."
         }
         return "Waiting for permission. Enable TodoCompanion in System Settings → Privacy & Security → Accessibility."
     }
@@ -117,9 +117,9 @@ struct SettingsView: View {
                 }
 
                 Text("Off by default. When enabled and granted, Tab+Q opens \(Prompt.assistantName) "
-                     + "listening, and Move pointer / Click appear beside Show me when the "
-                     + "accessibility tree knows the control. Carbon shortcuts keep working either "
-                     + "way. Nothing listens until you press a key.")
+                     + "listening, and Show me also moves the pointer onto the named control. "
+                     + "Guided Teach warps the cursor from step to step as it speaks. Carbon "
+                     + "shortcuts keep working either way. Nothing listens until you press a key.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Testing
@@ -134,13 +135,16 @@ struct AnswerStylingTests {
         #expect(String(AnswerContent.styled(plain).characters) == plain)
     }
 
-    @Test("a quoted label is coloured the same as the box drawn on screen")
+    @Test("a quoted label is bold label colour, not the on-screen amber")
     func quotedLabelIsEmphasized() {
         let styled = AnswerContent.styled("Click the \"Color\" page.")
-        let coloured = styled.runs.filter { $0.foregroundColor == DS.Pointer.mark }
+        let label = Color(nsColor: .labelColor)
+        let emphasised = styled.runs.filter { $0.foregroundColor == label }
 
-        #expect(coloured.count == 1)
-        #expect(coloured.first.map { String(styled[$0.range].characters) } == "\"Color\"")
+        #expect(emphasised.count == 1)
+        #expect(emphasised.first.map { String(styled[$0.range].characters) } == "\"Color\"")
+        #expect(emphasised.first?.font != nil)
+        #expect(!styled.runs.contains { $0.foregroundColor == DS.Pointer.mark })
     }
 
     /// Mid-stream the answer regularly ends inside a quotation. Treating the
@@ -149,8 +153,9 @@ struct AnswerStylingTests {
     @Test("an unclosed quote is left alone")
     func unclosedQuoteIsNotStyled() {
         let styled = AnswerContent.styled("Click the \"Col")
+        let label = Color(nsColor: .labelColor)
 
-        #expect(!styled.runs.contains { $0.foregroundColor == DS.Pointer.mark })
+        #expect(!styled.runs.contains { $0.foregroundColor == label })
     }
 
     @Test("markdown emphasis is applied rather than printed")

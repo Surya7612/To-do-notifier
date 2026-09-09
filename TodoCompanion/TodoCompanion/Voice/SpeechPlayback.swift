@@ -64,6 +64,14 @@ final class SpeechPlayback {
         return !synthesizer.isPrepared
     }
 
+    /// When true, speak even if Settings has voice off.
+    ///
+    /// Teach-me turns this on for the duration of the answer so the lesson can
+    /// advance with the voice. Without it, a lesson sat still unless the user
+    /// had independently switched Speak answers on — which reads as follow-along
+    /// being broken for teaching.
+    var speaksRegardlessOfSetting = false
+
     /// Enough text for the voice to shape a clause rather than a fragment.
     ///
     /// The first piece of an answer is sent as soon as a sentence ends, because
@@ -83,14 +91,14 @@ final class SpeechPlayback {
 
     /// Enqueues whatever has become speakable since the last call.
     func speakArriving(_ text: String) {
-        guard AppSettings.speaksAnswers else { return }
+        guard AppSettings.speaksAnswers || speaksRegardlessOfSetting else { return }
         consume(Self.speakable(from: text), toTheEnd: false)
     }
 
     /// Speaks whatever is left once the stream has finished, including a final
     /// fragment with no terminating punctuation.
     func finish(_ text: String) {
-        guard AppSettings.speaksAnswers else { return }
+        guard AppSettings.speaksAnswers || speaksRegardlessOfSetting else { return }
         consume(Self.speakable(from: text), toTheEnd: true)
     }
 
@@ -242,7 +250,7 @@ final class SpeechPlayback {
 
             let held = heldClauses
             heldClauses = []
-            guard AppSettings.speaksAnswers, !held.isEmpty else { return }
+            guard AppSettings.speaksAnswers || speaksRegardlessOfSetting, !held.isEmpty else { return }
 
             for clause in held { voice.enqueue(clause) }
             isSpeaking = true

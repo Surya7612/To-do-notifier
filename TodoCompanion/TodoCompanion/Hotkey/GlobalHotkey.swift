@@ -30,7 +30,7 @@ final class GlobalHotkey {
     ///
     /// Long enough to hit deliberately, short enough that two unrelated
     /// presses a second apart do not summon the microphone by accident.
-    private static let talkDoublePressWindow: Duration = .milliseconds(450)
+    private static let talkDoublePressWindow: Duration = .milliseconds(700)
 
     private init() {}
 

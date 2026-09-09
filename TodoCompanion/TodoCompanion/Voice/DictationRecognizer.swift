@@ -110,6 +110,15 @@ final class AppleDictationRecognizer: DictationRecognizer {
     /// request and the hints have to go on that one too.
     private var expectedPhrases: [String] = []
 
+    /// Prefer on-device when the hardware claims to support it.
+    ///
+    /// Flipped off for the rest of the session if a request that *required*
+    /// on-device fails with a real recognition error. `supportsOnDeviceRecognition`
+    /// is true on machines that *can* run the model, not ones that have it
+    /// downloaded — requiring it then produces endless silent failures and a
+    /// mic that looks live while nothing ever appears in the field.
+    private var preferOnDevice = true
+
     private(set) var runsOnDevice = true
 
     /// Nothing to load, so there is never a wait worth explaining.
@@ -122,7 +131,12 @@ final class AppleDictationRecognizer: DictationRecognizer {
         guard let recognizer, recognizer.isAvailable else { throw DictationFailure.recognizerUnavailable }
 
         self.recognizer = recognizer
-        runsOnDevice = recognizer.supportsOnDeviceRecognition
+        // Prefer speed for live typing. On-device is tried first when available;
+        // a hard failure falls back to Apple's servers for the rest of the
+        // session (see `isOnDeviceUnavailable`). Requiring on-device forever
+        // when the model was missing left a live mic that never produced text.
+        preferOnDevice = recognizer.supportsOnDeviceRecognition
+        runsOnDevice = preferOnDevice
         settledTranscript = ""
     }
 
@@ -160,7 +174,7 @@ final class AppleDictationRecognizer: DictationRecognizer {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = runsOnDevice
+        request.requiresOnDeviceRecognition = preferOnDevice
 
         // Off by default, which is why dictated text arrived as one
         // unpunctuated run-on. It is not only how the sentence reads: this text
@@ -180,35 +194,68 @@ final class AppleDictationRecognizer: DictationRecognizer {
         inflight.replace(with: request)
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in
-                guard let self, self.isRunning else { return }
+            // Avoid `Task { @MainActor in }` on every partial — that hop was a
+            // visible lag behind speech. The callback usually arrives off the
+            // main thread; hop only then.
+            let deliver = {
+                MainActor.assumeIsolated {
+                    guard let self, self.isRunning else { return }
 
-                if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
-                    onTranscript(self.joined(with: segment))
+                    if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
+                        onTranscript(self.joined(with: segment))
+                    }
+
+                    if let error {
+                        NSLog("[Dictation] recognition ended: \(error.localizedDescription)")
+                        if self.preferOnDevice, Self.isOnDeviceUnavailable(error) {
+                            self.preferOnDevice = false
+                            self.runsOnDevice = false
+                            NSLog("[Dictation] on-device recognition unavailable; allowing Apple servers for this session")
+                        }
+                    }
+
+                    guard error != nil || result?.isFinal == true else { return }
+
+                    if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
+                        self.settledTranscript = self.joined(with: segment)
+                    }
+
+                    self.task = nil
+                    self.listen(onTranscript: onTranscript)
                 }
+            }
 
-                if let error {
-                    // A segment that ends on silence reports an error rather
-                    // than a result, which is ordinary here and not a failure.
-                    NSLog("[Dictation] recognition ended: \(error.localizedDescription)")
-                }
-
-                guard error != nil || result?.isFinal == true else { return }
-
-                // Commit the finished segment before the next one starts from
-                // empty, or the pause would take those words with it.
-                if let segment = result?.bestTranscription.formattedString, !segment.isEmpty {
-                    self.settledTranscript = self.joined(with: segment)
-                }
-
-                self.task = nil
-                self.listen(onTranscript: onTranscript)
+            if Thread.isMainThread {
+                deliver()
+            } else {
+                DispatchQueue.main.async(execute: deliver)
             }
         }
     }
 
     private func joined(with segment: String) -> String {
         settledTranscript.isEmpty ? segment : settledTranscript + " " + segment
+    }
+
+    /// Errors that mean "this Mac cannot do on-device right now", not "the
+    /// speaker paused". Silence and cancellation must not flip us to the
+    /// network — they are the normal end of a segment.
+    private static func isOnDeviceUnavailable(_ error: Error) -> Bool {
+        let ns = error as NSError
+        // kAFAssistantErrorDomain: 1110 = no speech, 203/216 = cancelled.
+        if ns.domain == "kAFAssistantErrorDomain",
+           [1110, 203, 216].contains(ns.code) {
+            return false
+        }
+        let text = ns.localizedDescription.lowercased()
+        if text.contains("on-device") || text.contains("on device") {
+            return true
+        }
+        // Hard failure while we were requiring on-device: missing model or
+        // recognition never started. Transient audio glitches sometimes land
+        // here too; falling back once is better than a live mic that never
+        // produces text.
+        return ns.domain == "kAFAssistantErrorDomain"
     }
 
     /// Holds the recognition request the audio tap is feeding.

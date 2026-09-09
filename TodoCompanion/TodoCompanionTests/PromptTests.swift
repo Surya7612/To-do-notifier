@@ -374,6 +374,20 @@ struct PersonaPromptTests {
         #expect(Prompt.system(for: editing).contains("complete new contents"))
     }
 
+    @Test("teaching instructions appear only when teaching")
+    func teachingRulesAreConditional() {
+        let plain = AskContext()
+        #expect(!Prompt.system(for: plain).contains("numbered list of short steps"))
+
+        let teaching = AskContext(isTeaching: true)
+        #expect(Prompt.system(for: teaching).contains("numbered list of short steps"))
+        #expect(!Prompt.system(for: teaching).contains("guided walk"))
+
+        let guided = AskContext(isTeaching: true, isGuidedTeaching: true)
+        #expect(Prompt.system(for: guided).contains("guided walk"))
+        #expect(Prompt.system(for: guided).contains("why that line or control exists"))
+    }
+
     @Test("the file is given with line numbers and named")
     func numbersTheFile() {
         let context = AskContext(editableFile: EditableFileContext(

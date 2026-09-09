@@ -260,7 +260,12 @@ final class CompanionViewModel {
         phase = .reading
         // The boxes it was resolved against belong to the screen being replaced.
         pointerTarget = nil
-        axPointerTarget = nil
+        // Remember who we captured so Show me / Guided Teach can activate that
+        // app rather than aiming at Max, which holds key focus when those run.
+        if let frontmostApp,
+           frontmostApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+            contextApp = frontmostApp
+        }
         // A summon is a new question about a new screen, which is where a
         // lesson left up over the last one stops being a lesson and starts
         // being litter.
@@ -364,22 +369,30 @@ final class CompanionViewModel {
         case explain
         case nextStep
         case teach
+        case guidedTeach
 
         var id: String { rawValue }
 
         /// Whether the answer should be a walk through the screen rather than
-        /// a reply. Only `teach` changes the prompt, and only pressing it turns
-        /// the lesson machinery on — asking the same thing in words does not,
-        /// because a lesson draws on the screen and that stays behind a press.
-        var isTeaching: Bool { self == .teach }
+        /// a reply. Only the teach presets change the prompt, and only pressing
+        /// them turns the lesson machinery on — asking the same thing in words
+        /// does not, because a lesson draws on the screen and that stays behind
+        /// a press.
+        var isTeaching: Bool { self == .teach || self == .guidedTeach }
+
+        /// Guided Teach also warps the cursor to each step's box as Max speaks.
+        /// Plain Teach me only draws boxes. The user pressed Guided, so moving
+        /// the pointer is asked for — same footing as follow-along for drawing.
+        var isGuidedTeaching: Bool { self == .guidedTeach }
 
         /// Kept short deliberately. These sit in a row with the region controls
-        /// inside a 420pt panel, and the full question does not fit.
+        /// inside a narrow panel, and the full question does not fit.
         var buttonLabel: String {
             switch self {
             case .explain: "Explain"
             case .nextStep: "Next step"
             case .teach: "Teach me"
+            case .guidedTeach: "Guided"
             }
         }
 
@@ -388,6 +401,7 @@ final class CompanionViewModel {
             case .explain: "text.book.closed"
             case .nextStep: "arrow.turn.down.right"
             case .teach: "graduationcap"
+            case .guidedTeach: "cursorarrow.click.2"
             }
         }
 
@@ -397,7 +411,7 @@ final class CompanionViewModel {
                 "Explain what this is, in plain language. Define any jargon."
             case .nextStep:
                 "Based on this, what is the single next thing I should do? Be specific."
-            case .teach:
+            case .teach, .guidedTeach:
                 "Walk me through what is on screen, step by step, so I understand it."
             }
         }
@@ -427,7 +441,9 @@ final class CompanionViewModel {
         // Teaching follows the button, not the wording. Pressing "Teach me"
         // with a question already typed means teach me *that*, so the user's
         // own words are still what gets asked.
-        submit(isFromPreset: asked.isFromPreset, isTeaching: preset.isTeaching)
+        submit(isFromPreset: asked.isFromPreset,
+               isTeaching: preset.isTeaching,
+               isGuidedTeaching: preset.isGuidedTeaching)
     }
 
     /// Whether the preset buttons would ask the user's own words instead.
@@ -470,7 +486,6 @@ final class CompanionViewModel {
             updated.primary.textRegions = read.regions
             observation = updated
             pointerTarget = nil
-            axPointerTarget = nil
             contextLabel = "Selected region of \(updated.contextLabel)"
             if phase == .failed("") || phase == .idle { phase = .idle }
         }
@@ -514,6 +529,11 @@ final class CompanionViewModel {
                     onTranscript: { [weak self] text in
                         self?.question = text
                         self?.dictationHint = ""
+                        // Apple may fall back from on-device mid-session when
+                        // the model is missing; keep the status line honest.
+                        if let self {
+                            self.dictationIsOnDevice = self.dictation.isOnDevice
+                        }
                     },
                     onSilence: { [weak self] device in
                         self?.dictationHint =
@@ -600,9 +620,9 @@ final class CompanionViewModel {
         if let url { NSWorkspace.shared.open(url) }
     }
 
-    func submit() { submit(isFromPreset: false, isTeaching: false) }
+    func submit() { submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false) }
 
-    private func submit(isFromPreset: Bool, isTeaching: Bool) {
+    private func submit(isFromPreset: Bool, isTeaching: Bool, isGuidedTeaching: Bool = false) {
         let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
 
@@ -627,7 +647,6 @@ final class CompanionViewModel {
         speech.stop()
         proposedEdit = nil
         pointerTarget = nil
-        axPointerTarget = nil
         endLesson()
         phase = .thinking
 
@@ -648,8 +667,19 @@ final class CompanionViewModel {
             // the question it is currently answering twice.
             history: turns.dropLast(),
             editableFile: editableFile.context,
-            isTeaching: isTeaching
+            isTeaching: isTeaching,
+            isGuidedTeaching: isGuidedTeaching
         )
+
+        // A lesson walks the screen with the voice. If Speak answers is off,
+        // teaching used to draw step 1 and never move — follow-along looked
+        // broken. Force speech (and ordinary follow-along if the reply is not
+        // a lesson) for this answer only; the Settings toggle stays as it was.
+        speech.speaksRegardlessOfSetting = isTeaching
+        followAlongThisAnswer = isTeaching
+        // Guided Teach keeps this true for the lesson so each spoken step can
+        // warp the cursor. Cleared with the lesson, not with ordinary teaching.
+        guidedTeachThisAnswer = isGuidedTeaching
 
         answerTask = Task {
             // Accumulated locally rather than in a property: the turn is the
@@ -659,25 +689,54 @@ final class CompanionViewModel {
             do {
                 let stream = brain.answerStream(question: prompt, context: context)
                 for try await chunk in stream {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled {
+                        clearTeachingSpeechOverride()
+                        return
+                    }
                     streamed += chunk
                     recordAnswer(streamed, for: turnID)
                     if phase != .answering { phase = .answering }
+                    // Lesson first, then speech: follow-along advances by matching
+                    // the clause being heard against the lesson. Starting speech
+                    // before the lesson existed left every clause on the ordinary
+                    // path, which requires the Settings toggle — so Teach me
+                    // looked like follow-along being broken.
+                    if isTeaching { beginLesson(from: streamed) }
                     speech.speakArriving(streamed)
                 }
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    clearTeachingSpeechOverride()
+                    return
+                }
 
+                if isTeaching { beginLesson(from: streamed) }
                 speech.finish(streamed)
                 captureProposedEdit(from: streamed)
                 findPointerTarget(in: streamed)
-                if isTeaching { beginLesson(from: streamed) }
                 lastTurnAt = Date()
                 phase = .idle
+                // Keep the override while a lesson is still on screen so a late
+                // clause can still advance it. Cleared when the lesson ends, or
+                // immediately when teaching produced only an ordinary answer.
+                if lesson == nil { clearTeachingSpeechOverride() }
             } catch {
                 guard !Task.isCancelled else { return }
+                clearTeachingSpeechOverride()
                 phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Session-only speech / follow-along forced by Teach me.
+    private var followAlongThisAnswer = false
+
+    /// Session-only: Guided Teach warps the cursor to each step's box.
+    private var guidedTeachThisAnswer = false
+
+    private func clearTeachingSpeechOverride() {
+        speech.speaksRegardlessOfSetting = false
+        followAlongThisAnswer = false
+        guidedTeachThisAnswer = false
     }
 
     /// Stores what was said about the screen being saved.
@@ -707,61 +766,51 @@ final class CompanionViewModel {
     /// would match on words the answer is still in the middle of writing.
     private(set) var pointerTarget: ScreenTextLocator.Match?
 
-    /// AX match for the same label, when Accessibility extras are active and
-    /// the frontmost app exposes the control. Nil does not mean the OCR match
-    /// is wrong — only that the tree has nothing to move or click.
-    private(set) var axPointerTarget: AXControlLocator.Match?
+    /// App whose screen was captured, so Show me / Guided Teach can activate it
+    /// before warping the pointer — Max holds key focus when those run.
+    private weak var contextApp: NSRunningApplication?
 
     private func findPointerTarget(in answer: String) {
         guard let observation, observation.primaryScreenFrame != nil else {
             pointerTarget = nil
-            axPointerTarget = nil
             return
         }
         pointerTarget = ScreenTextLocator.locate(named: answer, in: observation.primary.textRegions)
-        refreshAXPointerTarget()
     }
 
-    private func refreshAXPointerTarget() {
-        guard TrustAccessibility.extrasAreActive,
-              let text = pointerTarget?.text
-        else {
-            axPointerTarget = nil
-            return
-        }
-        axPointerTarget = AXControlLocator.locate(label: text)
-    }
-
-    /// Draws a box around what the answer named.
+    /// Draws a box around what the answer named, and warps the pointer onto it
+    /// when Accessibility extras are on.
     ///
     /// Deliberately a button press rather than something that happens on its
     /// own: drawing over the user's screen after every answer would be the app
-    /// acting unasked, and most answers are not directions to a control.
+    /// acting unasked, and most answers are not directions to a control. The
+    /// warp is folded into this same press so there is no orphan "Move pointer"
+    /// control — Show me is the whole gesture.
     func showPointerTarget() {
         guard let pointerTarget,
               let frame = observation?.primaryScreenFrame
         else { return }
 
-        onHighlight?(ScreenTextLocator.screenRect(for: pointerTarget.boundingBox, in: frame), false)
+        let rect = ScreenTextLocator.screenRect(for: pointerTarget.boundingBox, in: frame)
+        onHighlight?(rect, false)
+
+        guard TrustAccessibility.extrasAreActive else { return }
+        warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
     }
 
-    /// Moves the system pointer onto the AX match for the named control.
+    /// Activates the captured app, waits for it to take front, then warps.
     ///
-    /// Button-only. Follow-along and lessons never call this — moving the
-    /// pointer unasked would fight anyone mid-drag and is inference acting.
-    func movePointerToTarget() {
-        refreshAXPointerTarget()
-        guard let axPointerTarget else { return }
-        AXControlLocator.movePointer(to: axPointerTarget.center)
-    }
-
-    /// Left-clicks the AX match for the named control.
-    ///
-    /// Button-only, same standing as `movePointerToTarget`.
-    func clickPointerTarget() {
-        refreshAXPointerTarget()
-        guard let axPointerTarget else { return }
-        AXControlLocator.click(at: axPointerTarget.center)
+    /// Activating and warping in the same turn left the cursor on Max or on a
+    /// half-switched app — one jump to a useless point. The short settle is
+    /// what makes Show me and Guided Teach land on the control that was boxed.
+    private func warpPointer(to point: CGPoint) {
+        let app = contextApp
+        Task { [weak self] in
+            app?.activate()
+            try? await Task.sleep(for: .milliseconds(80))
+            guard self != nil else { return }
+            AXControlLocator.movePointer(to: point)
+        }
     }
 
     /// Moves the box to whatever control the clause now being spoken names.
@@ -785,7 +834,7 @@ final class CompanionViewModel {
             return
         }
 
-        guard AppSettings.followsAlongWhileSpeaking else { return }
+        guard AppSettings.followsAlongWhileSpeaking || followAlongThisAnswer else { return }
 
         guard let clause else {
             onHighlightEnded?()
@@ -845,8 +894,15 @@ final class CompanionViewModel {
               let frame = observation.primaryScreenFrame
         else { return }
 
+        // Called again as the stream grows: keep the current step when more
+        // items appear rather than snapping back to the first every chunk.
+        let starting = lesson == nil
         lesson = parsed
-        lessonStep = 0
+        if starting {
+            lessonStep = 0
+        } else {
+            lessonStep = min(lessonStep, parsed.steps.count - 1)
+        }
         resolveLessonMarks(in: observation.primary.textRegions, on: frame)
         showLessonStep()
     }
@@ -854,6 +910,7 @@ final class CompanionViewModel {
     func endLesson() {
         lessonExpiry?.cancel()
         lessonExpiry = nil
+        clearTeachingSpeechOverride()
         guard lesson != nil else { return }
 
         lesson = nil
@@ -936,16 +993,26 @@ final class CompanionViewModel {
         guard let lesson, lessonMarks.indices.contains(lessonStep) else { return }
 
         let step = lesson.steps[lessonStep]
+        let current = lessonMarks[lessonStep]
         onLessonMarks?(LessonMarks(
-            current: lessonMarks[lessonStep],
+            current: current,
             covered: lessonMarks.prefix(lessonStep).flatMap { $0 },
             number: lessonStep + 1,
             caption: step.caption,
             // An arrow needs somewhere to go: a step whose second label Vision
             // could not find would otherwise draw one from a box to itself.
-            isConnected: step.isConnected && lessonMarks[lessonStep].count > 1,
+            isConnected: step.isConnected && current.count > 1,
             screen: lessonFrame
         ))
+
+        // Guided Teach: the user asked the cursor to follow. Warp to the first
+        // box of this step when extras are on; without a grant, boxes alone
+        // still teach. Never clicks — the user does that.
+        if guidedTeachThisAnswer,
+           TrustAccessibility.extrasAreActive,
+           let rect = current.first {
+            warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
+        }
     }
 
     /// Reads the screen again and works out where the labels have moved to.
@@ -983,7 +1050,6 @@ final class CompanionViewModel {
         lastTurnAt = nil
         proposedEdit = nil
         pointerTarget = nil
-        axPointerTarget = nil
         phase = .idle
     }
 
@@ -1317,7 +1383,6 @@ final class CompanionViewModel {
         question = ""
         proposedEdit = nil
         pointerTarget = nil
-        axPointerTarget = nil
         // A lesson deliberately survives, and its marks stay on screen. This is
         // the same argument the conversation makes for surviving: reaching the
         // code being taught means clicking outside this app, so tearing the

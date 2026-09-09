@@ -29,10 +29,10 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
     /// How often buffered audio is handed to the model.
     ///
     /// The recognizer is an actor and the audio render thread cannot await, so
-    /// samples are queued and pushed on an interval instead. Short enough that
-    /// the text keeps up with speech, long enough not to wake the Neural Engine
-    /// for a few milliseconds of audio at a time.
-    private static let pushInterval = Duration.milliseconds(300)
+    /// samples are queued and pushed on an interval instead. Kept under the
+    /// model's own 160ms chunk so a spoken word is not waiting on our poll on
+    /// top of inference — 300ms here made Parakeet feel a beat behind speech.
+    private static let pushInterval = Duration.milliseconds(80)
 
     func prepare() async throws {
         guard !modelsLoaded else { return }
@@ -51,7 +51,17 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
     func begin(expecting: [String], onTranscript: @escaping (String) -> Void) {
         queue.reset()
 
+        // Boxed so the actor's Sendable partial callback can reach the
+        // MainActor-only UI update without capturing a non-Sendable closure.
+        let sink = ParakeetTranscriptSink(onTranscript)
+
         drainTask = Task { [manager, queue] in
+            // Push updates as the model decodes rather than only when we poll.
+            await manager.setPartialTranscriptCallback { text in
+                guard !text.isEmpty else { return }
+                sink.publish(text)
+            }
+
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.pushInterval)
                 guard !Task.isCancelled else { return }
@@ -66,8 +76,10 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
                     }
                     try await manager.processBufferedAudio()
 
+                    // Callback may already have fired; this catches a decode
+                    // that produced text without invoking it.
                     let text = await manager.getPartialTranscript()
-                    if !text.isEmpty { onTranscript(text) }
+                    if !text.isEmpty { sink.publish(text) }
                 } catch {
                     NSLog("[Dictation] Parakeet chunk failed: \(error.localizedDescription)")
                 }
@@ -102,7 +114,10 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
 
         // Discards the accumulated tokens, so the next session starts empty
         // rather than continuing the last one's sentence.
-        Task { [manager] in await manager.reset() }
+        Task { [manager] in
+            await manager.setPartialTranscriptCallback { _ in }
+            await manager.reset()
+        }
     }
 
     /// One tap callback's worth of mono audio.
@@ -162,5 +177,21 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
         func reset() {
             lock.withLock { chunks = [] }
         }
+    }
+}
+
+/// Carries a transcript callback across the FluidAudio actor boundary.
+///
+/// File-scoped so it does not inherit MainActor from
+/// `ParakeetDictationRecognizer` under default actor isolation.
+nonisolated final class ParakeetTranscriptSink: @unchecked Sendable {
+    private let deliver: (String) -> Void
+
+    init(_ deliver: @escaping (String) -> Void) {
+        self.deliver = deliver
+    }
+
+    func publish(_ text: String) {
+        DispatchQueue.main.async { self.deliver(text) }
     }
 }

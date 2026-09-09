@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Opt-in, never required. Carbon hotkeys and OCR pointing work without it.
 /// When the user enables the extras in Settings *and* macOS trusts the process,
-/// Tab+Q and the Move pointer / Click actions become available.
+/// Tab+Q and Show me / Guided Teach pointer warps become available.
 @MainActor
 enum TrustAccessibility {
     /// Posted when the Settings toggle changes, so the event tap can install
