@@ -95,13 +95,15 @@ in the registration. `HotkeyChoice.all` is the vetted set; add to it only after 
 A combo also **cannot be built out of an ordinary key**, however natural one feels to type.
 `RegisterEventHotKey` takes a key code plus a mask of Command, Shift, Option and Control, so `Tab+Q`
 is not expressible — treating Tab as a modifier needs a `CGEvent` tap, which needs the Accessibility
-permission this app declines to require. That is the whole reason the talk shortcut defaults to `⌃⌥Q`
-rather than to what was asked for, and Settings says so rather than leaving it looking arbitrary.
+permission this app declines to require. A double-tap of ⌥⌘ with no letter is the same kind of thing.
+That is why the talk shortcut defaults to `⌥⌘Q` pressed **twice**, rather than to what was asked for,
+and Settings says so rather than leaving it looking arbitrary.
 
 **A second hotkey opens the microphone, and that is not a wake word.** Summoning and then finding the
 dictation button is enough friction that a spoken question becomes a typed one, which defeats the
 point of asking about the screen in front of you — so `AppSettings.talkHotkey` brings the panel up
-with the mic already open and stops it on a second press. The rule it has to clear is about whether
+with the mic already open. It takes **two presses within about half a second**, so an accidental brush
+does not start listening, and two presses again stops it. The rule it has to clear is about whether
 the microphone is ever open when the user did not open it, and a shortcut *is* the user opening it:
 nothing listens until it is pressed. It is allowed not to exist, unlike the summon shortcut, because
 an app with no way to summon it is broken rather than merely configured differently.

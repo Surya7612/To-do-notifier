@@ -53,9 +53,11 @@ struct HotkeyChoice: Identifiable, Hashable, Sendable {
     /// feels to type: `RegisterEventHotKey` takes a key code plus a mask of
     /// Command, Shift, Option and Control, and Tab is an ordinary key rather
     /// than a modifier. Treating it as one needs a `CGEvent` tap, which needs
-    /// the Accessibility permission this app declines to require. `⌃⌥Q` is the
-    /// nearest thing that is one motion of the left hand.
-    nonisolated static let talkFallback = named("ctrl-opt-q")
+    /// the Accessibility permission this app declines to require. Double-tapping
+    /// ⌥⌘ with no letter has the same problem. `⌥⌘Q` pressed twice is the
+    /// nearest thing that is still one motion of the left hand and still opens
+    /// the microphone directly — see `GlobalHotkey`'s talk double-press window.
+    nonisolated static let talkFallback = named("opt-cmd-q")
 
     nonisolated static func named(_ id: String?) -> HotkeyChoice {
         all.first { $0.id == id } ?? fallback

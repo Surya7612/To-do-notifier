@@ -65,6 +65,15 @@ protocol DictationRecognizer: AnyObject {
     /// or take a lock the main actor holds.
     nonisolated func receive(_ buffer: AVAudioPCMBuffer)
 
+    /// A `@Sendable` entry point for the microphone tap.
+    ///
+    /// Distinct from `receive` because the tap must capture something that is
+    /// not MainActor-isolated. Closing over `any DictationRecognizer` — even to
+    /// call this nonisolated method — made the tap itself MainActor-isolated
+    /// under Swift 6, and the first buffer then trapped. Both backends return a
+    /// closure that only touches lock-guarded state.
+    nonisolated var audioReceiver: @Sendable (AVAudioPCMBuffer) -> Void { get }
+
     func end()
 }
 
@@ -84,7 +93,9 @@ final class AppleDictationRecognizer: DictationRecognizer {
     ///
     /// Held in a lock rather than as a plain property because the tap keeps
     /// feeding buffers while a pause swaps the request underneath it.
-    private let inflight = RequestHolder()
+    /// `nonisolated` so the tap can capture it in a `@Sendable` closure without
+    /// dragging the MainActor-isolated recognizer along.
+    nonisolated private let inflight = RequestHolder()
 
     /// Text from segments the recognizer has already finalized.
     ///
@@ -123,6 +134,10 @@ final class AppleDictationRecognizer: DictationRecognizer {
 
     nonisolated func receive(_ buffer: AVAudioPCMBuffer) {
         inflight.append(buffer)
+    }
+
+    nonisolated var audioReceiver: @Sendable (AVAudioPCMBuffer) -> Void {
+        { [inflight] buffer in inflight.append(buffer) }
     }
 
     func end() {

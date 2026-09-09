@@ -15,7 +15,9 @@ import Foundation
 @MainActor
 final class ParakeetDictationRecognizer: DictationRecognizer {
     private let manager = StreamingEouAsrManager()
-    private let queue = SampleQueue()
+    /// `nonisolated` so the microphone tap can capture it in a `@Sendable`
+    /// closure without dragging this MainActor-isolated recognizer along.
+    nonisolated private let queue = SampleQueue()
     private var drainTask: Task<Void, Never>?
     private var modelsLoaded = false
 
@@ -73,12 +75,20 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
         }
     }
 
+    nonisolated func receive(_ buffer: AVAudioPCMBuffer) {
+        Self.enqueue(buffer, onto: queue)
+    }
+
+    nonisolated var audioReceiver: @Sendable (AVAudioPCMBuffer) -> Void {
+        { [queue] buffer in Self.enqueue(buffer, onto: queue) }
+    }
+
     /// Samples are copied rather than the buffer retained. A tap's buffer is
     /// only valid for the duration of the callback, and this recognizer looks at
     /// the audio a fraction of a second later, by which time the engine has
     /// reused the storage. Apple's path escapes this because `append` copies
     /// synchronously.
-    nonisolated func receive(_ buffer: AVAudioPCMBuffer) {
+    private nonisolated static func enqueue(_ buffer: AVAudioPCMBuffer, onto queue: SampleQueue) {
         guard let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
 
         let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
