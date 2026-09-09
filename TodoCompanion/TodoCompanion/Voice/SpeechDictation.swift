@@ -109,9 +109,14 @@ final class SpeechDictation {
         // died on the first sample.
         tap.bind(recognizer)
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level, tap] buffer, _ in
-            tap.receive(buffer)
-            level.record(buffer)
+        // Locals, not `self.level` / `self.tap`: reading MainActor properties
+        // into the capture list can still mark the closure MainActor-isolated
+        // even when the values themselves are nonisolated boxes.
+        let meter = level
+        let feed = tap
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            feed.receive(buffer)
+            meter.record(buffer)
         }
 
         engine.prepare()
@@ -188,7 +193,13 @@ final class SpeechDictation {
 
     /// Tracks whether any non-silent audio arrived. Written from the audio
     /// render thread and read from the main actor, so access is locked.
-    private final class LevelMeter: @unchecked Sendable {
+    ///
+    /// `nonisolated` is load-bearing: under Swift 6's default MainActor
+    /// isolation a nested class inherits the outer actor, and capturing that
+    /// meter in the audio tap made the whole callback MainActor-isolated —
+    /// the same `_swift_task_checkIsolatedSwift` trap as capturing the
+    /// recognizer. The lock is the synchronisation; the actor is not.
+    private nonisolated final class LevelMeter: @unchecked Sendable {
         private let lock = NSLock()
         /// Loudest sample of the whole session, for the silence watchdog.
         private var sessionPeak: Float = 0
