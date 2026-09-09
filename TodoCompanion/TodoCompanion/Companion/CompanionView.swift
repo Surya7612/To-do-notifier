@@ -101,6 +101,17 @@ struct CompanionView: View {
             }
             fileBadge
             destinationBadge
+            Button {
+                viewModel.isPinned.toggle()
+            } label: {
+                Image(systemName: viewModel.isPinned ? "pin.fill" : "pin")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(viewModel.isPinned ? DS.Pointer.mark : Color.secondary)
+            .help(viewModel.isPinned
+                  ? "Unpin — the panel will close again when you click away"
+                  : "Pin the panel so it stays put while you work (⌘T)")
+            .keyboardShortcut("t", modifiers: .command)
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.semibold))

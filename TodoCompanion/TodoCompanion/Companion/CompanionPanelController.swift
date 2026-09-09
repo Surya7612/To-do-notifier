@@ -33,6 +33,10 @@ final class CompanionPanelController {
             self?.lessonMarks.show(current: current, covered: covered, number: number, on: screen)
         }
         viewModel.onLessonEnded = { [weak self] in self?.lessonMarks.hide() }
+        viewModel.onPinnedChanged = { [weak self] isPinned in
+            guard let self else { return }
+            isPinned ? self.stopWatchingForOutsideClick() : self.watchForOutsideClick()
+        }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -66,7 +70,11 @@ final class CompanionPanelController {
     /// *keyboard* monitor would demand Accessibility permission, and avoiding
     /// that is why the hotkey uses Carbon in the first place.
     private func watchForOutsideClick() {
-        guard outsideClickMonitor == nil else { return }
+        // Pinning is exactly the suppression of this monitor. It is what makes
+        // the panel usable *while* working rather than between bouts of work —
+        // reading a lesson step, doing it, and looking back at the panel, all
+        // without the act of reaching the editor taking the panel down.
+        guard !viewModel.isPinned, outsideClickMonitor == nil else { return }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in

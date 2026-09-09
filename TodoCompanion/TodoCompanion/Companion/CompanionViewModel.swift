@@ -26,6 +26,21 @@ final class CompanionViewModel {
     var onHighlight: ((CGRect, Bool) -> Void)?
     /// Takes that box back down.
     var onHighlightEnded: (() -> Void)?
+    /// Starts or stops the click-outside monitor behind the pin.
+    var onPinnedChanged: ((Bool) -> Void)?
+
+    /// Whether clicking into another app leaves the panel where it is.
+    ///
+    /// Not persisted. A pinned panel that survives a relaunch is a window the
+    /// user has to remember they pinned, and the default — dismissing the way
+    /// every other floating panel on the system does — is the one that cannot
+    /// strand anybody.
+    var isPinned = false {
+        didSet {
+            guard isPinned != oldValue else { return }
+            onPinnedChanged?(isPinned)
+        }
+    }
 
     private let dictation = SpeechDictation()
     private let regionSelector = RegionSelector()
