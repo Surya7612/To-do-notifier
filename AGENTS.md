@@ -46,7 +46,7 @@ the to-do app's own tasks was the alternative and is the thing to avoid: it woul
 the position of writing `app-data.json`, a file another process holds in memory and rewrites wholesale,
 with no locking between them.
 
-The governing design document is `docs/TO_DO_NOTIFIER_UPDATED_PLAN.md`. Read it before proposing
+The governing design document is `docs/PLAN.md`. Read it before proposing
 architecture; it records what was deliberately rejected and why.
 
 ## Core principle
@@ -92,9 +92,40 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
 success. A hotkey that appears registered but never fires is almost always a reserved combo, not a bug
 in the registration. `HotkeyChoice.all` is the vetted set; add to it only after testing.
 
+A combo also **cannot be built out of an ordinary key**, however natural one feels to type.
+`RegisterEventHotKey` takes a key code plus a mask of Command, Shift, Option and Control, so `Tab+Q`
+is not expressible — treating Tab as a modifier needs a `CGEvent` tap, which needs the Accessibility
+permission this app declines to require. That is the whole reason the talk shortcut defaults to `⌃⌥Q`
+rather than to what was asked for, and Settings says so rather than leaving it looking arbitrary.
+
+**A second hotkey opens the microphone, and that is not a wake word.** Summoning and then finding the
+dictation button is enough friction that a spoken question becomes a typed one, which defeats the
+point of asking about the screen in front of you — so `AppSettings.talkHotkey` brings the panel up
+with the mic already open and stops it on a second press. The rule it has to clear is about whether
+the microphone is ever open when the user did not open it, and a shortcut *is* the user opening it:
+nothing listens until it is pressed. It is allowed not to exist, unlike the summon shortcut, because
+an app with no way to summon it is broken rather than merely configured differently.
+
+Two consequences. `GlobalHotkey` carries a `Role` in the Carbon hot key's id, which is the only thing
+the C callback can see, and installs **one** event handler for all roles — installing it per
+registration stacks a second handler on the same target and delivers each press twice. And dictation
+starts without waiting for the capture, so the recognizer gets none of the on-screen vocabulary
+`DictationHints` would have given it; that is the right trade, since someone who pressed a key in
+order to talk has already started, and a mic that opens a second later has missed the opening words.
+
+**Pinning is the suppression of the click-outside monitor, and nothing else.** `viewModel.isPinned`
+tells the controller to drop the monitor that otherwise dismisses the panel, which is what makes the
+panel usable *while* working rather than between bouts of it — reading a lesson step, doing it, and
+looking back. It is deliberately **not** persisted: a pinned panel surviving a relaunch is a window
+the user has to remember pinning, and dismissing the way every other floating panel on the system
+does is the default that cannot strand anybody.
+
 **TCC permissions are tied to the code signature.** Under ad-hoc signing the grant keys on the binary
 hash, so every rebuild invalidates Screen Recording and the app appears enabled in System Settings while
-actually being denied. The project sets `DEVELOPMENT_TEAM` for a stable identity, which fixes this.
+actually being denied. `Signing.xcconfig` therefore sets `DEVELOPMENT_TEAM` for a stable identity,
+taking the value from an untracked `Local.xcconfig` — the team is a personal account identifier, and
+committing one also fails the build for anyone who is not in that team. The include is optional
+(`#include?`), so a clone without the file builds and merely asks for a team.
 Consequence: unlike some macOS projects, **running `xcodebuild` from the terminal here is safe** and does
 not cost you your permissions.
 
@@ -455,9 +486,17 @@ instructions. The highlighter is deliberately lexical and shallow: almost all of
 separating comments and string literals from structure, which needs no grammar, and its one hard
 guarantee is that the text comes back byte-for-byte — the user copies it into their editor.
 
-Quoted labels are coloured the same blue the on-screen box is drawn in. That is not decoration: those
-are the words the app is willing to point at, so the emphasis in the panel and the emphasis on the
-screen are making one claim.
+Quoted labels are coloured the same as the on-screen box. That is not decoration: those are the words
+the app is willing to point at, so the emphasis in the panel and the emphasis on the screen are making
+one claim.
+
+That colour is `DS.Pointer.mark` rather than `DS.Status.saved`, which it used to borrow, and the split
+is worth keeping. They are two different claims — one is about a record in the library, the other is
+the app indicating a place on the user's screen — and while they shared a name they could not be tuned
+apart. It is **amber**, which is a legibility decision rather than a taste one: nearly all interface
+chrome is blue, so a blue mark competes with whatever it is drawn over, and syntax highlighting makes
+that worse, since One Dark spends blue on types and purple on keywords. The values are Primer's
+attention pair, so they arrive with their contrast ratios already measured.
 
 **The code well is opaque, and it is the only opaque thing in the panel.** That is a constraint rather
 than a preference: the panel is translucent, so a tinted overlay takes its brightness from whatever
@@ -793,16 +832,38 @@ guessing. Matching on quotes also survives `SpeechPlayback.speakable`, which rew
 leaves the quotes alone. Forwards-only because a label mentioned again in a later step would otherwise
 drag the lesson back to the first step that used it.
 
+**A lesson draws more than boxes, and every mark past a box has to be earned.** A box says "this,
+here", which is enough when the lesson is a sequence of places to look and not enough when it is about
+how one of them becomes another. So a step may carry two further marks, and neither is inferred.
+
+An **arrow** is drawn between two boxes only when Max wrote `→` between the two quoted labels, which
+`Lesson.Step.isConnected` reads. Connecting two labels merely *present* in one step was the obvious
+alternative and is the wrong one: "look at `res` and `nums`" is two places to look, not a claim that
+one flows into the other, and an arrow is a much stronger claim than a box. The model stating the
+relation in the sentence it also speaks keeps this on the same footing as everything else here — the
+model names and relates, the app locates. It is withdrawn when only one of the two labels resolves,
+since an arrow needs somewhere to go and would otherwise run from a box to itself.
+
+A **caption** prints the step's opening words beside its first box. That is the answer to "Max only
+drew rectangles": the panel had the teaching in it and the screen had geometry, so anyone actually
+looking at their code was reading shapes. It is the step's own opening cut at a word rather than the
+whole sentence, because the sentence is already in the panel and the caption is there to say which
+step this box belongs to, not to reproduce the lesson over the user's work — hence the prompt asking
+for the point of the step in its first words. It is the one **opaque** thing drawn on the screen, for
+exactly the reason the code well in the panel is: text whose contrast comes from the wallpaper is text
+nobody can read. And it flips above its box near the bottom of the screen, since a caption clipped off
+the edge is the only part of this that fails invisibly.
+
 ## Key files — `TodoCompanion/TodoCompanion/`
 
 | File | Lines | Purpose |
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~409 | Hotkey, provider choice, Ollama and OpenAI settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
-| `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
+| `App/SettingsView.swift` | ~436 | Both hotkeys, provider choice, Ollama and OpenAI settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
+| `Companion/CompanionPanelController.swift` | ~221 | Panel lifecycle, cursor-relative placement, pinning, summoning straight into dictation, and wiring the view model to the capture indicator and the lesson overlay. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~904 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
+| `Companion/CompanionView.swift` | ~915 | Panel UI: status header with the who-answers and open-file menus and the pin, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
 | `Companion/CompanionViewModel.swift` | ~1348 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, and the lesson being walked. |
 | `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
 | `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
@@ -810,11 +871,11 @@ drag the lesson back to the first step that used it.
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
 | `Capture/ScreenTextLocator.swift` | ~283 | Finds the control an answer named among those boxes, and maps one onto the screen. `requiringQuoted` narrows it to labels Max quoted; `locate(labels:)` resolves every label a lesson step names. Pure. |
 | `Capture/ScreenHighlight.swift` | ~101 | The box drawn around it, briefly on a button press or until hidden while Max is talking. |
-| `Capture/LessonOverlay.swift` | ~136 | The click-through layer a lesson draws on: the current step's boxes numbered, the steps already covered left faint. |
-| `Teaching/Lesson.swift` | ~84 | Reads a lesson out of a numbered answer, and says which step a spoken clause belongs to. Pure. |
+| `Capture/LessonOverlay.swift` | ~230 | The click-through layer a lesson draws on: the current step's boxes numbered and captioned, arrows between them where Max stated one, the steps already covered left faint. |
+| `Teaching/Lesson.swift` | ~115 | Reads a lesson out of a numbered answer — its steps, their quoted anchors, each one's caption and whether Max joined two labels with an arrow — and says which step a spoken clause belongs to. Pure. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~320 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, and the file-editing rules. |
+| `Brain/Brain.swift` | ~327 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, and the file-editing rules. |
 | `Brain/ScreenKind.swift` | ~148 | What sort of material is on screen, and the paragraph of prompt guidance it earns. Pure. |
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
@@ -840,13 +901,13 @@ drag the lesson back to the first step that used it.
 | `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
-| `Support/AppSettings.swift` | ~304 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
-| `Support/DesignSystem.swift` | ~116 | Spacing, radius, alpha, status colours, and the opaque code well with its per-appearance token palette. `nonisolated`, so pure layout code can read it. |
+| `Support/AppSettings.swift` | ~317 | `UserDefaults` keys, defaults, both hotkeys, the provider choice, and `AnswerDestination`. |
+| `Support/DesignSystem.swift` | ~134 | Spacing, radius, alpha, status colours, the amber the app points with, and the opaque code well with its per-appearance token palette. `nonisolated`, so pure layout code can read it. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
-| `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |
-| `Hotkey/HotkeyChoice.swift` | ~45 | The vetted list of non-reserved shortcuts. |
+| `Hotkey/GlobalHotkey.swift` | ~106 | Carbon hot key registration, one role per combo. Exposes registration failure. |
+| `Hotkey/HotkeyChoice.swift` | ~72 | The vetted list of non-reserved shortcuts, and the one the talk shortcut defaults to. |
 | `Library/GraphView.swift` | ~203 | `Canvas` rendering of the graph, with hover to trace a connection. |
 | `Library/LibraryView.swift` | ~718 | Browse by project, search, reassign, rename, and delete saved contexts. Sets, changes and cancels a reminder on anything kept. Project overview pairs what was kept with the project's open tasks. |
 
@@ -908,7 +969,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `ContextGraphTests` | Nodes and edges built from saves | A wrong edge is a wrong claim about how the user's material relates, and it is drawn large enough to be believed. Pins that shared tags collapse to one node and that filtering a kind removes its edges too. |
 | `GraphLayoutTests` | Force-directed placement | No assertable "correct" coordinates, so it pins the properties that make it usable: everything placed, nothing off-canvas, connected nodes closer than unconnected, and the same picture every time. |
 | `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
-| `LessonTests` | Reading a lesson out of an answer, following the voice through it, and resolving every label a step names | The parse is the only thing between a reply and a mode that draws continuously on the user's screen, and it fails silently in both directions: too eager and any answer containing a list puts boxes over an editor, too reluctant and "Teach me" appears to do nothing. Most of it pins what must **not** become a lesson — a list too short to be worth a mode, and a numbered answer that quotes nothing on screen. Also pins that matching survives `SpeechPlayback.speakable`, since the voice rewrites the sentence the match is made against, and that it never runs backwards to a label mentioned twice. |
+| `LessonTests` | Reading a lesson out of an answer, following the voice through it, and resolving every label a step names | The parse is the only thing between a reply and a mode that draws continuously on the user's screen, and it fails silently in both directions: too eager and any answer containing a list puts boxes over an editor, too reluctant and "Teach me" appears to do nothing. Most of it pins what must **not** become a lesson — a list too short to be worth a mode, and a numbered answer that quotes nothing on screen. Also pins that matching survives `SpeechPlayback.speakable`, since the voice rewrites the sentence the match is made against, and that it never runs backwards to a label mentioned twice. The marks suite pins the two things a step draws besides boxes, both of which land on the user's own screen: an arrow only where Max wrote one — two labels in a step is not a relation between them — and a caption cut at a word rather than mid-word. |
 | `FollowAlongMatchingTests` | What the box may point at while Max is speaking | The one path that draws on the screen without a press in front of it, so it pins the narrowing that makes that acceptable: a name the button believes on its own terms must be refused here unless Max quoted it. Also pins that the button's own behaviour is unchanged, since this added a parameter to the function it calls. |
 | `AnswerContentTests` | Splitting a reply into what the panel draws | Runs on every streamed chunk, against a document whose last fence is usually still open — so an unclosed fence must parse as code rather than as failure. The wrong-parse failures are silent: a block simply renders as the wrong thing. Found the bug where "3.5 GB free" parsed as list item three. |
 | `CodeHighlighterTests` | Colouring a fenced block | Colouring wrongly costs nothing, but the highlighter rebuilds the text character by character, so a scanner bug silently *drops* code the user is about to copy into their editor. Nearly all of it pins that the text survives intact; which token got which colour is barely asserted, so the palette stays free to change. |
@@ -1009,7 +1070,8 @@ Keep argument names the same as the variables they came from rather than abbrevi
  on the machine
 - Do not add a wake word or any always-listening mode. The mic opens when the user opens it. Note the
  Electron app's own wake word (`wakeWordEnabled`) ships **off by default**, which is the evidence, not the
- counter-example
+ counter-example. `AppSettings.talkHotkey` is not a counter-example either: a shortcut is the user
+ opening the mic, and nothing listens before it is pressed
 - Do not let inference write to disk. Max proposes a file change, the user is shown a diff, and only a
  button press writes anything. Do not extend editing past one explicitly-picked file
 - Do not route background or automatic work to a cloud model. Foreground questions only, and only

@@ -186,7 +186,7 @@ extension AnswerContent {
         }
 
         for range in quotedRanges(in: attributed) {
-            attributed[range].foregroundColor = DS.Status.saved
+            attributed[range].foregroundColor = DS.Pointer.mark
             attributed[range].font = .callout.weight(.medium)
         }
 

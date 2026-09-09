@@ -85,10 +85,10 @@ private struct HighlightBoxView: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: DS.Radius.chip)
-            .strokeBorder(DS.Status.saved, lineWidth: 2.5)
+            .strokeBorder(DS.Pointer.mark, lineWidth: 2.5)
             .background(
                 RoundedRectangle(cornerRadius: DS.Radius.chip)
-                    .fill(DS.Status.saved.opacity(DS.Alpha.hairline))
+                    .fill(DS.Pointer.mark.opacity(DS.Alpha.hairline))
             )
             // Starts slightly large and settles, which draws the eye to it the
             // way a static box does not.

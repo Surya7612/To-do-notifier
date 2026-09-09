@@ -2,26 +2,64 @@
 
 **Two macOS apps for studying: one that tracks the work, one that remembers the context.**
 
-An Electron desktop app for todos, focus sessions, and Rubber Duck study mode — plus **TodoCompanion**, a native Swift menu bar app that answers questions about what is on your screen and keeps things with your own stated reason for keeping them. They share a task list and nothing else.
-
-The rule the second app is built around: **what you said and what a model inferred are never allowed to blur.** Your reason for keeping something is stored verbatim and never overwritten; a model's summary is always labelled as one; and every resurfaced item explains itself — `same window`, `#tag`, `close in meaning`. That single constraint decides most of the architecture below, including the parts that were rejected.
-
 [![CI](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya7612/To-do-notifier/actions/workflows/ci.yml)
 
-> `"private": true` in `package.json` means the package is **not published to npm**. The app source is public under MIT (see [License](#license)).
+This repository holds two separate macOS apps that share a single task list. One is about **doing the
+work**; the other is about **remembering what you were looking at while you did it**.
 
 ---
 
-## Two apps in this repository
+## The two apps, in plain terms
 
-| | |
+### To-Do Notifier — the study app
+
+An Electron desktop app for the actual work: what you have to do, when it is due, and staying on it.
+This is where a task is created, worked on, and ticked off.
+
+| Feature | What it does |
 | --- | --- |
-| **This app** (`electron/`, `src/`) | Where work is **created and completed**: todos, notes, flashcards, streaks, the pomodoro timer, the pet, and notification preferences. |
-| **[TodoCompanion](TodoCompanion/README.md)** (`TodoCompanion/`) | A native Swift menu bar app where context is **captured and connected**: it answers questions about what is on screen, remembers things with your stated reason for keeping them, finds them again by words or meaning, and accepts captures from your phone. Active development. |
+| **Todos** | Due dates, with menu bar and notification nags both *before* a task is due and after it is overdue |
+| **Focus** | A pomodoro timer, with optional ambient sound |
+| **Study** | Notes and flashcards, generated from whatever you just said or typed |
+| **Tutor** | "Rubber Duck" mode: explain a topic out loud and get probing questions back |
+| **Voice** | Talk to it with **⌘G** — spoken commands and short chat about your open work |
+| **Pet** | A desktop sprite that wanders your screen and occasionally nags you |
+| **Quiet hours** | One do-not-disturb window that *both* apps respect |
 
-They are separate products sharing one task list, not two versions of the same thing. Merging them was considered and rejected — see [the design document](docs/TO_DO_NOTIFIER_UPDATED_PLAN.md).
+### TodoCompanion — the screen companion
 
-Each owns one file and reads the other's, and **neither writes the other's**. The companion reads this app's `app-data.json` for open tasks, notes, and quiet hours; this app reads the companion's project list to label and filter its own task list. So a project you create in the companion shows up here on the tasks you put in it.
+A native Swift menu bar app. Press a hotkey and it screenshots your displays, reads them with on-device
+OCR, and answers a question about whatever you are looking at. It also keeps screens you want to come
+back to, filed under **your own stated reason** for keeping them. This is the part under active
+development, and it has [its own README](TodoCompanion/README.md).
+
+| Feature | What it does |
+| --- | --- |
+| **Ask about your screen** | `⌃⌥Space` captures every display and answers a question about it; `⌘R` narrows it to a region you drag out |
+| **Keep asking** | Follow-ups remember the conversation, and `⌘L` re-reads the screen when it has changed |
+| **Talk to it** | `⌃⌥Q` opens the mic straight away; dictation and the spoken answers both run on this Mac |
+| **Point at things** | It draws a box around the control it just named — on your real screen, not in the panel |
+| **Teach me** | Walks a screen a step at a time, boxing and captioning each step as it reads it aloud |
+| **Keep a screen** | `⌘S` saves the screenshot with your reason for keeping it, plus `#tags` and a project |
+| **Find it again** | Search the library by words or by meaning, or browse it as a graph of what connects to what |
+| **Remind me** | "Remind me in two hours" becomes a notification *and* a real task in the study app |
+| **From your phone** | An iOS Shortcut drops captures into an iCloud folder and the Mac picks them up |
+| **Local by default** | Ollama answers on-device; OpenAI is opt-in and only ever for questions you asked |
+
+### How they fit together
+
+They are two products sharing one task list, not two versions of the same thing. The seam is *study
+and motivation* versus *context and memory*. Merging them was considered and rejected — see [the design
+document](docs/PLAN.md).
+
+Each app owns one file and reads the other's, and **neither ever writes the other's**. So a project you
+create in the companion appears in the study app as a label on the tasks you put in it, and a reminder
+you ask the companion for turns into a real task you can tick off.
+
+The rule the companion is built around, and the reason most of its architecture looks the way it does:
+**what you said and what a model inferred are never allowed to blur.** Your reason for keeping
+something is stored verbatim and never overwritten, a model's summary is always labelled as one, and
+anything it resurfaces says why — `same window`, `#tag`, `close in meaning`.
 
 ---
 
@@ -49,23 +87,6 @@ voice tutoring.
 | ![Todos](docs/screenshots/todos.png) | ![Focus](docs/screenshots/focus.png) |
 
 ![Rubber Duck voice tutoring](docs/screenshots/rubber-duck.jpg)
-
----
-
-## What the Electron app does
-
-The native companion has [its own README](TodoCompanion/README.md), which covers the panel, capture,
-retrieval, voice, and building it.
-
-| Area | Behavior |
-| --- | --- |
-| **Todos** | Due dates, lead-time + overdue nags via menu bar and notifications; project labels and filter from the companion, and reminders it asked to be turned into tasks |
-| **Focus** | Pomodoro timer with optional ambient sound |
-| **Pet** | Always-on desktop sprite (drag anywhere; corner / perch / body-double modes) |
-| **Voice** | **⌘G** talk / **Esc** stop — commands + short chat over open work |
-| **Tutor** | Rubber Duck mode: explain out loud; optional Socrates probing questions |
-| **Study** | Notes + flashcards generated from what you said or typed |
-| **Local AI** | Ollama for tutoring / companion replies; data stored on-disk |
 
 ---
 
@@ -162,7 +183,7 @@ Main-process code is CommonJS (`.cjs`) for straightforward Electron packaging; t
 
 ## Design decisions
 
-The [design document](docs/TO_DO_NOTIFIER_UPDATED_PLAN.md) records what was rejected alongside what
+The [design document](docs/PLAN.md) records what was rejected alongside what
 was built, because on this project the rejections carry most of the reasoning.
 
 | Considered | Decided against, because |
@@ -174,8 +195,9 @@ was built, because on this project the rejections carry most of the reasoning.
 | A cloud model doing background work | A hosted model may answer a question you deliberately asked, and may never work unprompted. Enforced structurally: `summarize` and `embed` exist only on the local provider, so a cloud one cannot be wired to them. |
 | An autonomous coding agent | It sees a screenshot, has no file tree, and cannot run your tests, so it would be strictly worse than the editor you already have open. It proposes one file, shows a diff, and writes only on a button press. |
 | An iCloud container for phone capture | Needs an entitlement requiring the paid Apple Developer Program. A *folder* inside iCloud Drive needs none and syncs identically. |
-| A wake word | An always-hot microphone sits badly beside explicit capture. The Electron app has one and ships it **off** by default, which is the evidence rather than the counter-example. |
+| A wake word | An always-hot microphone sits badly beside explicit capture. The Electron app has one and ships it **off** by default, which is the evidence rather than the counter-example. The companion's `⌃⌥Q` is not one either: nothing listens until it is pressed, and a shortcut is you opening the mic. |
 | Boxing whatever an answer seems to mention | Drawing on your screen is a confident claim about your pixels. The box appears on a button that names its match first — and when it follows the spoken answer instead, it is restricted to labels Max quoted character for character, so what gets drawn is something stated rather than something inferred. |
+| A lesson format with coordinates in it | A taught step is an ordinary numbered answer, parsed by the code that already draws numbered lists. Max names things and the OCR boxes decide the pixels, so a reply that ignored the instructions is still a good answer rather than a broken mode. An arrow is drawn only where Max wrote one; two labels in one step is not a claim that one becomes the other. |
 
 ---
 
@@ -290,4 +312,5 @@ the companion and not a second time here.
 ## License
 
 - **Source code:** [MIT](LICENSE)
-- **Companion artwork:** not under MIT — third-party / fan demo art only. See [docs/ASSETS.md](docs/ASSETS.md).
+- **Pet and tutor artwork:** not under MIT — third-party fan art, used here as personal demo art only. See [docs/ASSETS.md](docs/ASSETS.md).
+- `"private": true` in `package.json` only means the package is not published to npm. The source is public under MIT.

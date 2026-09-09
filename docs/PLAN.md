@@ -1,11 +1,11 @@
 # To-Do Notifier → Native Personal Context Companion
-**Updated project plan — September 7, 2026**
+**Design document**
 
 ## 1. Project Direction
 
-This remains a **personal side project first**.
-
-The goal is **not** to force it into a startup, YC application, or commercial product right now. The project should evolve around real problems I personally have and workflows I actually use.
+This is a personal tool first, and the scope follows from that: it evolves around problems I actually
+have and workflows I actually use, rather than around features a product in this space would be
+expected to have. Several sections below record things that were rejected for exactly that reason.
 
 The clearest vision is:
 
@@ -1363,6 +1363,85 @@ reminders, in its third instance: inference may suggest, only the user acts.
 Moving the cursor would also fight anyone mid-drag. And it runs from a button
 rather than after every answer, because most answers are not directions to a
 control, and drawing on the user's screen unasked is the app acting on inference.
+
+---
+
+## Phase 11 — Teaching on the screen
+
+- [x] `AppSettings.followsAlongWhileSpeaking`, moving the box as Max names each control
+- [x] `Lesson`, reading numbered steps and their quoted anchors out of an ordinary answer
+- [x] `LessonOverlay`, several boxes at once, numbered, with earlier steps left faint
+- [x] A **Teach me** preset, and a bar in the panel that steps the lesson
+- [x] A caption per step, printed beside its first box
+- [x] An arrow between two boxes, where Max wrote one between the two quoted labels
+- [~] Generated diagrams drawn over the screen — not built, see below
+
+Phase 10 boxed one control on a button press. This turns that into something
+that can teach: the box keeps up with the spoken answer, and a lesson puts up
+every mark a step names and walks them in time with the voice.
+
+**The format is an ordinary numbered answer, and that is the whole design.** A
+bespoke block — JSON, or a line format with coordinates in it — was the obvious
+alternative and is wrong twice over. It is a second thing the model must get
+right, and when it gets it wrong the failure is a mode that silently does not
+appear. Reusing the numbered list `AnswerContent` already parses, with the same
+quoted labels §10's matcher already finds, means a reply that ignored every
+teaching instruction is still a perfectly good answer, drawn the way answers
+always are.
+
+**The model never says where anything is.** It names and it relates; Vision's
+OCR boxes decide the pixels. That is what keeps a feature drawing *continuously*
+on the same footing as §10's single box, and it is why an arrow needs Max to
+have written `→` between two quoted labels rather than merely to have mentioned
+two labels in one step — "look at `res` and `nums`" is two places to look, not a
+claim that one flows into the other, and an arrow asserts far more than a box.
+
+**Following the voice is the one thing here that draws without a press, so it is
+narrowed twice.** It is off until switched on, and it matches only labels Max
+quoted character for character — the unquoted guesses §10's button is willing to
+make are refused, because that button names its match and waits, and this cannot.
+
+**Refusing is most of the lesson logic.** Fewer than three steps is a list and
+not worth a mode to escape from. A numbered answer quoting nothing on screen is
+an ordinary answer that happens to be numbered, and starting a lesson on it puts
+a bar over the panel that never draws. Advancing by hand re-reads the screen,
+since a few keystrokes reflow an editor and a confident box a line out is worse
+than no box; advancing by voice does not, because there is no press and a
+capture between clauses is the continuous capture this project refuses.
+
+**Diagrams generated over the screen are deliberately absent.** Annotating what
+is there and drawing something that is not are different features: nothing
+anchors a sketch to an OCR box, so its geometry would be the model's rather than
+Vision's, which is the one thing this phase holds constant. If it is built it
+needs its own surface, not the lesson marks.
+
+---
+
+## Phase 12 — Reaching it faster
+
+- [x] `GlobalHotkey.Role`, so more than one combo can be registered
+- [x] A second shortcut that summons with the microphone already open
+- [x] A pin in the panel header, suppressing the click-outside dismissal
+- [~] Tab as a modifier — not possible, see below
+
+**A shortcut that opens the mic is not a wake word.** The rule protects against
+the microphone being open when the user did not open it, and a key press is the
+user opening it: nothing listens until it is pressed. What it buys is real —
+summoning and *then* finding the dictation button is enough friction that a
+spoken question becomes a typed one, and typing means looking away from the
+screen the question is about.
+
+**`Tab+Q` is not expressible.** `RegisterEventHotKey` takes a key code plus a
+mask of Command, Shift, Option and Control; Tab is an ordinary key. Treating it
+as a modifier needs a `CGEvent` tap and therefore the Accessibility permission
+§10 rejected on merit as well as on principle. The default is `⌃⌥Q` and Settings
+states the constraint, so the substitution reads as a limit rather than a whim.
+
+**Pinning is the suppression of the click-outside monitor and nothing else.**
+Everything the app has grown since Phase 9 — a conversation, a proposed edit, a
+lesson — expects the user to go and do something in the app being discussed, and
+doing that *is* the click that dismisses the panel. It is not persisted: a panel
+that returns pinned is a window the user has to remember pinning.
 
 ---
 

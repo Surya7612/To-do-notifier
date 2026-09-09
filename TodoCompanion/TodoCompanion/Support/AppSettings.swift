@@ -7,6 +7,7 @@ enum AppSettings {
         static let model = "model"
         static let sendsImage = "sendsImage"
         static let hotkeyID = "hotkeyID"
+        static let talkHotkeyID = "talkHotkeyID"
         static let provider = "provider"
         static let openAIModel = "openAIModel"
         static let currentProjectID = "currentProjectID"
@@ -191,6 +192,7 @@ enum AppSettings {
             Key.model: defaultModel,
             Key.sendsImage: false,
             Key.hotkeyID: HotkeyChoice.fallback.id,
+            Key.talkHotkeyID: HotkeyChoice.talkFallback.id,
             Key.provider: Provider.ollama.rawValue,
             Key.openAIModel: OpenAIBrain.defaultModel,
             // Off by default because it needs a second model pulled, and a
@@ -265,6 +267,17 @@ enum AppSettings {
 
     static var hotkey: HotkeyChoice {
         HotkeyChoice.named(UserDefaults.standard.string(forKey: Key.hotkeyID))
+    }
+
+    /// Summons the panel and opens the microphone in one press, or nil when the
+    /// user has switched it off.
+    ///
+    /// This is not a wake word and must never become one. The distinction is
+    /// not about how convenient it is to start talking, it is about whether the
+    /// microphone is ever open when the user did not open it — a shortcut is
+    /// still the user opening it. Nothing listens until this is pressed.
+    static var talkHotkey: HotkeyChoice? {
+        HotkeyChoice.optional(UserDefaults.standard.string(forKey: Key.talkHotkeyID))
     }
 
     static var endpoint: URL {

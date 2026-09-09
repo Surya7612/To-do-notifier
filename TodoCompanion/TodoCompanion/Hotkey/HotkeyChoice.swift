@@ -35,11 +35,38 @@ struct HotkeyChoice: Identifiable, Hashable, Sendable {
                      displayName: "⌃⌥C",
                      keyCode: UInt32(kVK_ANSI_C),
                      modifiers: UInt32(controlKey | optionKey)),
+        HotkeyChoice(id: "ctrl-opt-q",
+                     displayName: "⌃⌥Q",
+                     keyCode: UInt32(kVK_ANSI_Q),
+                     modifiers: UInt32(controlKey | optionKey)),
+        HotkeyChoice(id: "opt-cmd-q",
+                     displayName: "⌥⌘Q",
+                     keyCode: UInt32(kVK_ANSI_Q),
+                     modifiers: UInt32(optionKey | cmdKey)),
     ]
 
     nonisolated static let fallback = all[0]
 
+    /// The default for "summon and start listening".
+    ///
+    /// A combo cannot be built from Tab and a letter, however natural that
+    /// feels to type: `RegisterEventHotKey` takes a key code plus a mask of
+    /// Command, Shift, Option and Control, and Tab is an ordinary key rather
+    /// than a modifier. Treating it as one needs a `CGEvent` tap, which needs
+    /// the Accessibility permission this app declines to require. `⌃⌥Q` is the
+    /// nearest thing that is one motion of the left hand.
+    nonisolated static let talkFallback = named("ctrl-opt-q")
+
     nonisolated static func named(_ id: String?) -> HotkeyChoice {
         all.first { $0.id == id } ?? fallback
     }
+
+    /// Like `named`, but "off" is a real answer. The talk shortcut is allowed
+    /// not to exist; the summon one is not.
+    nonisolated static func optional(_ id: String?) -> HotkeyChoice? {
+        guard let id, id != offIdentifier else { return nil }
+        return all.first { $0.id == id }
+    }
+
+    nonisolated static let offIdentifier = "off"
 }

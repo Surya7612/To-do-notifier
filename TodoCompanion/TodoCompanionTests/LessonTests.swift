@@ -90,12 +90,61 @@ struct LessonParsingTests {
 }
 
 /// Following the voice through a lesson.
+/// The two things a step carries besides its boxes. Both reach the user's own
+/// screen, so both are asserted rather than eyeballed: a caption is drawn over
+/// their work, and an arrow is a claim that one thing becomes another.
+@Suite("What a step draws besides boxes")
+struct LessonMarkTests {
+    @Test("an arrow between two quoted labels asks for a connector")
+    func statedRelationConnects() throws {
+        let lesson = try #require(Lesson.from(answer: """
+        1. The value in "res" is what "return res" hands back \u{2192} they are the same list.
+        2. The call to "backtrack" is where it is filled in.
+        3. The guard on "if start == len(nums)" is the base case.
+        """))
+
+        #expect(lesson.steps[0].isConnected)
+        // Two labels in one step is not a relation between them. Only Max
+        // writing the arrow is.
+        #expect(!lesson.steps[1].isConnected)
+    }
+
+    @Test("a caption is the step's opening, cut at a word")
+    func captionIsCutAtAWord() throws {
+        let lesson = try #require(Lesson.from(answer: """
+        1. This step is deliberately much longer than a caption should ever be, so that the cut has \
+        somewhere to happen and we can watch it land on a space rather than mid-word.
+        2. A short one about "res".
+        3. Another short one about "nums".
+        """))
+
+        let caption = lesson.steps[0].caption
+        #expect(caption.count <= Lesson.captionLength + 1)
+        #expect(caption.hasSuffix("…"))
+        #expect(!caption.contains(" …"))
+
+        // Short enough to print in full, so nothing is taken off it.
+        #expect(lesson.steps[1].caption == #"A short one about "res"."#)
+    }
+
+    @Test("curly quotes in a caption are printed as plain ones")
+    func captionNormalizesQuotes() throws {
+        let lesson = try #require(Lesson.from(answer: """
+        1. Look at \u{201C}res\u{201D} first.
+        2. Then at "nums".
+        3. Then at "start".
+        """))
+
+        #expect(lesson.steps[0].caption == #"Look at "res" first."#)
+    }
+}
+
 @Suite("Which step is being spoken")
 struct LessonPlaybackTests {
     private let lesson = Lesson(steps: [
-        .init(text: "First look at \"nums\".", anchors: ["nums"]),
-        .init(text: "Then at \"res\".", anchors: ["res"]),
-        .init(text: "Finally \"return res\".", anchors: ["return res"]),
+        .init(text: "First look at \"nums\".", anchors: ["nums"], isConnected: false),
+        .init(text: "Then at \"res\".", anchors: ["res"], isConnected: false),
+        .init(text: "Finally \"return res\".", anchors: ["return res"], isConnected: false),
     ])
 
     @Test("a clause quoting a later label advances to that step")

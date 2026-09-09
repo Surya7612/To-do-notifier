@@ -29,10 +29,19 @@ final class CompanionPanelController {
             self?.highlight.show(rect, untilHidden: untilHidden)
         }
         viewModel.onHighlightEnded = { [weak self] in self?.highlight.hide() }
-        viewModel.onLessonMarks = { [weak self] current, covered, number, screen in
-            self?.lessonMarks.show(current: current, covered: covered, number: number, on: screen)
+        viewModel.onLessonMarks = { [weak self] marks in
+            self?.lessonMarks.show(current: marks.current,
+                                   covered: marks.covered,
+                                   number: marks.number,
+                                   caption: marks.caption,
+                                   isConnected: marks.isConnected,
+                                   on: marks.screen)
         }
         viewModel.onLessonEnded = { [weak self] in self?.lessonMarks.hide() }
+        viewModel.onPinnedChanged = { [weak self] isPinned in
+            guard let self else { return }
+            isPinned ? self.stopWatchingForOutsideClick() : self.watchForOutsideClick()
+        }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -61,12 +70,35 @@ final class CompanionPanelController {
         viewModel.captureScreen(frontmostApp: frontmost)
     }
 
+    /// Brings the panel up with the microphone already open.
+    ///
+    /// The shortcut exists because the two-step version — summon, then find and
+    /// press the microphone — is enough friction that a spoken question tends
+    /// to become a typed one, and the whole point of asking about the screen in
+    /// front of you is not to look away from it.
+    ///
+    /// Pressing it again stops, so one key both starts and ends the sentence.
+    func summonAndListen() {
+        if !viewModel.isListening, !isVisible { summon() }
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Started without waiting for the capture to finish, which costs the
+        // recognizer the on-screen vocabulary it would otherwise be given. That
+        // is the right trade: the user pressed a key in order to talk, and a
+        // microphone that opens a second later has missed the first few words.
+        viewModel.toggleDictation()
+    }
+
     /// Dismisses when the user clicks away, which is what every other floating
     /// panel on the system does. Only mouse events are observed: a global
     /// *keyboard* monitor would demand Accessibility permission, and avoiding
     /// that is why the hotkey uses Carbon in the first place.
     private func watchForOutsideClick() {
-        guard outsideClickMonitor == nil else { return }
+        // Pinning is exactly the suppression of this monitor. It is what makes
+        // the panel usable *while* working rather than between bouts of work —
+        // reading a lesson step, doing it, and looking back at the panel, all
+        // without the act of reaching the editor taking the panel down.
+        guard !viewModel.isPinned, outsideClickMonitor == nil else { return }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
