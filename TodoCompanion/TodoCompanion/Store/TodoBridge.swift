@@ -28,7 +28,10 @@ struct LinkedNote: Identifiable, Hashable {
 /// Mirrored rather than reinvented: they configured this once, in the app that
 /// owns notification preferences, and a second reminder system that ignored it
 /// would make the setting a lie.
-struct QuietHours: Equatable, Sendable {
+/// Nonisolated for the same reason `ReminderPhrase` is: it is a value type with
+/// pure functions, and the module defaults to `MainActor`, which would
+/// otherwise make even constructing one a main-actor call.
+nonisolated struct QuietHours: Equatable, Sendable {
     var isEnabled = false
     var startHour = 22
     var endHour = 7
