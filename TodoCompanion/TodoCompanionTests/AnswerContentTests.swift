@@ -137,7 +137,7 @@ struct AnswerStylingTests {
     @Test("a quoted label is coloured the same as the box drawn on screen")
     func quotedLabelIsEmphasized() {
         let styled = AnswerContent.styled("Click the \"Color\" page.")
-        let coloured = styled.runs.filter { $0.foregroundColor == DS.Status.saved }
+        let coloured = styled.runs.filter { $0.foregroundColor == DS.Pointer.mark }
 
         #expect(coloured.count == 1)
         #expect(coloured.first.map { String(styled[$0.range].characters) } == "\"Color\"")
@@ -150,7 +150,7 @@ struct AnswerStylingTests {
     func unclosedQuoteIsNotStyled() {
         let styled = AnswerContent.styled("Click the \"Col")
 
-        #expect(!styled.runs.contains { $0.foregroundColor == DS.Status.saved })
+        #expect(!styled.runs.contains { $0.foregroundColor == DS.Pointer.mark })
     }
 
     @Test("markdown emphasis is applied rather than printed")

@@ -96,7 +96,7 @@ private struct LessonMarksView: View {
 
             ForEach(Array(covered.enumerated()), id: \.offset) { _, rect in
                 RoundedRectangle(cornerRadius: DS.Radius.chip)
-                    .strokeBorder(DS.Status.saved.opacity(0.28), lineWidth: 1)
+                    .strokeBorder(DS.Pointer.mark.opacity(0.28), lineWidth: 1)
                     .frame(width: rect.width, height: rect.height)
                     .offset(x: rect.minX, y: rect.minY)
             }
@@ -110,10 +110,10 @@ private struct LessonMarksView: View {
 
     private func mark(_ rect: CGRect, isFirst: Bool) -> some View {
         RoundedRectangle(cornerRadius: DS.Radius.chip)
-            .strokeBorder(DS.Status.saved, lineWidth: 2.5)
+            .strokeBorder(DS.Pointer.mark, lineWidth: 2.5)
             .background(
                 RoundedRectangle(cornerRadius: DS.Radius.chip)
-                    .fill(DS.Status.saved.opacity(DS.Alpha.hairline))
+                    .fill(DS.Pointer.mark.opacity(DS.Alpha.hairline))
             )
             // Only the first box of a step is numbered. Numbering all of them
             // would say there are four steps when there is one step about four
@@ -130,7 +130,7 @@ private struct LessonMarksView: View {
             .font(.caption2.weight(.bold))
             .foregroundStyle(.white)
             .frame(width: 18, height: 18)
-            .background(Circle().fill(DS.Status.saved))
+            .background(Circle().fill(DS.Pointer.mark))
             .shadow(radius: 2)
     }
 }

@@ -85,18 +85,27 @@ nonisolated enum DS {
     enum Status {
         static let ready = Color.green
         static let busy = Color.orange
-
-        /// Also the colour of the box drawn on screen and of the labels Max
-        /// quoted, which is the reason it is stated per appearance rather than
-        /// taken as `Color.blue`. `systemBlue` is picked to sit on an opaque
-        /// control background; as small text on a translucent panel over a
-        /// dark window it is closer to navy than to blue and reads as
-        /// disabled. These stay legible on the panel while remaining
-        /// unmistakable as a 2.5pt stroke over someone else's window.
         static let saved = Color.adaptive(dark: 0x74B4F0, light: 0x2E6FDD)
-
         static let listening = Color.pink
         static let problem = Color.red
+    }
+
+    /// Everything that says "this, here": the box drawn on the screen, the
+    /// labels Max quoted, the row offering to point, and a lesson's marks.
+    ///
+    /// Its own colour rather than `Status.saved`, which it used to borrow.
+    /// Those are two different claims — one is about a record in the library,
+    /// the other is the app indicating a place on the user's screen — and
+    /// sharing a name meant they could not be tuned apart.
+    ///
+    /// Amber rather than blue, and that is a legibility decision rather than a
+    /// taste one. Nearly all interface chrome is blue, so a blue mark competes
+    /// with what it is drawn over; syntax highlighting makes it worse, since
+    /// One Dark spends blue on types and purple on keywords. Warm sits against
+    /// all of it. These particular values are Primer's attention pair, which
+    /// carry their contrast ratios with them.
+    enum Pointer {
+        static let mark = Color.adaptive(dark: 0xE3B341, light: 0x9A6700)
     }
 }
 

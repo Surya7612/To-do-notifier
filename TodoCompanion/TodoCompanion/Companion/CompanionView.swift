@@ -612,7 +612,7 @@ struct CompanionView: View {
                     .font(.caption)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(DS.Status.saved)
+            .foregroundStyle(DS.Pointer.mark)
             .help("Draw a box around “\(target.text)” on screen (⌘P)")
             .keyboardShortcut("p", modifiers: .command)
 
@@ -636,7 +636,7 @@ struct CompanionView: View {
         }
         .toggleStyle(.button)
         .buttonStyle(.plain)
-        .foregroundStyle(followsAlongWhileSpeaking ? DS.Status.saved : Color.secondary)
+        .foregroundStyle(followsAlongWhileSpeaking ? DS.Pointer.mark : Color.secondary)
         .help("Move the box from control to control as \(Prompt.assistantName) reads the answer. "
               + "Only labels it quotes exactly are boxed, so nothing is drawn on a guess.")
     }
@@ -650,7 +650,7 @@ struct CompanionView: View {
     private var lessonBar: some View {
         HStack(spacing: DS.Spacing.tight) {
             Image(systemName: "graduationcap.fill")
-                .foregroundStyle(DS.Status.saved)
+                .foregroundStyle(DS.Pointer.mark)
 
             Text("Step \(viewModel.lessonStep + 1) of \(viewModel.lessonStepCount)")
                 .font(.caption.weight(.medium))
@@ -676,7 +676,7 @@ struct CompanionView: View {
         .buttonStyle(.borderless)
         .padding(.horizontal, DS.Spacing.normal)
         .padding(.vertical, DS.Spacing.tight)
-        .background(DS.Status.saved.opacity(DS.Alpha.hairline),
+        .background(DS.Pointer.mark.opacity(DS.Alpha.hairline),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
     }
 
