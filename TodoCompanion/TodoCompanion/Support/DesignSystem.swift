@@ -85,7 +85,16 @@ nonisolated enum DS {
     enum Status {
         static let ready = Color.green
         static let busy = Color.orange
-        static let saved = Color.blue
+
+        /// Also the colour of the box drawn on screen and of the labels Max
+        /// quoted, which is the reason it is stated per appearance rather than
+        /// taken as `Color.blue`. `systemBlue` is picked to sit on an opaque
+        /// control background; as small text on a translucent panel over a
+        /// dark window it is closer to navy than to blue and reads as
+        /// disabled. These stay legible on the panel while remaining
+        /// unmistakable as a 2.5pt stroke over someone else's window.
+        static let saved = Color.adaptive(dark: 0x74B4F0, light: 0x2E6FDD)
+
         static let listening = Color.pink
         static let problem = Color.red
     }
