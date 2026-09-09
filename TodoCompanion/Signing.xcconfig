@@ -1,0 +1,16 @@
+// Signing identity, which is per-developer and therefore not committed.
+//
+// This matters more here than in most projects. macOS keys TCC permission
+// grants to the code signature, so under ad-hoc signing every rebuild silently
+// invalidates the Screen Recording grant while the app continues to *look*
+// enabled in System Settings. Setting a team gives the binary a stable identity,
+// which is what makes rebuilding from the terminal safe.
+//
+// To build with your own: copy Local.xcconfig.example to Local.xcconfig and put
+// your team ID in it. Xcode's Signing & Capabilities tab does the same thing.
+DEVELOPMENT_TEAM =
+
+// Optional, so a clone with no Local.xcconfig builds without a missing-file
+// warning. Automatic signing will then ask for a team, which is the correct
+// prompt rather than a confusing failure against somebody else's account.
+#include? "Local.xcconfig"

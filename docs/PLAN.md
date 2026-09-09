@@ -1,11 +1,11 @@
 # To-Do Notifier → Native Personal Context Companion
-**Updated project plan — September 7, 2026**
+**Design document**
 
 ## 1. Project Direction
 
-This remains a **personal side project first**.
-
-The goal is **not** to force it into a startup, YC application, or commercial product right now. The project should evolve around real problems I personally have and workflows I actually use.
+This is a personal tool first, and the scope follows from that: it evolves around problems I actually
+have and workflows I actually use, rather than around features a product in this space would be
+expected to have. Several sections below record things that were rejected for exactly that reason.
 
 The clearest vision is:
 

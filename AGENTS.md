@@ -46,7 +46,7 @@ the to-do app's own tasks was the alternative and is the thing to avoid: it woul
 the position of writing `app-data.json`, a file another process holds in memory and rewrites wholesale,
 with no locking between them.
 
-The governing design document is `docs/TO_DO_NOTIFIER_UPDATED_PLAN.md`. Read it before proposing
+The governing design document is `docs/PLAN.md`. Read it before proposing
 architecture; it records what was deliberately rejected and why.
 
 ## Core principle
@@ -122,7 +122,10 @@ does is the default that cannot strand anybody.
 
 **TCC permissions are tied to the code signature.** Under ad-hoc signing the grant keys on the binary
 hash, so every rebuild invalidates Screen Recording and the app appears enabled in System Settings while
-actually being denied. The project sets `DEVELOPMENT_TEAM` for a stable identity, which fixes this.
+actually being denied. `Signing.xcconfig` therefore sets `DEVELOPMENT_TEAM` for a stable identity,
+taking the value from an untracked `Local.xcconfig` — the team is a personal account identifier, and
+committing one also fails the build for anyone who is not in that team. The include is optional
+(`#include?`), so a clone without the file builds and merely asks for a team.
 Consequence: unlike some macOS projects, **running `xcodebuild` from the terminal here is safe** and does
 not cost you your permissions.
 

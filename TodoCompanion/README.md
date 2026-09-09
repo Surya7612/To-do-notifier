@@ -8,7 +8,7 @@ separate thing from the app: the bundle stays `surya.TodoCompanion`, because ren
 invalidate the Screen Recording permission and move the database.
 
 It runs alongside the Electron app in this repository rather than replacing it. See
-[`docs/TO_DO_NOTIFIER_UPDATED_PLAN.md`](../docs/TO_DO_NOTIFIER_UPDATED_PLAN.md) for the design
+[`docs/PLAN.md`](../docs/PLAN.md) for the design
 document, including what was deliberately rejected and why.
 
 ## Asking
@@ -454,7 +454,12 @@ Security → Screen Recording, then relaunch. The global hotkey deliberately use
 `RegisterEventHotKey`, so no Accessibility permission is needed. Dictation additionally asks for
 Microphone and Speech Recognition.
 
-The project sets `DEVELOPMENT_TEAM` so the signature is stable across rebuilds. This matters more than
+Signing is per-developer, so copy `Local.xcconfig.example` to `Local.xcconfig` and put your Apple
+Developer Team ID in it — any team will do, since a paid one is only needed to notarize a build for
+other people. Xcode's Signing & Capabilities tab does the same thing. Without it the build asks for a
+team rather than failing against somebody else's.
+
+Set a team once and the signature is stable across rebuilds. This matters more than
 it sounds: TCC keys its permission grants to the code signature, so under ad-hoc signing every rebuild
 silently invalidates Screen Recording while the app continues to *look* enabled in System Settings.
 
