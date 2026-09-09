@@ -41,6 +41,19 @@ thing as pressing Return.
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.
 
+**⌃⌥Q** skips straight to that: it brings the panel up with the microphone already open, and stops it
+when pressed again, so one key both starts and ends the sentence. Summoning and *then* finding the
+dictation button is enough friction that a spoken question tends to get typed instead, which defeats
+the point of asking about the screen in front of you — typing means looking away from it.
+
+This is not a wake word and will not become one. Nothing listens until you press the key; what the
+rule protects is whether the microphone is ever open when you did not open it, and a shortcut is you
+opening it. You can set it to **Off** in Settings, unlike the summon shortcut, which has to exist.
+
+It cannot be `Tab+Q`, which is the natural thing to reach for. A global shortcut here needs Command,
+Shift, Option or Control plus one key; Tab is an ordinary key rather than a modifier, and making it
+behave as one requires the Accessibility permission this app declines to ask for.
+
 Two recognizers are available under Settings → Dictation, and both run on this Mac. **Apple** is the
 default and needs nothing downloaded, but it ends a phrase at every pause. **Parakeet** runs on the
 Neural Engine and keeps up across pauses, at the cost of fetching a model of a little over a hundred
@@ -67,6 +80,12 @@ again picks the conversation back up with a fresh capture. It is dropped after f
 being touched, so a summon after lunch is not answered against what you were doing this morning.
 Without that, follow-up questions were impossible in exactly the situation they exist for: reaching
 DaVinci to do the step you were just given *is*, from this app's side, a click outside it.
+
+**⌘T**, or the pin in the header, stops it dismissing at all. That is worth having whenever you are
+meant to be working *underneath* the panel rather than between bouts of it — walking a lesson, reading
+a proposed change, following a list of steps. The pin is not remembered across launches: a panel that
+comes back pinned is a window you have to remember pinning, and behaving like every other floating
+panel is the state that cannot strand you.
 
 **⌘L** captures the screen again without dismissing, for when the screen changed on its own. That is the whole point of the feature:
 you do the thing you were told to do, the screen changes, and you ask what is next without losing the
@@ -154,12 +173,60 @@ label Max **quoted exactly**. The unquoted guesses that the ⌘P button is willi
 like "Fairlight" that is probably a label — are refused here, because that button shows you its match
 and waits, and this one cannot.
 
+### Being taught, a step at a time
+
+**Teach me** is the third preset, and it asks for the screen to be walked rather than explained. The
+answer comes back as numbered steps, and instead of just printing them the app plays them: each step's
+boxes go up on your actual screen, numbered, with the steps you have already covered left faint behind
+you. A bar at the bottom of the panel steps forward and back, and **Done** takes the marks off.
+
+```text
+⌃⌥Space → "Teach me" → Return
+   ↓
+1. The recursion starts at "backtrack(0, [])" …          ← boxed on screen, captioned
+2. "res" collects every complete path …
+3. "return res" hands the finished list back …
+```
+
+Each step also prints its opening words beside its first box. Without that, the teaching was in the
+panel and the screen had only rectangles on it, so anyone actually looking at their code was reading
+shapes. It is the step's opening rather than the whole sentence — the sentence is already in the
+panel, and the caption is there to say which step this box belongs to, not to reproduce the lesson on
+top of your work.
+
+Max can also draw an **arrow** between two boxes, and only where it wrote one itself. Two labels
+appearing in the same step is not a claim that one becomes the other — "look at `res` and `nums`" is
+two places to look — and an arrow asserts much more than a box does, so it is drawn when the reply
+joins the two quoted labels with `→` and not otherwise.
+
+If answers are being read aloud, the lesson follows the voice: the step advances as Max reaches the
+labels it quoted. Stepping by hand reads the screen again first, because a few keystrokes reflow an
+editor and every box below the caret would otherwise be a line out — pointing confidently at the wrong
+line is worse than pointing at nothing.
+
+The format is the whole mechanism, and that is the point: it is an ordinary numbered answer, parsed by
+the same code that already draws numbered lists, with the same quoted labels the **Show me** button
+already finds. Nothing in the reply says *where* anything is; Max names things and the OCR boxes decide
+the pixels. A reply that ignored every teaching instruction is therefore still a perfectly good
+answer, drawn the way answers always are, rather than a broken mode.
+
+Which is also why it refuses easily. Fewer than three steps is a list, not a lesson, and is not worth
+a mode you have to escape from. A numbered answer that quotes nothing on screen — "1. sort 2. recurse
+3. backtrack" — is an ordinary answer that happens to be numbered, and starting a lesson on it would
+put a bar over the panel that never draws anything. A lesson stays up for a few minutes after the
+panel goes away, since reaching the code being taught means clicking outside this app.
+
 ### Answers that look like what they are
 
 Code comes back in a fenced block: monospaced, syntax-coloured, on its own background, with the
 language named and a copy button, because the panel floats over the editor the code is headed for.
-Steps come back as a numbered list, and the labels Max quotes are picked out in the same blue as the
+Steps come back as a numbered list, and the labels Max quotes are picked out in the same amber as the
 box drawn on your screen — those are exactly the words the app is willing to point at.
+
+Amber rather than blue, and that is legibility rather than decoration. Almost every interface is
+mostly blue, so a blue box competes with whatever it is drawn over, and syntax highlighting makes it
+worse: a box marking a variable ends up the same family of colour as the variable. Warm sits against
+all of it.
 
 The model is asked for this rather than left to choose: without a language tag on the fence there is
 nothing to colour by, and a model left alone fences code about half the time and indents it the rest,
@@ -391,10 +458,16 @@ The project sets `DEVELOPMENT_TEAM` so the signature is stable across rebuilds. 
 it sounds: TCC keys its permission grants to the code signature, so under ad-hoc signing every rebuild
 silently invalidates Screen Recording while the app continues to *look* enabled in System Settings.
 
-The shortcut defaults to `⌃⌥Space` and can be changed in Settings. The options are restricted to
-combos macOS does not reserve: a reserved combo such as `⌘Space` or `⌥⌘Space` is consumed by the
-system before the app sees it, and `RegisterEventHotKey` *still returns success*, so the shortcut
-silently does nothing rather than reporting an error.
+Two shortcuts are registered, and both are picked from a list in Settings. Summoning defaults to
+`⌃⌥Space`; summoning straight into dictation defaults to `⌃⌥Q` and can be set to **Off**. The options
+are restricted to combos macOS does not reserve: a reserved combo such as `⌘Space` or `⌥⌘Space` is
+consumed by the system before the app sees it, and `RegisterEventHotKey` *still returns success*, so
+the shortcut silently does nothing rather than reporting an error.
+
+Every option needs at least one of Command, Shift, Option and Control, because that is what the API
+takes — a key code plus a mask of those four. An ordinary key cannot stand in for a modifier, so a
+combination like `Tab+Q` is not expressible without a `CGEvent` tap, which would need the Accessibility
+permission this app declines to require.
 
 Run only one copy at a time. Carbon hot keys are exclusive, so a second instance fails to claim the
 shortcut and the first one to launch keeps it.
@@ -484,11 +557,12 @@ you can tick off, and if the Apple Reminders mirror is on it reaches your phone.
 |------|------|
 | `App/` | `NSApplicationDelegate`, activation policy, hotkey wiring, Settings UI |
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
-| `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight |
+| `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight, and the layer a lesson draws its marks on |
 | `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
 | `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and the system and Kokoro voices |
 | `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing and the Apple Reminders mirror, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, graph, and manage what you've kept |
+| `Teaching/` | Reading a lesson out of a numbered answer, and following the voice through it |
 | `Hotkey/` | Carbon global hotkey wrapper and the vetted shortcut list |
 | `Support/` | Settings, design tokens, Keychain, notifications, EventKit, file dialogs, image encoding |
 
