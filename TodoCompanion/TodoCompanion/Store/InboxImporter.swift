@@ -90,7 +90,7 @@ enum InboxImporter {
     /// staying put is the only signal that anything went wrong.
     @discardableResult
     static func importAll(into context: ModelContext, now: Date = Date()) -> Int {
-        guard let imported = withFolder({ folder -> Int in
+        guard let imported = withFolder({ folder -> [SavedContext] in
             let files = (try? FileManager.default.contentsOfDirectory(
                 at: folder,
                 includingPropertiesForKeys: [.contentModificationDateKey]
@@ -100,25 +100,59 @@ enum InboxImporter {
                 .filter { $0.pathExtension.lowercased() == "json" }
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
-            var count = 0
+            // Read the other app's settings only when there is something to
+            // import. This runs on every summon, and the folder is empty almost
+            // every time.
+            guard !manifests.isEmpty else { return [] }
+            let quietHours = TodoBridge.load().quietHours
+
+            var records: [SavedContext] = []
             for manifest in manifests {
                 guard let data = try? Data(contentsOf: manifest),
                       let item = parse(data, fallbackDate: now)
                 else { continue }
 
-                context.insert(makeRecord(from: item))
+                let record = makeRecord(from: item, quietHours: quietHours)
+                context.insert(record)
                 try? FileManager.default.removeItem(at: manifest)
-                count += 1
+                records.append(record)
             }
 
-            if count > 0 { try? context.save() }
-            return count
+            if !records.isEmpty { try? context.save() }
+            return records
         }) else { return 0 }
 
-        return imported
+        schedule(for: imported, now: now)
+        return imported.count
     }
 
-    static func makeRecord(from item: InboxItem) -> SavedContext {
+    /// Arms the notifications behind whatever was just brought in.
+    ///
+    /// Only for a time still ahead of us. A past `remindAt` is kept on the
+    /// record deliberately — it is what the user asked for, the library prints
+    /// it as "already passed", and it still reaches the to-do app, which is the
+    /// better place for something overdue. Scheduling it would achieve nothing
+    /// silently, since a non-repeating calendar trigger whose date has gone by
+    /// has no next matching date and never fires.
+    private static func schedule(for records: [SavedContext], now: Date) {
+        let due = records.compactMap { record -> (id: String, at: Date, intent: String, source: String)? in
+            guard let remindAt = record.remindAt, remindAt > now else { return nil }
+            return (record.reminderIdentifier, remindAt, record.intent, record.sourceApp)
+        }
+        guard !due.isEmpty else { return }
+
+        Task {
+            for reminder in due {
+                _ = await Reminders.schedule(id: reminder.id,
+                                             at: reminder.at,
+                                             intent: reminder.intent,
+                                             sourceApp: reminder.source)
+            }
+        }
+    }
+
+    static func makeRecord(from item: InboxItem,
+                           quietHours: QuietHours = QuietHours()) -> SavedContext {
         // Hashtags are split exactly as they are for a save typed at the Mac,
         // so `#engram` means the same thing whichever device it came from.
         let (intent, topics) = item.intent.splittingHashtags()
@@ -130,7 +164,35 @@ enum InboxImporter {
             topics: topics
         )
         record.createdAt = item.createdAt
+        record.remindAt = reminderDate(for: item, quietHours: quietHours)
         return record
+    }
+
+    /// The time an imported capture is asking to come back at, if it is asking.
+    ///
+    /// Held to exactly the bar a sentence typed at the Mac has to clear: an
+    /// explicit cue *and* a time stated in the words themselves. "Remind me to
+    /// eat the same in 12 hours" is carried out because both halves are the
+    /// user's own; a date merely mentioned in passing is not, because at the Mac
+    /// that is offered with the switch *off* and there is nobody here to turn it
+    /// on. Which device a sentence was typed on is not a reason to read it
+    /// differently — the two paths agreeing is the point.
+    ///
+    /// Resolved against `createdAt` rather than the moment of import, which is
+    /// the difference that would otherwise be invisible: this Mac may have been
+    /// asleep for hours when the file landed, and "in 12 hours" means twelve
+    /// hours from when it was said, not from when it was noticed.
+    static func reminderDate(for item: InboxItem,
+                             quietHours: QuietHours,
+                             calendar: Calendar = .current) -> Date? {
+        guard let suggestion = ReminderPhrase.suggestion(in: item.intent,
+                                                         now: item.createdAt,
+                                                         calendar: calendar),
+              suggestion.wasExplicitlyRequested,
+              suggestion.matchedText != nil
+        else { return nil }
+
+        return quietHours.firstMomentAfter(suggestion.date, calendar: calendar)
     }
 
     /// Parses one manifest.

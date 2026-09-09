@@ -1,7 +1,7 @@
 import Foundation
 
 /// One task as it should appear in Apple Reminders.
-struct MirroredTask: Equatable, Sendable {
+nonisolated struct MirroredTask: Equatable, Sendable {
     /// The to-do app's own identifier. Carried across so a reminder can be
     /// matched back to the task it stands for, rather than by title — two tasks
     /// can share a title, and retitling one must not orphan its reminder.
@@ -15,7 +15,7 @@ struct MirroredTask: Equatable, Sendable {
 /// A value type rather than an `EKReminder` so the decisions below can be
 /// tested without a Reminders database, an iCloud account, or a permission
 /// prompt.
-struct ExistingMirroredTask: Equatable, Sendable {
+nonisolated struct ExistingMirroredTask: Equatable, Sendable {
     var taskID: String
     var title: String
     var alarmAt: Date
@@ -23,7 +23,7 @@ struct ExistingMirroredTask: Equatable, Sendable {
 }
 
 /// What to create, change and withdraw in Apple Reminders.
-struct MirrorPlan: Equatable, Sendable {
+nonisolated struct MirrorPlan: Equatable, Sendable {
     var create: [MirroredTask] = []
     var update: [MirroredTask] = []
     var withdraw: [String] = []

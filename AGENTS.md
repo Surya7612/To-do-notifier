@@ -143,6 +143,41 @@ the folder is a transport — but a manifest that *fails* to parse is left in pl
 only signal the user gets that something went wrong. An item with no stated reason is refused rather
 than imported with an inferred one.
 
+**A reminder asked for on the phone is carried out on arrival, at the same bar as one typed here.**
+"Remind me to eat the same in 12 hours" cleared `isReminderInstruction` at the Mac and did nothing
+from a phone, purely because the import path was written later and never consulted `ReminderPhrase` —
+and which device a sentence was typed on is not a reason to read it differently. So
+`InboxImporter.reminderDate` requires exactly what the panel requires: an explicit cue **and** a time
+stated in the words themselves. The tomorrow-morning fallback is deliberately excluded, and so is a
+date merely mentioned, because at the Mac those are shown before they are armed and here there is
+nobody watching — "inference may suggest, not act" is a statement about *inference*, and both halves
+of an explicit instruction are the user's own words.
+
+Three things about it are load-bearing. The duration resolves against **`createdAt`, not the moment of
+import**, which is the failure that would never be seen: this Mac may have been asleep for hours when
+the file landed, and anchoring to import time slides every phone reminder later by exactly that long.
+A resolved time **already past is recorded but not scheduled** — a non-repeating
+`UNCalendarNotificationTrigger` whose date has gone by has no next matching date and never fires, so
+scheduling it achieves nothing silently, whereas keeping `remindAt` makes the library print "already
+passed" and still hands the to-do app something overdue, which is what that app is good at. And it
+runs through **quiet hours** like any other reminder, since that window belongs to the other app and
+arriving from a phone is not licence to ignore it.
+
+Everything downstream comes free, because it all keys on `remindAt`: the save triggers
+`ModelContext.didSave`, so `ProjectExport` publishes the request, the to-do app creates a real task,
+and `anticipatedTasks` carries it to Apple Reminders. Wiring one call gets the notification, the task
+and the phone.
+
+**A reminder can be set on something already kept, not only as it is saved.** ⌘S was the single moment
+at which a reminder could come into existence, so a missed or misparsed time could only be fixed by
+saving the screen again, and an imported capture whose sentence did not clear the bar could never be
+given one. The library's detail pane now sets, changes and cancels one. It schedules **before** it
+stores, so a refused notification permission leaves the record alone and says so rather than showing a
+reminder that will never fire — the same reasoning behind `scheduleReminder` clearing `remindAt` when
+scheduling fails. This is also what makes arming on import acceptable rather than presumptuous: it is
+visible and undoable after the fact, which is the one thing the panel's offer-before-arming gives that
+an unattended import cannot.
+
 **The current project is stated, not detected.** `AppSettings.currentProjectID` holds a project the user
 picked, and it stays until they change it. Deriving it from the frontmost app or window was the obvious
 alternative and was rejected: a wrong guess silently misfiles everything saved afterwards, and there is
@@ -640,7 +675,7 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
-| `Store/InboxImporter.swift` | ~197 | Brings in captures from a phone through a user-chosen folder. |
+| `Store/InboxImporter.swift` | ~258 | Brings in captures from a phone through a user-chosen folder, arming a reminder when the capture asked for one. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
@@ -653,7 +688,7 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 | `Hotkey/GlobalHotkey.swift` | ~89 | Carbon hot key registration. Exposes registration failure. |
 | `Hotkey/HotkeyChoice.swift` | ~45 | The vetted list of non-reserved shortcuts. |
 | `Library/GraphView.swift` | ~203 | `Canvas` rendering of the graph, with hover to trace a connection. |
-| `Library/LibraryView.swift` | ~656 | Browse by project, search, reassign, rename, and delete saved contexts. Project overview pairs what was kept with the project's open tasks. |
+| `Library/LibraryView.swift` | ~718 | Browse by project, search, reassign, rename, and delete saved contexts. Sets, changes and cancels a reminder on anything kept. Project overview pairs what was kept with the project's open tasks. |
 
 ## Build & run
 
@@ -724,7 +759,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
 | `DictationHintsTests` | Which on-screen words are offered to the recognizer | Both failure modes are invisible: too few and the feature does nothing, too many and the budget is spent biasing towards words that were never going to be misheard. Pins that ordinary capitalised UI text is dropped and that an identifier survives truncation. Asserts nothing about recognition accuracy, which is Apple's model rather than this logic. |
-| `InboxImporterTests` | Parsing the phone's JSON manifest | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. |
+| `InboxImporterTests` | Parsing the phone's JSON manifest, and the reminder an import may arm | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. The second suite pins the reminder bar, where two failures would be invisible rather than wrong-looking: a duration resolved against the import clock is off by however long the Mac was asleep, and arming from a date merely mentioned would fire for something nobody asked about. |
 | `ProjectExportTests` | The published JSON's keys and date format, and the reminders offered as tasks | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
 
 The Electron side has its own suite, run with `npm test` (vitest), and

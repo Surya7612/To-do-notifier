@@ -138,7 +138,7 @@ struct LibraryView: View {
                     }
                 }
             } else if let selection {
-                ContextDetailView(context: selection)
+                ContextDetailView(context: selection, quietHours: work.quietHours)
             } else if case let .project(identifier) = scope,
                       let project = projects.first(where: { $0.identifier == identifier }) {
                 ProjectOverview(project: project, work: work)
@@ -279,7 +279,9 @@ struct LibraryView: View {
                 .tag(context)
             }
             .listStyle(.sidebar)
-            .navigationDestination(for: SavedContext.self) { ContextDetailView(context: $0) }
+            .navigationDestination(for: SavedContext.self) {
+                ContextDetailView(context: $0, quietHours: work.quietHours)
+            }
         }
     }
 }
@@ -486,9 +488,14 @@ private struct LibraryRow: View {
 private struct ContextDetailView: View {
     let context: SavedContext
 
+    /// The other app owns the do-not-disturb window, so a reminder set here is
+    /// moved out of it exactly as one set from the panel is.
+    var quietHours = QuietHours()
+
     @Query(sort: \Project.name) private var projects: [Project]
     @Environment(\.modelContext) private var modelContext
     @State private var showingFullText = false
+    @State private var reminderProblem: String?
 
     var body: some View {
         ScrollView {
@@ -565,26 +572,50 @@ private struct ContextDetailView: View {
                     }
                 }
 
-                if let remindAt = context.remindAt {
-                    section("Reminder") {
+                section("Reminder") {
+                    VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 10) {
-                            Label(CompanionViewModel.reminderFormat(remindAt),
-                                  systemImage: context.hasPendingReminder ? "bell.fill" : "bell.slash")
-                                .font(.callout)
-                                .foregroundStyle(context.hasPendingReminder ? DS.Status.saved : Color.secondary)
+                            if let remindAt = context.remindAt {
+                                Label(CompanionViewModel.reminderFormat(remindAt),
+                                      systemImage: context.hasPendingReminder ? "bell.fill" : "bell.slash")
+                                    .font(.callout)
+                                    .foregroundStyle(context.hasPendingReminder ? DS.Status.saved : Color.secondary)
+
+                                if !context.hasPendingReminder {
+                                    Text("already passed")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            } else {
+                                Text("None set")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Menu(context.remindAt == nil ? "Set" : "Change") {
+                                ForEach(ReminderPreset.allCases) { preset in
+                                    Button(preset.rawValue) { setReminder(preset) }
+                                }
+                            }
+                            .menuStyle(.button)
+                            .buttonStyle(.borderless)
+                            .fixedSize()
 
                             if context.hasPendingReminder {
                                 Button("Cancel") {
                                     Reminders.cancel(id: context.reminderIdentifier)
                                     context.remindAt = nil
+                                    reminderProblem = nil
                                     try? modelContext.save()
                                 }
                                 .font(.caption)
-                            } else {
-                                Text("already passed")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
                             }
+                        }
+
+                        if let reminderProblem {
+                            Text(reminderProblem)
+                                .font(.caption)
+                                .foregroundStyle(Color.orange)
                         }
                     }
                 }
@@ -629,6 +660,35 @@ private struct ContextDetailView: View {
                 }
                 .help("Delete this saved context")
             }
+        }
+    }
+
+    /// Arms a reminder on something already kept.
+    ///
+    /// Scheduled before it is stored, not after: a reminder that was silently
+    /// never set is worse than one that was never offered, so a refused
+    /// notification permission has to leave the record alone and say so.
+    private func setReminder(_ preset: ReminderPreset) {
+        guard let chosen = preset.date() else { return }
+        let date = quietHours.firstMomentAfter(chosen)
+
+        Task {
+            // No cancel first: adding a request under an identifier that
+            // already has one replaces it. Cancelling would only open a window
+            // in which a failed reschedule leaves the record claiming a
+            // reminder that no longer exists.
+            let scheduled = await Reminders.schedule(id: context.reminderIdentifier,
+                                                     at: date,
+                                                     intent: context.intent,
+                                                     sourceApp: context.sourceApp)
+            guard scheduled else {
+                reminderProblem = "Notifications are off for \(Prompt.assistantName) in System Settings."
+                return
+            }
+
+            context.remindAt = date
+            reminderProblem = nil
+            try? modelContext.save()
         }
     }
 

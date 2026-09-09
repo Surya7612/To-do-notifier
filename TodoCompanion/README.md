@@ -234,6 +234,11 @@ The To-Do Notifier picks up new requests when it starts and every half minute af
 have to be open at the time. A reminder whose time has already passed still becomes a task — overdue,
 which is how that list already talks about anything you missed.
 
+⌘S is not the only moment a reminder can exist. Anything in the library can be given one, or have its
+time changed or cancelled, from the **Reminder** row in its detail pane — which is how you fix a time
+the app read wrong, or add one to something you kept before you knew you would need it. A capture
+[sent from your phone](#reminders-asked-for-on-the-phone) can arrive with one already set.
+
 ### Getting reminded away from this Mac
 
 A local notification needs this Mac awake when it fires. If you are out and a task comes due, nothing
@@ -433,6 +438,23 @@ accepted — a thought captured on a walk is what this is for. An image with **n
 because the reason is the thing this app is built around and inventing one would be inference posing
 as your words. A file that fails to parse is left in the folder rather than deleted, since its staying
 put is the only signal anything went wrong.
+
+### Reminders asked for on the phone
+
+"Dinner for today, remind me to eat the same in 12 hours" sets a reminder when it is brought in. The
+bar is the same one a sentence typed at the Mac has to clear: an explicit cue like *remind me*, **and**
+a time stated in the words themselves. A date merely mentioned does not arm anything, and neither does
+a request that names no time — at the Mac both are shown to you before they are armed, and on import
+there is nobody there to see them.
+
+The duration counts from **when you said it**, not when the Mac noticed. If this machine was asleep for
+three hours when the file landed, "in 12 hours" still means twelve hours from the capture. If the
+capture sat there longer than the time it named, the reminder is recorded but not announced — the
+library shows it as "already passed", and it still becomes a task in the To-Do Notifier, which is the
+better place for something overdue. Quiet hours apply exactly as they do to a reminder set here.
+
+From there it behaves like any other reminder: Max announces it, the To-Do Notifier gets a real task
+you can tick off, and if the Apple Reminders mirror is on it reaches your phone.
 
 ## Layout
 

@@ -157,3 +157,130 @@ struct InboxImporterTests {
         #expect(record.createdAt == captured)
     }
 }
+
+/// A reminder asked for on the phone is carried out on arrival, which means
+/// nobody is watching when the sentence is read. Two of these failures would be
+/// invisible rather than wrong-looking: a duration resolved against the wrong
+/// clock is off by however long the Mac was asleep, and a reminder armed from a
+/// date merely mentioned would fire for something the user never asked to be
+/// reminded about. So the bar is pinned here rather than left to the parser.
+@Suite("Reminders from a phone capture")
+struct InboxReminderTests {
+    /// Fixed zone, because quiet hours are whole hours in local time and the
+    /// suite otherwise passes or fails depending on where it runs.
+    private var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func at(_ iso: String) -> Date {
+        ISO8601DateFormatter().date(from: iso)!
+    }
+
+    private func item(_ intent: String, at createdAt: Date) -> InboxItem {
+        InboxItem(intent: intent, imageData: nil, createdAt: createdAt, source: "iPhone")
+    }
+
+    /// The case this was built for, from a real capture.
+    @Test("an explicit request with a stated duration is carried out")
+    func armsAnExplicitRequest() throws {
+        let captured = at("2026-09-08T20:06:00Z")
+        let when = try #require(InboxImporter.reminderDate(
+            for: item("Dinner for today, remind me to eat the same in 12 hours", at: captured),
+            quietHours: QuietHours(),
+            calendar: utc
+        ))
+
+        #expect(when == captured.addingTimeInterval(12 * 3600))
+    }
+
+    /// The one that would be invisible. This Mac may have been asleep for hours
+    /// when the file landed, so resolving against the moment of import would
+    /// silently slide every phone reminder later by however long that was.
+    @Test("the duration counts from when it was said, not when it was imported")
+    func anchorsToTheCaptureTime() throws {
+        let captured = at("2026-09-08T20:06:00Z")
+        let importedMuchLater = at("2026-09-08T23:30:00Z")
+
+        let when = try #require(InboxImporter.reminderDate(
+            for: item("remind me to eat in 12 hours", at: captured),
+            quietHours: QuietHours(),
+            calendar: utc
+        ))
+
+        #expect(when == captured.addingTimeInterval(12 * 3600))
+        #expect(when != importedMuchLater.addingTimeInterval(12 * 3600))
+    }
+
+    /// At the Mac this is offered with the switch *off*, and there is nobody
+    /// here to turn it on, so the honest equivalent is not setting it.
+    @Test("a date merely mentioned does not arm anything")
+    func ignoresADateWithNoRequest() {
+        let when = InboxImporter.reminderDate(
+            for: item("notes from tomorrow's standup", at: at("2026-09-08T14:00:00Z")),
+            quietHours: QuietHours(),
+            calendar: utc
+        )
+
+        #expect(when == nil)
+    }
+
+    /// `ReminderPhrase` falls back to tomorrow morning for a request that names
+    /// no time, and that guess must not become a notification nobody confirmed.
+    /// At the Mac the fallback is shown before it is armed; here it would not be.
+    @Test("a request naming no time is not guessed at")
+    func refusesToGuessAMissingTime() {
+        let when = InboxImporter.reminderDate(
+            for: item("remind me to look at this again", at: at("2026-09-08T14:00:00Z")),
+            quietHours: QuietHours(),
+            calendar: utc
+        )
+
+        #expect(when == nil)
+    }
+
+    /// The other app owns the do-not-disturb window, and a reminder arriving
+    /// from a phone has no more licence to ignore it than one set at the Mac.
+    @Test("a time inside quiet hours moves to the end of them")
+    func defersPastQuietHours() throws {
+        let captured = at("2026-09-08T14:00:00Z")
+        let when = try #require(InboxImporter.reminderDate(
+            for: item("remind me in 9 hours", at: captured),
+            quietHours: QuietHours(isEnabled: true, startHour: 22, endHour: 7),
+            calendar: utc
+        ))
+
+        // 23:00 is inside 22–07, so it lands at the first moment after.
+        #expect(utc.component(.hour, from: when) == 7)
+        #expect(when > captured.addingTimeInterval(9 * 3600))
+    }
+
+    /// A capture can sit in a syncing folder longer than the duration it names.
+    /// The time is still recorded — it is what the user asked for, the library
+    /// prints it as "already passed", and it still reaches the to-do app, which
+    /// is the right place for something overdue.
+    @Test("a capture that sat too long still records the time it asked for")
+    func keepsATimeAlreadyGone() throws {
+        let captured = Date().addingTimeInterval(-6 * 3600)
+        let record = InboxImporter.makeRecord(
+            from: item("remind me to check the oven in 1 hour", at: captured),
+            quietHours: QuietHours()
+        )
+
+        let when = try #require(record.remindAt)
+        #expect(when < Date())
+        #expect(record.hasPendingReminder == false)
+    }
+
+    /// Nothing about an ordinary capture should acquire a reminder.
+    @Test("a capture asking for nothing gets no reminder")
+    func leavesAnOrdinaryCaptureAlone() {
+        let record = InboxImporter.makeRecord(
+            from: item("wiring diagram for the pedal", at: Date()),
+            quietHours: QuietHours()
+        )
+
+        #expect(record.remindAt == nil)
+    }
+}
