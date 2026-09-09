@@ -41,21 +41,18 @@ thing as pressing Return.
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.
 
-**⌥⌘Q ×2** skips straight to that: press the combo twice quickly and it brings the panel up with the
-microphone already open; twice again stops it. A single press does nothing, so an accidental brush
-does not start listening. Summoning and *then* finding the dictation button is enough friction that a
-spoken question tends to get typed instead, which defeats the point of asking about the screen in
-front of you — typing means looking away from it.
+**⌥⌘Q ×2** skips straight to that without Accessibility: press the combo twice quickly and it brings
+the panel up with the microphone already open; twice again stops it. A single press does nothing, so an
+accidental brush does not start listening.
+
+With **Accessibility extras** enabled in Settings (and granted in System Settings), **Tab+Q** does
+the same — hold Tab, press Q — and the Show me row can also offer **Move pointer** and **Click** when
+the accessibility tree knows the control. OCR boxing stays the default either way.
 
 This is not a wake word and will not become one. Nothing listens until you press the key; what the
 rule protects is whether the microphone is ever open when you did not open it, and a shortcut is you
-opening it. You can set it to **Off** in Settings, unlike the summon shortcut, which has to exist.
-
-It cannot be a double-tap of ⌥⌘ with no letter, and it cannot be `Tab+Q`. A global shortcut here needs
-Command, Shift, Option or Control plus one key; Tab is an ordinary key rather than a modifier, and a
-modifiers-only chord is the same kind of thing — both would need a `CGEvent` tap and the Accessibility
-permission this app declines to ask for. Pressing `⌥⌘Q` twice is the nearest that still opens the mic
-directly.
+opening it. You can set the Carbon talk shortcut to **Off** in Settings, unlike the summon shortcut,
+which has to exist.
 
 Two recognizers are available under Settings → Dictation, and both run on this Mac. **Apple** is the
 default and needs nothing downloaded, but it ends a phrase at every pause. **Parakeet** runs on the
@@ -453,8 +450,9 @@ of a second.
 The app has no Dock icon. Look for the icon in the menu bar.
 
 On first use macOS asks for **Screen Recording** permission. Grant it in System Settings → Privacy &
-Security → Screen Recording, then relaunch. The global hotkey deliberately uses Carbon's
-`RegisterEventHotKey`, so no Accessibility permission is needed. Dictation additionally asks for
+Security → Screen Recording, then relaunch. The default global hotkeys use Carbon's
+`RegisterEventHotKey`, so no Accessibility permission is needed for basic use. **Accessibility extras**
+in Settings are opt-in and unlock Tab+Q plus Move pointer / Click. Dictation additionally asks for
 Microphone and Speech Recognition.
 
 Signing is per-developer, so copy `Local.xcconfig.example` to `Local.xcconfig` and put your Apple
@@ -466,17 +464,14 @@ Set a team once and the signature is stable across rebuilds. This matters more t
 it sounds: TCC keys its permission grants to the code signature, so under ad-hoc signing every rebuild
 silently invalidates Screen Recording while the app continues to *look* enabled in System Settings.
 
-Two shortcuts are registered, and both are picked from a list in Settings. Summoning defaults to
-`⌃⌥Space`; summoning straight into dictation defaults to `⌥⌘Q` pressed **twice** and can be set to
+Two Carbon shortcuts are registered, and both are picked from a list in Settings. Summoning defaults
+to `⌃⌥Space`; summoning straight into dictation defaults to `⌥⌘Q` pressed **twice** and can be set to
 **Off**. The options are restricted to combos macOS does not reserve: a reserved combo such as
 `⌘Space` or `⌥⌘Space` is consumed by the system before the app sees it, and `RegisterEventHotKey`
 *still returns success*, so the shortcut silently does nothing rather than reporting an error.
 
-Every option needs at least one of Command, Shift, Option and Control, because that is what the API
-takes — a key code plus a mask of those four. An ordinary key cannot stand in for a modifier, so a
-combination like `Tab+Q` is not expressible without a `CGEvent` tap, which would need the Accessibility
-permission this app declines to require. A double-tap of ⌥⌘ with no letter has the same constraint;
-pressing the chosen combo twice is how the talk shortcut approximates it.
+Turn on **Accessibility extras** for Tab+Q (summon + listen) and for Move pointer / Click beside Show
+me. Without that grant, Carbon shortcuts and OCR boxing keep working as before.
 
 Run only one copy at a time. Carbon hot keys are exclusive, so a second instance fails to claim the
 shortcut and the first one to launch keeps it.
@@ -615,9 +610,10 @@ always-listening mode: the microphone opens when you open it.
 Max can write to exactly one file, chosen by you through a file dialog, and only when you press Apply
 on a diff. Inference never writes to disk on its own.
 
-Nothing is drawn over your screen unless you ask for it, and your pointer is never moved. No
-Accessibility permission is requested or used — the global hotkey, the click-outside dismissal, and
-the on-screen highlight were each built to avoid needing it.
+Nothing is drawn over your screen unless you ask for it. Your pointer is never moved unless you press
+**Move pointer** or **Click** (Accessibility extras, button-only). Follow-along and lessons never move
+it. Carbon hotkeys and OCR highlighting work with no Accessibility grant; Tab+Q and AX actions are
+opt-in.
 
 The App Sandbox is enabled. The only added entitlements are outgoing network, microphone,
 user-selected file access, and — for the Apple Reminders mirror — Reminders and Calendars. Calendars
@@ -630,21 +626,19 @@ your calendar; nothing does.
   from this Mac, which was the part that actually hurt, but nothing here tracks delivery, retries a
   failure, or escalates one you ignored. Those still need a hosted scheduler.
 - **A wake word.** Saying "hey Max" would mean an always-hot microphone, which sits badly beside an
-  app whose screen capture is explicit and whose mic state is deliberately visible. The hotkey is one
-  keystroke and needs no Accessibility permission. The Electron app in this repository has a wake word
-  and ships it off by default, which is the evidence rather than the counter-example.
+  app whose screen capture is explicit and whose mic state is deliberately visible. Tab+Q or ⌥⌘Q ×2
+  is one deliberate gesture. The Electron app in this repository has a wake word and ships it off by
+  default, which is the evidence rather than the counter-example.
 - **Editing more than one file.** No project-wide agent, no running your tests, no applying a change
   you were not shown. See above for why that is a product judgement and not only a cautious one.
-- **Moving your cursor for you.** Clicky flies the pointer to the element it names. Max draws a box
-  around it instead and leaves your hands alone. Turn on follow-along and that box tracks the answer
-  being read out, which gets you what the moving pointer was for without taking the mouse off you
-  mid-drag — see "Showing you where" above.
+- **Auto-moving your cursor while Max talks.** Move pointer / Click are button presses when
+  Accessibility extras are on. Follow-along still only draws OCR boxes, so your hands stay yours
+  mid-drag.
 - **Speaking up on its own.** Related material appears when you summon the panel and never otherwise.
-  Without Accessibility the only trigger left is "the user switched apps", which says nothing about
-  whether they need anything; acting on it would mean either matching on a window title, which is
-  usually wrong, or capturing unasked, which contradicts the rule that makes this safe to leave
-  running. Being summonable is not a weaker version of being proactive — for a tool like this it is
-  the better one.
+  An app-switch trigger says nothing about whether they need anything; acting on it would mean either
+  matching on a window title, which is usually wrong, or capturing unasked, which contradicts the rule
+  that makes this safe to leave running. Being summonable is not a weaker version of being proactive —
+  for a tool like this it is the better one.
 - **An iPhone app.** Phone capture is a Shortcut writing to a folder, deliberately, and that is
   expected to stay true for a long time.
 - **Signing and notarization.** `scripts/release-companion.sh` builds a DMG and publishes a release,

@@ -37,7 +37,7 @@ development, and it has [its own README](TodoCompanion/README.md).
 | --- | --- |
 | **Ask about your screen** | `⌃⌥Space` captures every display and answers a question about it; `⌘R` narrows it to a region you drag out |
 | **Keep asking** | Follow-ups remember the conversation, and `⌘L` re-reads the screen when it has changed |
-| **Talk to it** | `⌥⌘Q` twice opens the mic straight away; dictation and the spoken answers both run on this Mac |
+| **Talk to it** | `⌥⌘Q` twice opens the mic (no Accessibility); opt-in Tab+Q does the same when granted |
 | **Point at things** | It draws a box around the control it just named — on your real screen, not in the panel |
 | **Teach me** | Walks a screen a step at a time, boxing and captioning each step as it reads it aloud |
 | **Keep a screen** | `⌘S` saves the screenshot with your reason for keeping it, plus `#tags` and a project |
@@ -190,7 +190,7 @@ was built, because on this project the rejections carry most of the reasoning.
 | --- | --- |
 | Merging the two apps into one | ~7,500 lines of working code, and the result would have a split personality. They divide along *study and motivation* versus *context and memory*, which is a real seam. |
 | A graph database (Neo4j) for connections | The edges already exist in SwiftData — a save has a project, tags, and a source app. A server and a query language would add no edge. What was missing was a way to *see* them, so the graph is a rendered view. |
-| Requiring Accessibility permission | Cuts first-run friction and rules out a class of capability the app then cannot abuse. The global hotkey uses Carbon `RegisterEventHotKey` specifically because it needs no such grant. |
+| Requiring Accessibility for basic use | Cuts first-run friction. Carbon hotkeys and OCR pointing work with no grant. Tab+Q and Move pointer / Click are an **opt-in** extras switch. |
 | Continuous or background screen capture | Capture is always explicit and user-initiated. This is the property that makes the app safe to leave running. |
 | A cloud model doing background work | A hosted model may answer a question you deliberately asked, and may never work unprompted. Enforced structurally: `summarize` and `embed` exist only on the local provider, so a cloud one cannot be wired to them. |
 | An autonomous coding agent | It sees a screenshot, has no file tree, and cannot run your tests, so it would be strictly worse than the editor you already have open. It proposes one file, shows a diff, and writes only on a button press. |

@@ -69,8 +69,8 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
 - **App type**: menu bar only, no dock icon (`LSUIElement`)
 - **UI**: SwiftUI, with AppKit bridging where SwiftUI cannot reach (`NSPanel`, overlay windows)
 - **State**: `@Observable` view models, `@MainActor` isolation, async/await throughout
-- **Hotkey**: Carbon `RegisterEventHotKey`. Chosen specifically because it needs **no Accessibility
-  permission**, unlike a `CGEvent` tap
+- **Hotkey**: Carbon `RegisterEventHotKey` by default (no Accessibility). Opt-in Accessibility
+  extras add a `CGEvent` tap for Tab+Q and AX pointer move/click
 - **Capture**: ScreenCaptureKit, excluding this app's own windows so the panel never appears in its
   own screenshot
 - **OCR**: Vision `VNRecognizeTextRequest`, on device
@@ -92,21 +92,22 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
 success. A hotkey that appears registered but never fires is almost always a reserved combo, not a bug
 in the registration. `HotkeyChoice.all` is the vetted set; add to it only after testing.
 
-A combo also **cannot be built out of an ordinary key**, however natural one feels to type.
-`RegisterEventHotKey` takes a key code plus a mask of Command, Shift, Option and Control, so `Tab+Q`
-is not expressible — treating Tab as a modifier needs a `CGEvent` tap, which needs the Accessibility
-permission this app declines to require. A double-tap of ⌥⌘ with no letter is the same kind of thing.
-That is why the talk shortcut defaults to `⌥⌘Q` pressed **twice**, rather than to what was asked for,
-and Settings says so rather than leaving it looking arbitrary.
+A combo also **cannot be built out of an ordinary key** with Carbon alone, however natural one feels
+to type. `RegisterEventHotKey` takes a key code plus a mask of Command, Shift, Option and Control, so
+`Tab+Q` is not expressible that way — treating Tab as a modifier needs a `CGEvent` tap and the
+Accessibility permission. That path exists as an **opt-in** (`AppSettings.accessibilityExtrasEnabled`
+plus `TrustAccessibility`): when granted, Tab+Q summons and opens the mic. Without the grant, the talk
+shortcut defaults to `⌥⌘Q` pressed **twice**, and Settings says so rather than leaving it looking
+arbitrary.
 
 **A second hotkey opens the microphone, and that is not a wake word.** Summoning and then finding the
 dictation button is enough friction that a spoken question becomes a typed one, which defeats the
-point of asking about the screen in front of you — so `AppSettings.talkHotkey` brings the panel up
-with the mic already open. It takes **two presses within about half a second**, so an accidental brush
-does not start listening, and two presses again stops it. The rule it has to clear is about whether
-the microphone is ever open when the user did not open it, and a shortcut *is* the user opening it:
-nothing listens until it is pressed. It is allowed not to exist, unlike the summon shortcut, because
-an app with no way to summon it is broken rather than merely configured differently.
+point of asking about the screen in front of you — so `AppSettings.talkHotkey` (Carbon, double-press)
+or Tab+Q (Accessibility extras) brings the panel up with the mic already open. The rule it has to clear
+is about whether the microphone is ever open when the user did not open it, and a shortcut *is* the
+user opening it: nothing listens until it is pressed. The Carbon talk shortcut is allowed not to
+exist, unlike the summon shortcut, because an app with no way to summon it is broken rather than merely
+configured differently.
 
 Two consequences. `GlobalHotkey` carries a `Role` in the Carbon hot key's id, which is the only thing
 the C callback can see, and installs **one** event handler for all roles — installing it per
@@ -765,23 +766,18 @@ so a capture would otherwise be completely invisible — the wrong property for 
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
 from the screenshot along with the panel. `ScreenHighlight` is a second such window.
 
-**Pointing at a control reads pixels, not the accessibility tree.** Clicky flies the cursor to a named
-element through `AXUIElement`, and that route was rejected twice over. It needs the Accessibility
-permission this app declines to require, and it fails in exactly the applications the feature is most
-useful for — Qt, Electron, games, anything drawing its own interface — with DaVinci Resolve, the
-motivating case, among them.
+**Pointing at a control reads pixels first; the accessibility tree is an opt-in extra.** OCR boxes
+are the default because Max is shown a screenshot — the words it names are words Vision already has —
+and AX is thin or absent in exactly the apps pointing is most useful for (Qt, Electron, games).
+`ScreenTextLocator` matches against per-word `TextRegion`s and draws a box from a button press.
 
-The argument that settles it is a symmetry: **Max can only name what it can read.** It is shown a
-screenshot, so its words are words Vision already has, which means an accessibility tree's extra
-coverage is mostly controls Max could never have referred to. So `TextRecognizer` keeps a per-word
-`TextRegion` — asked of Vision by character range, because a recognized "line" is often a whole menu
-bar and its box would cover half the screen — and `ScreenTextLocator` matches the answer against them.
+When Accessibility extras are enabled and trusted, `AXControlLocator` may also resolve the same label
+in the frontmost app's tree. **Move pointer** and **Click** then appear beside Show me — still
+button-only. Follow-along and lessons never move the pointer; that would be inference acting and would
+fight anyone mid-drag. The match is named on the button before anything is drawn or moved.
+
 Vision normalizes from the bottom left and so does AppKit, so `screenRect` needs **no** vertical flip,
 unlike `cropped(to:)` which targets a `CGImage`; the two conversions look alike and are not.
-
-It highlights rather than moving the pointer, because moving it would be inference *acting* and would
-fight anyone mid-drag, and it runs from a button rather than after every answer. The match is named on
-that button, so the user sees which words will be boxed before anything is drawn on their screen.
 
 **The box may follow the voice, and only a quoted label lets it.** Reading an answer aloud while the
 control it names sits unmarked on screen wastes the one advantage this app has over a chat window, so
@@ -904,6 +900,7 @@ the edge is the only part of this that fails invisibly.
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
 | `Capture/ScreenTextLocator.swift` | ~283 | Finds the control an answer named among those boxes, and maps one onto the screen. `requiringQuoted` narrows it to labels Max quoted; `locate(labels:)` resolves every label a lesson step names. Pure. |
+| `Capture/AXControlLocator.swift` | ~200 | Opt-in AX tree lookup for Move pointer / Click. Ranking is pure and tested; live walk needs Accessibility trust. |
 | `Capture/ScreenHighlight.swift` | ~101 | The box drawn around it, briefly on a button press or until hidden while Max is talking. |
 | `Capture/LessonOverlay.swift` | ~230 | The click-through layer a lesson draws on: the current step's boxes numbered and captioned, arrows between them where Max stated one, the steps already covered left faint. |
 | `Teaching/Lesson.swift` | ~115 | Reads a lesson out of a numbered answer — its steps, their quoted anchors, each one's caption and whether Max joined two labels with an arrow — and says which step a spoken clause belongs to. Pure. |
@@ -935,13 +932,16 @@ the edge is the only part of this that fails invisibly.
 | `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
-| `Support/AppSettings.swift` | ~317 | `UserDefaults` keys, defaults, both hotkeys, the provider choice, and `AnswerDestination`. |
+| `Support/AppSettings.swift` | ~340 | `UserDefaults` keys, defaults, both hotkeys, Accessibility extras flag, the provider choice, and `AnswerDestination`. |
+| `Support/TrustAccessibility.swift` | ~70 | Opt-in Accessibility trust check, prompt, and System Settings deep link. |
 | `Support/DesignSystem.swift` | ~134 | Spacing, radius, alpha, status colours, the amber the app points with, and the opaque code well with its per-appearance token palette. `nonisolated`, so pure layout code can read it. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
-| `Hotkey/GlobalHotkey.swift` | ~106 | Carbon hot key registration, one role per combo. Exposes registration failure. |
-| `Hotkey/HotkeyChoice.swift` | ~72 | The vetted list of non-reserved shortcuts, and the one the talk shortcut defaults to. |
+| `Hotkey/GlobalHotkey.swift` | ~140 | Carbon hot key registration, one role per combo; talk role requires a double-press. |
+| `Hotkey/EventTapHotkey.swift` | ~130 | CGEvent tap for Tab+Q when Accessibility extras are active. |
+| `Hotkey/TabChordDetector.swift` | ~30 | Pure Tab+Q chord state machine. |
+| `Hotkey/HotkeyChoice.swift` | ~75 | The vetted list of non-reserved Carbon shortcuts, and the talk shortcut default. |
 | `Library/GraphView.swift` | ~203 | `Canvas` rendering of the graph, with hover to trace a connection. |
 | `Library/LibraryView.swift` | ~751 | Browse by project, search, reassign, rename, and delete saved contexts. Remounts when the phone inbox imports so an open window notices. Sets, changes and cancels a reminder on anything kept. Project overview pairs what was kept with the project's open tasks. |
 
@@ -1019,6 +1019,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
 | `DictationHintsTests` | Which on-screen words are offered to the recognizer | Both failure modes are invisible: too few and the feature does nothing, too many and the budget is spent biasing towards words that were never going to be misheard. Pins that ordinary capitalised UI text is dropped and that an identifier survives truncation. Asserts nothing about recognition accuracy, which is Apple's model rather than this logic. |
+| `TabChordDetector` / `AXControlLocator ranking` | Tab+Q chord state, and AX label ranking | The event tap and live AX tree are not tested; these pin the pure halves so a repeat cannot re-fire Tab+Q and a short needle cannot match inside an unrelated word. |
 | `InboxImporterTests` | Parsing the phone's JSON manifest, and the reminder an import may arm | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. The second suite pins the reminder bar, where two failures would be invisible rather than wrong-looking: a duration resolved against the import clock is off by however long the Mac was asleep, and arming from a date merely mentioned would fire for something nobody asked about. |
 | `ProjectExportTests` | The published JSON's keys and date format, and the reminders offered as tasks | Half of a contract with a reader in another language that nothing here compiles against. A renamed key would still build and would just make project names quietly vanish from the to-do app, so these assert on the **encoded JSON**, not on the Swift types. |
 
@@ -1111,21 +1112,18 @@ Keep argument names the same as the variables they came from rather than abbrevi
 - Do not route background or automatic work to a cloud model. Foreground questions only, and only
   when the user has opted in. This rule replaced a blanket ban on hosted models once local vision
   proved too weak to explain what is on screen; the ban on *unprompted* export did not change
-- Do not require Accessibility permission. This holds even though the owner has granted it to this
- bundle by hand: a grant on one machine is not a property of the product, and the permission still
- has to be earned from everyone who downloads it. Pointing at a control was built on OCR boxes for
- this reason, and `AXUIElement` stays out of the source
-- Do not draw on the user's screen unasked, or move their pointer at all. `ScreenHighlight` runs from
- a button press and names its match beforehand; a highlight after every answer would be the app
- acting on inference, which is the same rule that governs file edits. Follow-along is the single
- exception and shows the shape any future one has to take: switched on deliberately, and restricted to
- labels Max quoted, so what reaches the screen is still something stated rather than something
- inferred
+- Do not *require* Accessibility permission for basic use. Carbon hotkeys and OCR pointing work
+ without it. Extras (Tab+Q, Move pointer, Click) are opt-in via Settings and still need a deliberate
+ System Settings grant. Do not auto-move the pointer during follow-along or lessons
+- Do not draw on the user's screen unasked, or move their pointer unasked. `ScreenHighlight` and AX
+ move/click run from a button press and name their match beforehand; a highlight after every answer
+ would be the app acting on inference. Follow-along is the single draw exception and shows the shape
+ any future one has to take: switched on deliberately, and restricted to labels Max quoted
 - Do not add continuous or background screen capture. Capture is always explicit and user-initiated
 - Do not make resurfacing proactive. Related material appears on summon and never otherwise; plan §
- Phase 6 is **closed at that form**, not pending. Without Accessibility the only trigger left is an
- app switch, which says nothing about need, and acting on it means either matching a window title
- (usually wrong) or capturing unasked (contradicts the rule above)
+ Phase 6 is **closed at that form**, not pending. An app-switch trigger says nothing about need, and
+ acting on it means either matching a window title (usually wrong) or capturing unasked (contradicts
+ the rule above)
 - Do not present model inference as though the user wrote it
 - Do not add features beyond what was asked
 

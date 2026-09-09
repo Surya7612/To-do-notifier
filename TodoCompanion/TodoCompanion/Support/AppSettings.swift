@@ -19,6 +19,7 @@ enum AppSettings {
         static let dictationEngine = "dictationEngine"
         static let voiceEngine = "voiceEngine"
         static let mirrorsToAppleReminders = "mirrorsToAppleReminders"
+        static let accessibilityExtrasEnabled = "accessibilityExtrasEnabled"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -204,7 +205,18 @@ enum AppSettings {
             // summoned is intrusive in a way a panel of text is not, and the
             // panel is often summoned in a meeting.
             Key.speaksAnswers: false,
+            // Off by default: Accessibility is a high-trust grant, and the app
+            // works fully without it. Tab+Q and pointer move/click unlock only
+            // when the user flips this and macOS trusts the process.
+            Key.accessibilityExtrasEnabled: false,
         ])
+    }
+
+    /// Whether the user asked for Accessibility extras (Tab+Q, Move pointer,
+    /// Click). Still needs `TrustAccessibility.isTrusted` before anything runs.
+    static var accessibilityExtrasEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: Key.accessibilityExtrasEnabled) }
+        set { UserDefaults.standard.set(newValue, forKey: Key.accessibilityExtrasEnabled) }
     }
 
     /// Whether dated tasks are copied into Apple Reminders so iCloud can alert

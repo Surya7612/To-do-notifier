@@ -627,6 +627,28 @@ struct CompanionView: View {
             .help("Draw a box around “\(target.text)” on screen (⌘P)")
             .keyboardShortcut("p", modifiers: .command)
 
+            if viewModel.axPointerTarget != nil {
+                Button {
+                    viewModel.movePointerToTarget()
+                } label: {
+                    Label("Move pointer", systemImage: "cursorarrow.click")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.Pointer.mark)
+                .help("Move the pointer onto “\(target.text)” via Accessibility")
+
+                Button {
+                    viewModel.clickPointerTarget()
+                } label: {
+                    Label("Click", systemImage: "hand.tap")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.Pointer.mark)
+                .help("Click “\(target.text)” via Accessibility")
+            }
+
             // Offered here rather than only in Settings, where it sat under a
             // section that appears after the voice is switched on and was
             // therefore never found. This is the row where someone has just

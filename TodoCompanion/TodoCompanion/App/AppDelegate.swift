@@ -27,6 +27,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.companion.summonAndListen()
         }
 
+        EventTapHotkey.shared.refresh { [weak self] in
+            self?.companion.summonAndListen()
+        }
+        NotificationCenter.default.addObserver(
+            forName: TrustAccessibility.extrasChangedNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                EventTapHotkey.shared.refresh()
+            }
+        }
+
         watchForProjectChanges()
         watchForWake()
 
@@ -86,6 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                 InboxImporter.importAll(into: ContextStore.shared.mainContext)
                 self.mirrorTasksToAppleReminders()
+                // Trust can change while the Mac sleeps (user flipped the
+                // switch in System Settings on another screen); refresh so
+                // Tab+Q comes back without a relaunch.
+                EventTapHotkey.shared.refresh()
             }
         }
     }
@@ -130,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         GlobalHotkey.shared.unregister()
+        EventTapHotkey.shared.tearDown()
         wakeSweepTask?.cancel()
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)

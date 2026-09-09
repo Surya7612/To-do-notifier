@@ -19,6 +19,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.dictationEngine) private var dictationEngine =
         AppSettings.DictationEngine.apple.rawValue
     @AppStorage(AppSettings.Key.mirrorsToAppleReminders) private var mirrorsToAppleReminders = false
+    @AppStorage(AppSettings.Key.accessibilityExtrasEnabled) private var accessibilityExtrasEnabled = false
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
@@ -31,10 +32,21 @@ struct SettingsView: View {
     @State private var inboxWaiting = 0
     @State private var mirrorDestination: AppleReminders.Destination?
     @State private var mirrorProblem: String?
+    @State private var accessibilityTrusted = false
 
     /// Derived from the stored name on appear rather than persisted, since
     /// "custom" is a state of this window and not a preference.
     @State private var modelSelection = OpenAIModelChoice.Selection.custom
+
+    private var accessibilityStatusText: String {
+        if !accessibilityExtrasEnabled {
+            return "Off. Carbon shortcuts and OCR pointing work without Accessibility."
+        }
+        if accessibilityTrusted {
+            return "On — Tab+Q is active. Move pointer and Click appear when AX finds the control."
+        }
+        return "Waiting for permission. Enable TodoCompanion in System Settings → Privacy & Security → Accessibility."
+    }
 
     var body: some View {
         Form {
@@ -73,11 +85,8 @@ struct SettingsView: View {
                 }
 
                 Text("These combos avoid the ones macOS reserves for itself, such as ⌘Space and ⌥⌘Space. "
-                     + "A shortcut needs a real key plus Command, Shift, Option or Control — Tab is an "
-                     + "ordinary key rather than a modifier, and a double-tap of ⌥⌘ with no letter is "
-                     + "the same kind of thing, so neither can be registered without the Accessibility "
-                     + "permission this app does not ask for. Pressing the chosen combo twice is the "
-                     + "nearest that still opens the mic directly.")
+                     + "Tab+Q needs the Accessibility extras below. Until those are on, pressing the "
+                     + "talk combo twice is how you open the mic directly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -87,6 +96,32 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+            }
+
+            Section("Accessibility extras") {
+                Toggle("Enable advanced shortcuts and pointer actions",
+                       isOn: $accessibilityExtrasEnabled)
+                    .onChange(of: accessibilityExtrasEnabled) { _, isOn in
+                        TrustAccessibility.setExtrasEnabled(isOn)
+                        refreshAccessibilityStatus()
+                    }
+
+                Text(accessibilityStatusText)
+                    .font(.caption)
+                    .foregroundStyle(accessibilityTrusted ? DS.Status.ready : .secondary)
+
+                if accessibilityExtrasEnabled, !accessibilityTrusted {
+                    Button("Open System Settings…") {
+                        TrustAccessibility.openSystemSettings()
+                    }
+                }
+
+                Text("Off by default. When enabled and granted, Tab+Q opens \(Prompt.assistantName) "
+                     + "listening, and Move pointer / Click appear beside Show me when the "
+                     + "accessibility tree knows the control. Carbon shortcuts keep working either "
+                     + "way. Nothing listens until you press a key.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Who answers") {
@@ -365,11 +400,22 @@ struct SettingsView: View {
             keyIsStored = AppSettings.openAIKey != nil
             refreshLinkedSummary()
             refreshInbox()
+            refreshAccessibilityStatus()
             canImportKey = !keyIsStored && TodoBridge.importableOpenAIKey() != nil
             if mirrorsToAppleReminders, AppleReminders.isAuthorized {
                 mirrorDestination = AppleReminders.destination()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshAccessibilityStatus()
+            if accessibilityExtrasEnabled {
+                EventTapHotkey.shared.refresh()
+            }
+        }
+    }
+
+    private func refreshAccessibilityStatus() {
+        accessibilityTrusted = TrustAccessibility.isTrusted
     }
 
     private func refreshInbox() {
