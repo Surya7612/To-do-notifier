@@ -103,6 +103,23 @@ rides across Spaces and full-screen apps, and hands focus back to the previous a
 itself to its content and pins its *top-left* corner, because AppKit resizes about the bottom-left and a
 streaming answer would otherwise walk the window up and off the cursor.
 
+**A self-sizing panel must not be driven by `preferredContentSize`.** That mode has the hosting view
+set the controller's ideal size *during* layout, so SwiftUI changes the window frame from inside the
+window's own layout pass — `windowDidLayout` → `_setFrameCommon` → `displayIfNeeded` → layout again.
+Auto Layout accumulates pending constraint work across that re-entry until flushing it overflows the
+main thread's stack, and the crash lands in CoreAutoLayout with nothing of this app on the stack, which
+makes it look like an Apple bug rather than a configuration mistake. `sizingOptions` is therefore
+`.standardBounds`, which publishes minimum, ideal and maximum size as constraints and lets the solver
+resize the window in the ordinary way. `.fullSizeContentView` is off the style mask for the same
+reason: it only describes where a title bar's content may extend to, a borderless panel has none, and
+it still installs the constraints that go with one.
+
+Two consequences for anything added to the panel. `setContentSize` returns early when the size has not
+actually changed, because each call sets the window frame twice — once for the size, once to put the
+corner back — and a no-op resize is pure re-entry. And **a control inside the panel must not change
+size in response to its own state**: the copy confirmation lays out both labels in a `ZStack` and fades
+between them rather than swapping "Copy" for "Copied", so the window is never asked to resize for it.
+
 **Retrieval is structured first, and meaning is one signal inside it.** `ContextRetriever` scores on
 topic hits, same-window, same-app, and token overlap. Embeddings were added later under a condition
 rather than as a replacement: a vector distance may only *contribute* to a score it can also explain,

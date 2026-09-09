@@ -822,20 +822,33 @@ private struct CodeBlockView: View {
     /// colour both changing is what makes it register peripherally.
     private var copyButton: some View {
         Button(action: copy) {
-            Label(hasCopied ? "Copied" : "Copy",
-                  systemImage: hasCopied ? "checkmark.circle.fill" : "doc.on.doc")
-                .font(.caption2.weight(hasCopied ? .semibold : .regular))
-                .foregroundStyle(hasCopied ? DS.Status.ready : Color.secondary)
-                .padding(.horizontal, DS.Spacing.hair)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.Radius.chip)
-                        .fill(DS.Status.ready.opacity(hasCopied ? DS.Alpha.hairline : 0))
-                )
+            // Both labels are laid out and one is faded out, so confirming
+            // cannot change the button's size. That is a hard requirement
+            // rather than a neatness one: the panel sizes itself to its
+            // content, so a control that grows mid-answer asks the window to
+            // resize during a layout pass — see `CompanionPanel.setContentSize`.
+            // Opacity and colour are the only things that move here.
+            ZStack(alignment: .trailing) {
+                copyLabel("Copied", systemImage: "checkmark.circle.fill")
+                    .opacity(hasCopied ? 1 : 0)
+                copyLabel("Copy", systemImage: "doc.on.doc")
+                    .opacity(hasCopied ? 0 : 1)
+            }
+            .foregroundStyle(hasCopied ? DS.Status.ready : Color.secondary)
+            .padding(.horizontal, DS.Spacing.hair)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.chip)
+                    .fill(DS.Status.ready.opacity(hasCopied ? DS.Alpha.hairline : 0))
+            )
         }
         .buttonStyle(.plain)
         .help("Copy this block (the panel stays open)")
         .animation(.easeOut(duration: 0.15), value: hasCopied)
+    }
+
+    private func copyLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage).font(.caption2)
     }
 
     private func copy() {
