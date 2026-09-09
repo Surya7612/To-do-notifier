@@ -260,6 +260,7 @@ final class CompanionViewModel {
         phase = .reading
         // The boxes it was resolved against belong to the screen being replaced.
         pointerTarget = nil
+        axPointerTarget = nil
         // A summon is a new question about a new screen, which is where a
         // lesson left up over the last one stops being a lesson and starts
         // being litter.
@@ -469,6 +470,7 @@ final class CompanionViewModel {
             updated.primary.textRegions = read.regions
             observation = updated
             pointerTarget = nil
+            axPointerTarget = nil
             contextLabel = "Selected region of \(updated.contextLabel)"
             if phase == .failed("") || phase == .idle { phase = .idle }
         }
@@ -625,6 +627,7 @@ final class CompanionViewModel {
         speech.stop()
         proposedEdit = nil
         pointerTarget = nil
+        axPointerTarget = nil
         endLesson()
         phase = .thinking
 
@@ -704,12 +707,29 @@ final class CompanionViewModel {
     /// would match on words the answer is still in the middle of writing.
     private(set) var pointerTarget: ScreenTextLocator.Match?
 
+    /// AX match for the same label, when Accessibility extras are active and
+    /// the frontmost app exposes the control. Nil does not mean the OCR match
+    /// is wrong — only that the tree has nothing to move or click.
+    private(set) var axPointerTarget: AXControlLocator.Match?
+
     private func findPointerTarget(in answer: String) {
         guard let observation, observation.primaryScreenFrame != nil else {
             pointerTarget = nil
+            axPointerTarget = nil
             return
         }
         pointerTarget = ScreenTextLocator.locate(named: answer, in: observation.primary.textRegions)
+        refreshAXPointerTarget()
+    }
+
+    private func refreshAXPointerTarget() {
+        guard TrustAccessibility.extrasAreActive,
+              let text = pointerTarget?.text
+        else {
+            axPointerTarget = nil
+            return
+        }
+        axPointerTarget = AXControlLocator.locate(label: text)
     }
 
     /// Draws a box around what the answer named.
@@ -723,6 +743,25 @@ final class CompanionViewModel {
         else { return }
 
         onHighlight?(ScreenTextLocator.screenRect(for: pointerTarget.boundingBox, in: frame), false)
+    }
+
+    /// Moves the system pointer onto the AX match for the named control.
+    ///
+    /// Button-only. Follow-along and lessons never call this — moving the
+    /// pointer unasked would fight anyone mid-drag and is inference acting.
+    func movePointerToTarget() {
+        refreshAXPointerTarget()
+        guard let axPointerTarget else { return }
+        AXControlLocator.movePointer(to: axPointerTarget.center)
+    }
+
+    /// Left-clicks the AX match for the named control.
+    ///
+    /// Button-only, same standing as `movePointerToTarget`.
+    func clickPointerTarget() {
+        refreshAXPointerTarget()
+        guard let axPointerTarget else { return }
+        AXControlLocator.click(at: axPointerTarget.center)
     }
 
     /// Moves the box to whatever control the clause now being spoken names.
@@ -944,6 +983,7 @@ final class CompanionViewModel {
         lastTurnAt = nil
         proposedEdit = nil
         pointerTarget = nil
+        axPointerTarget = nil
         phase = .idle
     }
 
@@ -1277,6 +1317,7 @@ final class CompanionViewModel {
         question = ""
         proposedEdit = nil
         pointerTarget = nil
+        axPointerTarget = nil
         // A lesson deliberately survives, and its marks stay on screen. This is
         // the same argument the conversation makes for surviving: reaching the
         // code being taught means clicking outside this app, so tearing the
