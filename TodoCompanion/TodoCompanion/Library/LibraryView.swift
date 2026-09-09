@@ -150,6 +150,11 @@ struct LibraryView: View {
                 )
             }
         }
+        // The library is where someone goes to look at what they kept, so it is
+        // the wrong place to be told to summon the panel first. Opening this
+        // window is as much a user-initiated moment as a summon is, which is
+        // what keeps this from being the background collection the app avoids.
+        .task { InboxImporter.importAll(into: modelContext) }
         .task(id: scope) { work = TodoBridge.load() }
         .task(id: search) { await refreshSemanticMatches() }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")

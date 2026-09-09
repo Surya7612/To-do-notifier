@@ -292,8 +292,8 @@ struct SettingsView: View {
 
                 if inboxFolder != nil {
                     Text(inboxWaiting == 0
-                         ? "Nothing waiting. Items are brought in when the app launches and each time you summon the panel."
-                         : "\(inboxWaiting) waiting. They will be brought in on the next summon.")
+                         ? "Nothing waiting. Items are brought in when the app launches, each time you summon the panel, and when you open the library."
+                         : "\(inboxWaiting) waiting. They will be brought in on the next summon, or when you open the library.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }

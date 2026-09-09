@@ -143,6 +143,12 @@ the folder is a transport — but a manifest that *fails* to parse is left in pl
 only signal the user gets that something went wrong. An item with no stated reason is refused rather
 than imported with an inferred one.
 
+The inbox is collected at launch, on every summon, **and when the library window opens**. That last
+one is not symmetry for its own sake: the library is where someone goes to look at what they kept, so
+being told to summon the panel first is the wrong answer in the one place the question gets asked.
+Opening a window is as much a user-initiated moment as pressing the hotkey, which is what keeps this
+from being the background collection the app otherwise refuses.
+
 **A reminder asked for on the phone is carried out on arrival, at the same bar as one typed here.**
 "Remind me to eat the same in 12 hours" cleared `isReminderInstruction` at the Mac and did nothing
 from a phone, purely because the import path was written later and never consulted `ReminderPhrase` —
