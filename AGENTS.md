@@ -442,6 +442,22 @@ Quoted labels are coloured the same blue the on-screen box is drawn in. That is 
 are the words the app is willing to point at, so the emphasis in the panel and the emphasis on the
 screen are making one claim.
 
+**The code well is opaque, and it is the only opaque thing in the panel.** That is a constraint rather
+than a preference: the panel is translucent, so a tinted overlay takes its brightness from whatever
+application happens to be behind it, and one block came out as a dark well over an editor and a pale
+grey slab over a browser — the same code, twice, unreadable once. Code is the one thing here that has
+to stay legible, and it cannot if its background is decided by the wallpaper. The tokens are One Dark
+and One Light, stated per appearance through `NSColor(name:dynamicProvider:)` so a switch to Light Mode
+with the panel open resolves correctly. They are deliberately *not* the system accent palette:
+`Color.pink` and its neighbours are tuned to be noticed, which is what a status dot wants and what a
+screen of syntax does not.
+
+Copy confirmation is a filled pill rather than a word swap, for the same reason the box exists at all —
+"Copy" becoming "Copied" is two grey words in a corner nobody is looking at, because the eye has
+already moved to the editor being pasted into. It is driven by the timestamp of the copy through
+`.task(id:)` rather than by a stored `Task`, so a redraw mid-confirmation cannot strand a cancelled
+timer with the button still reading "Copied".
+
 **The prompt is shaped by the kind of screen, and that is all inference may do here.** `ScreenKind`
 reads the OCR text and appends one paragraph to the system prompt — a terminal gets "lead with what
 went wrong", code gets "spell identifiers exactly", a document gets "quote the passage". It is bounded
@@ -564,6 +580,23 @@ out-of-vocabulary fallback network) pulls in MLX, which needs a Metal toolchain 
 ships by default. That would have put a multi-gigabyte toolchain download between a clone and a build.
 FluidAudio runs the same model with its own CoreML phonemizer and none of that.
 
+**Markup is stripped from the whole answer, never from the chunk about to be spoken.** This was the
+worst bug in the voice path and it is a state bug, not a formatting one: a fence opens in one streamed
+chunk and closes in another, so a chunk beginning *inside* a code block did not know it was inside one,
+and the voice read the code out a bracket at a time. `SpeechPlayback.speakable` therefore takes the
+whole document and `spokenPrefixLength` indexes into its **cleaned** form, because whether a line is
+code is a property of the document rather than of the fragment. Two smaller rules ride along.
+An inline span with no letter or digit in it is dropped — `` `(` `` in "`(` was never closed" is a
+symbol being shown, and a synthesizer either skips it or announces it mid-clause. And cleaned lines are
+joined with newlines rather than spaces, because `nextChunk` treats a line ending as a place it may
+break and a list whose items carry no full stops gives it nowhere else.
+
+**LaTeX is refused in the prompt and disarmed in the voice.** A model asked for mathematics reaches for
+`\(O(n \cdot 2^n)\)`, which the panel draws as its own source code and the voice reads as a string of
+backslashes. `Prompt.formatting` asks for plain words or a code span outright, since that fixes both
+surfaces at once; `speakable` strips only the delimiters as a backstop, because what sits between them
+is at least the right symbols in the right order.
+
 The clause is also the unit of work: Kokoro synthesizes one at a time on the Neural Engine, so one
 sentence is generated while the previous plays, and audio is queued through an `AVAudioPlayerNode`
 because scheduling buffers keeps them in order for free. `isSpeaking` only clears when the queue is
@@ -670,6 +703,12 @@ thing it can box is a label Max put in double quotes, which is Max stating what 
 this app guessing from a sentence. The unquoted heuristics stay available to the button, where the
 match is named beforehand and the user chooses; they are exactly what must never draw unannounced.
 
+The switch is offered on the "Show me" row as well as in Settings, and that is not duplication for its
+own sake. In Settings it sits inside a section that only appears *after* the voice has been switched on,
+so it went unfound — the feature read as broken when it had simply never been enabled. The pointer row
+is where someone has just watched the box work once and wonders whether it can keep up on its own,
+which is the question the switch answers.
+
 Three details follow from the mechanism. The clause is reported when it *starts being heard*, not when
 it is queued: Kokoro synthesizes a sentence ahead of the sound, so `KokoroVoiceSynthesizer` keeps
 `scheduledClauses` in playback order and names the head — reporting at enqueue would run the box a
@@ -705,7 +744,7 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 | `App/SettingsView.swift` | ~409 | Hotkey, provider choice, Ollama and OpenAI settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~780 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control, and the diff of a proposed edit. |
+| `Companion/CompanionView.swift` | ~846 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
 | `Companion/CompanionViewModel.swift` | ~1165 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, and the box that follows the voice. |
 | `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
 | `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
@@ -720,7 +759,7 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
-| `Voice/SpeechPlayback.swift` | ~277 | Decides what of a streaming answer gets read aloud, and when. Strips markup, sizes clauses, and reports which clause is being heard. |
+| `Voice/SpeechPlayback.swift` | ~357 | Decides what of a streaming answer gets read aloud, and when. Strips markup from the whole answer, sizes clauses, and reports which clause is being heard. |
 | `Voice/VoiceSynthesizer.swift` | ~152 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
 | `Voice/KokoroVoiceSynthesizer.swift` | ~234 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
 | `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
@@ -742,7 +781,7 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
 | `Support/AppSettings.swift` | ~304 | `UserDefaults` keys, defaults, the provider choice, and `AnswerDestination`. |
-| `Support/DesignSystem.swift` | ~80 | Spacing, radius, alpha, status and code-token colours. `nonisolated`, so pure layout code can read it. |
+| `Support/DesignSystem.swift` | ~116 | Spacing, radius, alpha, status colours, and the opaque code well with its per-appearance token palette. `nonisolated`, so pure layout code can read it. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
@@ -819,7 +858,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
-| `VoiceEngineTests` | Which systems the Kokoro voice will run on, how an answer is cut into things to say, and the join between them | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. The chunking decides whether the delivery sounds like a person or a station announcement, which is inaudible from the code, and an over-long chunk is *dropped* rather than spoken — so it pins the upper bound as well as the lower. Also pins that neither offered voice is a hosted service. |
+| `VoiceEngineTests` | Which systems the Kokoro voice will run on, how an answer is cut into things to say, and the join between them | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. The chunking decides whether the delivery sounds like a person or a station announcement, which is inaudible from the code, and an over-long chunk is *dropped* rather than spoken — so it pins the upper bound as well as the lower. `SpeakableTextTests` covers what is said at all, where every failure is heard rather than seen: it pins that a fence still *open* — the normal mid-stream state, and the one the old per-chunk stripping got wrong — leaves its code unspoken, and that the quotes the follow-along box is found by survive the stripping. Also pins that neither offered voice is a hosted service. |
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |

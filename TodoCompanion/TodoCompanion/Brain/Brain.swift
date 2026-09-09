@@ -192,6 +192,10 @@ enum Prompt {
     with its language — ```swift, ```bash, ```json — never as indented text and never as a run of \
     prose. Use a numbered list when the answer is a sequence of steps to carry out in order, and \
     plain sentences when it is not. Do not add headings, and never wrap ordinary prose in a fence.
+
+    Write mathematics in words, or in a code span if it is short: "n times two to the n" or \
+    `O(n * 2^n)`. Never use LaTeX — no \\(, no \\[, no \\cdot. The reply is drawn as plain text and \
+    may be read out loud, and in both of those a LaTeX expression comes out as its own source code.
     """
 
     /// The system prompt for one request.

@@ -19,6 +19,12 @@ struct CompanionView: View {
     @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
     @AppStorage(AppSettings.Key.sendsImage) private var sendsImage = false
 
+    /// Both drive the follow-along control offered beside "Show me", so
+    /// flipping either one redraws the row rather than waiting for the next
+    /// answer.
+    @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
+    @AppStorage(AppSettings.Key.followsAlongWhileSpeaking) private var followsAlongWhileSpeaking = false
+
     /// Observed but never read, purely so that changing a model in Settings
     /// while the panel is open invalidates this view. The badge keeps taking its
     /// text from `viewModel.destination`, which derives it from the same facts
@@ -558,10 +564,14 @@ struct CompanionView: View {
         }
     }
 
+    /// Max's words. Kept a shade under full strength so the user's question
+    /// above still reads as the louder of the two, but well clear of
+    /// `.secondary`, which on a translucent panel over a bright window is
+    /// closer to unreadable than to quiet.
     private func prose(_ text: String) -> some View {
         Text(AnswerContent.styled(text))
             .font(.callout)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary.opacity(0.82))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -588,17 +598,41 @@ struct CompanionView: View {
     /// user knows what is about to be boxed before anything is drawn over their
     /// screen — and can ignore it when the match is not what they meant.
     private func pointerRow(_ target: ScreenTextLocator.Match) -> some View {
-        Button {
-            viewModel.showPointerTarget()
-        } label: {
-            Label("Show me “\(target.text)”", systemImage: "viewfinder.rectangular")
+        HStack(spacing: DS.Spacing.normal) {
+            Button {
+                viewModel.showPointerTarget()
+            } label: {
+                Label("Show me “\(target.text)”", systemImage: "viewfinder.rectangular")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.Status.saved)
+            .help("Draw a box around “\(target.text)” on screen (⌘P)")
+            .keyboardShortcut("p", modifiers: .command)
+
+            // Offered here rather than only in Settings, where it sat under a
+            // section that appears after the voice is switched on and was
+            // therefore never found. This is the row where someone has just
+            // seen the box work once and wonders whether it can keep up on its
+            // own, which is the question the switch answers.
+            if speaksAnswers { followAlongToggle }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, DS.Spacing.hair)
+    }
+
+    private var followAlongToggle: some View {
+        Toggle(isOn: $followsAlongWhileSpeaking) {
+            Label("Follow along",
+                  systemImage: followsAlongWhileSpeaking ? "waveform.circle.fill" : "waveform")
                 .font(.caption)
         }
+        .toggleStyle(.button)
         .buttonStyle(.plain)
-        .foregroundStyle(DS.Status.saved)
-        .help("Draw a box around “\(target.text)” on screen (⌘P)")
-        .keyboardShortcut("p", modifiers: .command)
-        .padding(.top, DS.Spacing.hair)
+        .foregroundStyle(followsAlongWhileSpeaking ? DS.Status.saved : Color.secondary)
+        .help("Move the box from control to control as \(Prompt.assistantName) reads the answer. "
+              + "Only labels it quotes exactly are boxed, so nothing is drawn on a guess.")
     }
 
     /// The change Max is proposing, shown before anything is written.
@@ -718,8 +752,13 @@ private struct AnswerListRow: Identifiable {
 private struct CodeBlockView: View {
     let code: AnswerContent.Code
 
-    @State private var hasCopied = false
-    @State private var resetCopiedLabel: Task<Void, Never>?
+    /// How long the button stays confirmed. Long enough to be seen after the
+    /// eye has gone back to the code, which two seconds was not.
+    private static let confirmationSeconds: Double = 3
+
+    @State private var copiedAt: Date?
+
+    private var hasCopied: Bool { copiedAt != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -737,17 +776,12 @@ private struct CodeBlockView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 } else {
-                    Button(action: copy) {
-                        Label(hasCopied ? "Copied" : "Copy",
-                              systemImage: hasCopied ? "checkmark" : "doc.on.doc")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(hasCopied ? DS.Status.ready : .secondary)
+                    copyButton
                 }
             }
             .padding(.horizontal, DS.Spacing.card)
-            .padding(.vertical, DS.Spacing.hair)
+            .padding(.top, DS.Spacing.tight)
+            .padding(.bottom, DS.Spacing.hair)
 
             Divider().opacity(DS.Alpha.divider)
 
@@ -755,25 +789,58 @@ private struct CodeBlockView: View {
             // indentation that says what is nested inside what.
             ScrollView(.horizontal) {
                 Text(CodeHighlighter.highlight(code.text, language: code.language))
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(size: 12, design: .monospaced))
                     .textSelection(.enabled)
                     .padding(DS.Spacing.card)
             }
             .scrollIndicators(.never)
         }
-        .background(.black.opacity(DS.Alpha.well), in: RoundedRectangle(cornerRadius: DS.Radius.control))
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.control)
+                .fill(DS.Code.well)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.control)
+                        .strokeBorder(DS.Code.border)
+                )
+        )
+        // Driven by the timestamp rather than by a stored `Task`, so a redraw
+        // in the middle of the confirmation cannot strand a cancelled timer
+        // with the button left reading "Copied".
+        .task(id: copiedAt) {
+            guard copiedAt != nil else { return }
+            try? await Task.sleep(for: .seconds(Self.confirmationSeconds))
+            guard !Task.isCancelled else { return }
+            copiedAt = nil
+        }
+    }
+
+    /// Confirmation is a filled pill rather than a word swap.
+    ///
+    /// "Copy" becoming "Copied" is two grey words a few pixels apart in the
+    /// corner of a panel the user is not looking at — they are looking at the
+    /// code, or at the editor they are about to paste into. The shape and the
+    /// colour both changing is what makes it register peripherally.
+    private var copyButton: some View {
+        Button(action: copy) {
+            Label(hasCopied ? "Copied" : "Copy",
+                  systemImage: hasCopied ? "checkmark.circle.fill" : "doc.on.doc")
+                .font(.caption2.weight(hasCopied ? .semibold : .regular))
+                .foregroundStyle(hasCopied ? DS.Status.ready : Color.secondary)
+                .padding(.horizontal, DS.Spacing.hair)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.Radius.chip)
+                        .fill(DS.Status.ready.opacity(hasCopied ? DS.Alpha.hairline : 0))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Copy this block (the panel stays open)")
+        .animation(.easeOut(duration: 0.15), value: hasCopied)
     }
 
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code.text, forType: .string)
-
-        hasCopied = true
-        resetCopiedLabel?.cancel()
-        resetCopiedLabel = Task {
-            try? await Task.sleep(for: .seconds(1.6))
-            guard !Task.isCancelled else { return }
-            hasCopied = false
-        }
+        copiedAt = Date()
     }
 }

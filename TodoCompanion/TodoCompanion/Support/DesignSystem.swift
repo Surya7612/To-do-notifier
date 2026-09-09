@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Shared visual constants.
@@ -54,19 +55,30 @@ nonisolated enum DS {
         static let indicator: CGFloat = 110
     }
 
-    /// Token colours for a fenced code block.
+    /// The code block, and the colours of the tokens in it.
     ///
-    /// Deliberately drawn from the system palette rather than from a named
-    /// editor theme: these have to stay legible against the panel's translucent
-    /// material in both appearances, which a theme tuned for an opaque
-    /// background does not.
+    /// The well is **opaque**, unlike everything else in the panel. That is the
+    /// one thing here that is not a taste decision: the panel is translucent, so
+    /// a tinted overlay takes its brightness from whatever application happens
+    /// to be behind it, and the same block came out as a dark well over an
+    /// editor and a pale grey slab over a browser. Code is the one thing in the
+    /// panel that has to stay readable, and it cannot if its background is
+    /// decided by the wallpaper.
+    ///
+    /// The tokens are One Dark and One Light, stated per appearance rather than
+    /// taken from the system accent palette. `Color.pink` and friends are tuned
+    /// to be *noticed* — they are status colours — and a screen of them is
+    /// tiring to read. These are tuned to be read for minutes at a time.
     enum Code {
-        static let keyword = Color.pink
-        static let string = Color.orange
-        static let number = Color.purple
-        static let type = Color.teal
-        static let comment = Color.secondary
-        static let punctuation = Color.secondary
+        static let well = Color(nsColor: .textBackgroundColor)
+        static let border = Color.primary.opacity(0.09)
+
+        static let keyword = Color.adaptive(dark: 0xC678DD, light: 0xA626A4)
+        static let string = Color.adaptive(dark: 0x98C379, light: 0x50A14F)
+        static let number = Color.adaptive(dark: 0xD19A66, light: 0x986801)
+        static let type = Color.adaptive(dark: 0x61AFEF, light: 0x4078F2)
+        static let comment = Color.adaptive(dark: 0x7F848E, light: 0xA0A1A7)
+        static let punctuation = Color.adaptive(dark: 0xABB2BF, light: 0x6A737D)
     }
 
     /// One colour per meaning, so status is legible without reading the label.
@@ -76,5 +88,29 @@ nonisolated enum DS {
         static let saved = Color.blue
         static let listening = Color.pink
         static let problem = Color.red
+    }
+}
+
+private extension Color {
+    /// A colour stated once per appearance and resolved by AppKit when it is
+    /// drawn, so it is still right after the user switches to Light Mode with
+    /// the panel already open.
+    nonisolated static func adaptive(dark: Int, light: Int) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(rgb: isDark ? dark : light)
+        })
+    }
+}
+
+private extension NSColor {
+    /// Written as `0xRRGGBB` because these came from a published palette in
+    /// that form, and transcribing them as three decimals invites a typo that
+    /// nothing would catch.
+    nonisolated convenience init(rgb: Int) {
+        self.init(srgbRed: Double((rgb >> 16) & 0xFF) / 255,
+                  green: Double((rgb >> 8) & 0xFF) / 255,
+                  blue: Double(rgb & 0xFF) / 255,
+                  alpha: 1)
     }
 }

@@ -215,3 +215,108 @@ struct VoiceEngineSettingTests {
         }
     }
 }
+
+/// What actually gets said. Every failure here is one the user hears rather
+/// than sees, which is why they went unnoticed until someone turned the voice
+/// on and listened to a whole answer.
+@Suite("Deciding what an answer sounds like")
+struct SpeakableTextTests {
+    /// The bug this suite exists for. Markup used to be stripped from each
+    /// chunk on its way to the voice, and a fence opens on one chunk and closes
+    /// on another — so a chunk beginning inside a code block was not known to
+    /// be inside one, and the voice read the code aloud a bracket at a time.
+    /// Stripping the whole document is the only way the state can be right.
+    @Test("a code block is announced, never read out")
+    func codeIsAnnouncedRatherThanSpoken() {
+        let answer = """
+        Change that line to:
+
+        ```python
+        backtrack(0, [])
+        ```
+
+        Then run it again.
+        """
+
+        let spoken = SpeechPlayback.speakable(from: answer)
+
+        #expect(spoken.contains("Code block."))
+        #expect(!spoken.contains("backtrack"))
+        #expect(!spoken.contains("["))
+        #expect(spoken.contains("Then run it again."))
+    }
+
+    /// Mid-stream the closing fence has not arrived, which is exactly the state
+    /// the old per-chunk stripping got wrong.
+    @Test("an unclosed fence stays unspoken while it is still arriving")
+    func unclosedFenceIsNotSpoken() {
+        let spoken = SpeechPlayback.speakable(from: "Try this:\n\n```python\nbacktrack(0, [")
+
+        #expect(spoken.contains("Code block."))
+        #expect(!spoken.contains("backtrack"))
+    }
+
+    /// "`(` was never closed" is a sentence about a bracket. A synthesizer
+    /// either skips it or announces it mid-clause, and the sentence reads
+    /// better without it either way.
+    @Test("an inline span with no word in it is dropped, one with a word is kept")
+    func symbolOnlySpansAreDropped() {
+        // And the gap it leaves is closed up rather than left as a double space.
+        #expect(SpeechPlayback.speakable(from: "Python reports that `(` was never closed.")
+            == "Python reports that was never closed.")
+
+        #expect(SpeechPlayback.speakable(from: "The `subsets` function is fine.")
+            == "The subsets function is fine.")
+    }
+
+    /// `Prompt.formatting` asks for no LaTeX; this is what happens when a model
+    /// does it anyway. Without it the voice says "backslash left paren oh of n
+    /// backslash cdot".
+    @Test("LaTeX delimiters are not read out")
+    func latexDelimitersAreRemoved() {
+        let spoken = SpeechPlayback.speakable(from: "It runs in \\(O(n)\\) time.")
+
+        #expect(!spoken.contains("\\("))
+        #expect(!spoken.contains("\\)"))
+        #expect(spoken.contains("O(n)"))
+    }
+
+    @Test("emphasis and heading markers are not pronounced")
+    func markupIsNotPronounced() {
+        let spoken = SpeechPlayback.speakable(from: "## Heading\n\nThat is **important** and _urgent_.")
+
+        #expect(spoken.contains("Heading"))
+        #expect(!spoken.contains("#"))
+        #expect(!spoken.contains("*"))
+        #expect(!spoken.contains("_"))
+    }
+
+    @Test("a list marker is not read as a word")
+    func listMarkersAreDropped() {
+        let spoken = SpeechPlayback.speakable(from: "- sort the list\n- walk it once")
+
+        #expect(spoken == "sort the list\nwalk it once")
+    }
+
+    /// Lines are joined with newlines rather than spaces because `nextChunk`
+    /// treats a line ending as a place it may break, and a list of items
+    /// carrying no full stops gives it nowhere else to do so.
+    @Test("line structure survives, so chunking still has somewhere to break")
+    func lineBreaksAreKept() {
+        let spoken = SpeechPlayback.speakable(from: "One thing\n\nAnother thing")
+
+        #expect(spoken.contains("\n"))
+        // And the blank line does not become a blank clause.
+        #expect(!spoken.contains("\n\n"))
+    }
+
+    /// The property the follow-along highlight depends on: it matches a spoken
+    /// clause against the screen and will only box a label Max quoted, so a
+    /// stripper that ate the quotes would silently disable the feature.
+    @Test("quoted labels survive, since the on-screen box is found by them")
+    func quotedLabelsSurvive() {
+        let spoken = SpeechPlayback.speakable(from: "Now press the \"Run\" button.")
+
+        #expect(spoken.contains("\"Run\""))
+    }
+}
