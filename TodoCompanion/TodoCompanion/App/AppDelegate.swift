@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GlobalHotkey.shared.activate(AppSettings.hotkey) { [weak self] in
             self?.companion.toggle()
         }
+        GlobalHotkey.shared.activate(AppSettings.talkHotkey, for: .talk) { [weak self] in
+            self?.companion.summonAndListen()
+        }
 
         watchForProjectChanges()
 

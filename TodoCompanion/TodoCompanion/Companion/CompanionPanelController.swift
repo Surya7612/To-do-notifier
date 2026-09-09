@@ -65,6 +65,25 @@ final class CompanionPanelController {
         viewModel.captureScreen(frontmostApp: frontmost)
     }
 
+    /// Brings the panel up with the microphone already open.
+    ///
+    /// The shortcut exists because the two-step version — summon, then find and
+    /// press the microphone — is enough friction that a spoken question tends
+    /// to become a typed one, and the whole point of asking about the screen in
+    /// front of you is not to look away from it.
+    ///
+    /// Pressing it again stops, so one key both starts and ends the sentence.
+    func summonAndListen() {
+        if !viewModel.isListening, !isVisible { summon() }
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Started without waiting for the capture to finish, which costs the
+        // recognizer the on-screen vocabulary it would otherwise be given. That
+        // is the right trade: the user pressed a key in order to talk, and a
+        // microphone that opens a second later has missed the first few words.
+        viewModel.toggleDictation()
+    }
+
     /// Dismisses when the user clicks away, which is what every other floating
     /// panel on the system does. Only mouse events are observed: a global
     /// *keyboard* monitor would demand Accessibility permission, and avoiding

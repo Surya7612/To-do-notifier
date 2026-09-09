@@ -7,70 +7,86 @@ import Carbon.HIToolbox
 final class GlobalHotkey {
     static let shared = GlobalHotkey()
 
-    /// True when the OS refused the combo outright. Note this stays false for
+    /// What a registered combo does. Carried in the Carbon hot key's id, which
+    /// is the only thing the C callback gets to see.
+    enum Role: UInt32, CaseIterable {
+        case summon = 1
+        case talk = 2
+    }
+
+    /// True when the OS refused a combo outright. Note this stays false for
     /// system-reserved combos, which register "successfully" but never fire.
     private(set) var didFailToRegister = false
     private(set) var current: HotkeyChoice = .fallback
 
-    private var hotKeyRef: EventHotKeyRef?
+    private var registrations: [Role: EventHotKeyRef] = [:]
     private var eventHandler: EventHandlerRef?
-    private var storedAction: (() -> Void)?
+    private var storedActions: [Role: () -> Void] = [:]
 
     private init() {}
 
-    /// Registers `choice`. Pass `action` on first call; later calls reuse it so
-    /// changing the shortcut in Settings does not need the callback again.
-    func activate(_ choice: HotkeyChoice, action: (() -> Void)? = nil) {
-        if let action { storedAction = action }
+    /// Registers `choice` for `role`. Pass `action` on first call; later calls
+    /// reuse it, so changing the shortcut in Settings does not need it again.
+    ///
+    /// A nil `choice` unregisters the role, which is how the talk shortcut is
+    /// switched off — the summon one has no such state, since an app with no
+    /// way to summon it is not a lesser configuration, it is a broken one.
+    func activate(_ choice: HotkeyChoice?, for role: Role = .summon, action: (() -> Void)? = nil) {
+        if let action { storedActions[role] = action }
+        if role == .summon, let choice { current = choice }
 
-        releaseRegistration()
-        current = choice
-        hotkeyAction = storedAction
+        release(role)
+        installHandlerIfNeeded()
+        hotkeyActions[role.rawValue] = storedActions[role]
 
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
-                                 eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), hotkeyEventHandler, 1, &spec, nil, &eventHandler)
+        guard let choice else { return }
 
-        let id = EventHotKeyID(signature: hotkeySignature, id: hotkeyIdentifier)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(choice.keyCode,
                                          choice.modifiers,
-                                         id,
+                                         EventHotKeyID(signature: hotkeySignature, id: role.rawValue),
                                          GetApplicationEventTarget(),
                                          0,
                                          &ref)
         if status == noErr {
-            hotKeyRef = ref
-            didFailToRegister = false
+            registrations[role] = ref
+            if role == .summon { didFailToRegister = false }
         } else {
-            didFailToRegister = true
+            if role == .summon { didFailToRegister = true }
             NSLog("[GlobalHotkey] \(choice.displayName) rejected with status \(status)")
         }
     }
 
     func unregister() {
-        releaseRegistration()
-        storedAction = nil
-        hotkeyAction = nil
-    }
-
-    private func releaseRegistration() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
+        for role in Role.allCases { release(role) }
+        storedActions = [:]
+        hotkeyActions = [:]
         if let eventHandler {
             RemoveEventHandler(eventHandler)
             self.eventHandler = nil
         }
     }
+
+    /// One handler for every role. Installing it per registration stacked a
+    /// second handler on the same target, so one press was delivered twice.
+    private func installHandlerIfNeeded() {
+        guard eventHandler == nil else { return }
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), hotkeyEventHandler, 1, &spec, nil, &eventHandler)
+    }
+
+    private func release(_ role: Role) {
+        if let ref = registrations.removeValue(forKey: role) {
+            UnregisterEventHotKey(ref)
+        }
+    }
 }
 
 private nonisolated let hotkeySignature = OSType(0x54444348) // 'TDCH'
-private nonisolated let hotkeyIdentifier: UInt32 = 1
 
 /// The Carbon callback is a C function pointer and cannot capture context.
-private nonisolated(unsafe) var hotkeyAction: (() -> Void)?
+private nonisolated(unsafe) var hotkeyActions: [UInt32: () -> Void] = [:]
 
 private nonisolated func hotkeyEventHandler(_ handler: EventHandlerCallRef?,
                                             _ event: EventRef?,
@@ -83,7 +99,8 @@ private nonisolated func hotkeyEventHandler(_ handler: EventHandlerCallRef?,
                                    MemoryLayout<EventHotKeyID>.size,
                                    nil,
                                    &id)
-    guard status == noErr, id.id == hotkeyIdentifier else { return noErr }
-    DispatchQueue.main.async { hotkeyAction?() }
+    guard status == noErr, id.signature == hotkeySignature else { return noErr }
+    let action = hotkeyActions[id.id]
+    DispatchQueue.main.async { action?() }
     return noErr
 }

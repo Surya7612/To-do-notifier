@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.model) private var model = AppSettings.defaultModel
     @AppStorage(AppSettings.Key.sendsImage) private var sendsImage = false
     @AppStorage(AppSettings.Key.hotkeyID) private var hotkeyID = HotkeyChoice.fallback.id
+    @AppStorage(AppSettings.Key.talkHotkeyID) private var talkHotkeyID = HotkeyChoice.offIdentifier
     @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
     @AppStorage(AppSettings.Key.openAIModel) private var openAIModel = OpenAIBrain.defaultModel
     @AppStorage(AppSettings.Key.semanticEnabled) private var semanticEnabled = false
@@ -47,7 +48,33 @@ struct SettingsView: View {
                     GlobalHotkey.shared.activate(HotkeyChoice.named(newValue))
                 }
 
-                Text("These combos avoid the ones macOS reserves for itself, such as ⌘Space and ⌥⌘Space.")
+                Picker("Summon and start talking", selection: $talkHotkeyID) {
+                    Text("Off").tag(HotkeyChoice.offIdentifier)
+                    ForEach(HotkeyChoice.all) { choice in
+                        Text(choice.displayName).tag(choice.id)
+                    }
+                }
+                .onChange(of: talkHotkeyID) { _, newValue in
+                    GlobalHotkey.shared.activate(HotkeyChoice.optional(newValue), for: .talk)
+                }
+
+                Text("Brings the panel up with the microphone already open, and stops it when pressed "
+                     + "again. Nothing listens until you press it — \(Prompt.assistantName) has no wake "
+                     + "word and never will.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if talkHotkeyID == hotkeyID {
+                    Label("Both shortcuts are the same combo, so only one of them will happen.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(DS.Status.problem)
+                }
+
+                Text("These combos avoid the ones macOS reserves for itself, such as ⌘Space and ⌥⌘Space. "
+                     + "A shortcut needs Command, Shift, Option or Control — Tab is an ordinary key "
+                     + "rather than a modifier, so combinations like Tab+Q cannot be registered without "
+                     + "the Accessibility permission this app does not ask for.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
