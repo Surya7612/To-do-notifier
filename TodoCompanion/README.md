@@ -496,8 +496,15 @@ would eventually lose an edit or truncate the file.
 
 Point **Capture from your phone** in Settings at a folder, put that folder in iCloud Drive, and a
 Shortcut on your iPhone can save into it. Anything it drops there is brought in when the app launches,
-each time you summon the panel, and when you open the library — and then **removed from the folder**;
-it is a transport, not storage, and the screenshot lives in the app's own store once imported.
+when the Mac wakes from sleep, each time you summon the panel, and when you open the library — and then
+**removed from the folder**; it is a transport, not storage, and the screenshot lives in the app's own
+store once imported.
+
+Waking matters more than it sounds, because this app is meant to stay running: launch happens once and
+then not again for days, so without it a capture that landed overnight waited for you to summon the
+panel — at the exact moment you have no reason to, having just sat down to deal with the thing you sent
+yourself. It reads the folder a few times over the first two minutes awake, since Wi-Fi and iCloud both
+start up *after* macOS says the Mac is awake, and then stops. Nothing polls in the background.
 
 This is a folder rather than an iCloud container on purpose. A real iCloud container needs an
 entitlement that requires the paid Apple Developer Program, which this project does not have. A
