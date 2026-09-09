@@ -222,6 +222,13 @@ slow network would freeze the panel as it opened. It is picked up on the next sw
 placeholder may also carry a different name — the legacy form is `.thing.json.icloud`, which the `json`
 filter does not match at all — so both shapes are asked for, and `pendingCount` counts both.
 
+**The library remounts its query when something arrives.** A wake sweep or a summon can import into
+the shared store while the library window is already open, and SwiftData's `@Query` does not always
+notice inserts that happened outside that view's own turn — the failure mode is a sidebar that looks
+unchanged until the app is relaunched. `InboxImporter` posts when it brings something in, and
+`LibraryView` remounts the browser on that signal. Becoming active collects again as well, so focusing
+the window after a phone upload that landed late is enough without quitting.
+
 **A reminder asked for on the phone is carried out on arrival, at the same bar as one typed here.**
 "Remind me to eat the same in 12 hours" cleared `isReminderInstruction` at the Mac and did nothing
 from a phone, purely because the import path was written later and never consulted `ReminderPhrase` —
@@ -921,7 +928,7 @@ the edge is the only part of this that fails invisibly.
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
-| `Store/InboxImporter.swift` | ~258 | Brings in captures from a phone through a user-chosen folder, arming a reminder when the capture asked for one. |
+| `Store/InboxImporter.swift` | ~320 | Brings in captures from a phone through a user-chosen folder, arming a reminder when the capture asked for one. Posts when something arrives so an open library can remount. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
@@ -934,7 +941,7 @@ the edge is the only part of this that fails invisibly.
 | `Hotkey/GlobalHotkey.swift` | ~106 | Carbon hot key registration, one role per combo. Exposes registration failure. |
 | `Hotkey/HotkeyChoice.swift` | ~72 | The vetted list of non-reserved shortcuts, and the one the talk shortcut defaults to. |
 | `Library/GraphView.swift` | ~203 | `Canvas` rendering of the graph, with hover to trace a connection. |
-| `Library/LibraryView.swift` | ~718 | Browse by project, search, reassign, rename, and delete saved contexts. Sets, changes and cancels a reminder on anything kept. Project overview pairs what was kept with the project's open tasks. |
+| `Library/LibraryView.swift` | ~751 | Browse by project, search, reassign, rename, and delete saved contexts. Remounts when the phone inbox imports so an open window notices. Sets, changes and cancels a reminder on anything kept. Project overview pairs what was kept with the project's open tasks. |
 
 ## Build & run
 

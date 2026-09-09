@@ -1,7 +1,40 @@
 import SwiftData
 import SwiftUI
 
+/// Shell around the browser so an inbox import can remount the `@Query`.
+///
+/// Opening this window used to collect the phone inbox once, in `.task`, and
+/// then never again for as long as the window stayed alive. A capture that
+/// landed after that — or one imported by a wake sweep into the shared store
+/// while this window was already open — sat in SwiftData without the sidebar
+/// noticing, and the only reliable fix was to quit and relaunch. Remounting on
+/// `InboxImporter.didImportNotification` is the cheap equivalent of that
+/// relaunch, scoped to this window. Becoming active collects again for the case
+/// where the folder filled up while the window was open but nothing had
+/// imported yet.
 struct LibraryView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var browserGeneration = 0
+
+    var body: some View {
+        LibraryBrowser()
+            .id(browserGeneration)
+            .task { collectInbox() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { collectInbox() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: InboxImporter.didImportNotification)) { _ in
+                browserGeneration += 1
+            }
+    }
+
+    private func collectInbox() {
+        InboxImporter.importAll(into: modelContext)
+    }
+}
+
+private struct LibraryBrowser: View {
     @Query(sort: \SavedContext.createdAt, order: .reverse)
     private var contexts: [SavedContext]
 
@@ -150,11 +183,6 @@ struct LibraryView: View {
                 )
             }
         }
-        // The library is where someone goes to look at what they kept, so it is
-        // the wrong place to be told to summon the panel first. Opening this
-        // window is as much a user-initiated moment as a summon is, which is
-        // what keeps this from being the background collection the app avoids.
-        .task { InboxImporter.importAll(into: modelContext) }
         .task(id: scope) { work = TodoBridge.load() }
         .task(id: search) { await refreshSemanticMatches() }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")

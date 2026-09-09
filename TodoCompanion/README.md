@@ -506,6 +506,14 @@ panel — at the exact moment you have no reason to, having just sat down to dea
 yourself. It reads the folder a few times over the first two minutes awake, since Wi-Fi and iCloud both
 start up *after* macOS says the Mac is awake, and then stops. Nothing polls in the background.
 
+If a capture is sitting in the phone's Files app under iCloud Drive but never appears on the Mac,
+check Low Power Mode and the battery first. iOS holds iCloud Drive uploads while the phone is in Low
+Power Mode, so the Info panel can honestly say `iCloud Drive > Companion Inbox` while the file has
+not left the device. Plugging in — or turning Low Power Mode off — is what actually starts the upload;
+the Mac cannot import what Apple's servers have never seen. The library window also refreshes itself
+when something does arrive, including if it was already open, so you should not need to quit the app
+to see a new capture.
+
 This is a folder rather than an iCloud container on purpose. A real iCloud container needs an
 entitlement that requires the paid Apple Developer Program, which this project does not have. A
 *folder* inside iCloud Drive needs no entitlement at all and syncs just as well — and as a side
