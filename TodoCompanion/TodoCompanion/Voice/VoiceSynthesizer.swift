@@ -15,6 +15,12 @@ protocol VoiceSynthesizer: AnyObject {
     /// panel header can go out. Without it `isSpeaking` only ever went true.
     var onFinishedSpeaking: (@MainActor () -> Void)? { get set }
 
+    /// Called as each queued piece *starts* being heard, with the words being
+    /// said. Reported at playback rather than at enqueue because clauses are
+    /// queued a sentence ahead of the sound, and the whole use for this is to
+    /// keep something on screen in step with what the user is hearing.
+    var onStartedSpeaking: (@MainActor (String) -> Void)? { get set }
+
     /// Model loading, where there is any. Throws so a voice that cannot be used
     /// says why instead of producing silence.
     func prepare() async throws
@@ -62,6 +68,7 @@ final class SystemVoiceSynthesizer: VoiceSynthesizer {
 
     private(set) var isSpeaking = false
     var onFinishedSpeaking: (@MainActor () -> Void)?
+    var onStartedSpeaking: (@MainActor (String) -> Void)?
 
     /// Nothing to load.
     let isPrepared = true
@@ -73,6 +80,9 @@ final class SystemVoiceSynthesizer: VoiceSynthesizer {
             // as they stream, so one utterance finishing does not mean silence.
             isSpeaking = synthesizer.isSpeaking
             if !isSpeaking { onFinishedSpeaking?() }
+        }
+        monitor.onUtteranceStarted = { [weak self] spoken in
+            self?.onStartedSpeaking?(spoken)
         }
         synthesizer.delegate = monitor
     }
@@ -110,9 +120,18 @@ final class SystemVoiceSynthesizer: VoiceSynthesizer {
         synthesizer.delegate = monitor
     }
 
-    /// Reports when the synthesizer stops having anything to say.
+    /// Reports when the synthesizer starts an utterance and when it stops
+    /// having anything to say.
     private final class UtteranceMonitor: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         var onQueueDrained: (@MainActor () -> Void)?
+        var onUtteranceStarted: (@MainActor (String) -> Void)?
+
+        func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                               didStart utterance: AVSpeechUtterance) {
+            let callback = onUtteranceStarted
+            let spoken = utterance.speechString
+            Task { @MainActor in callback?(spoken) }
+        }
 
         func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                didFinish utterance: AVSpeechUtterance) {

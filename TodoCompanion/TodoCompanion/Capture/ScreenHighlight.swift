@@ -22,15 +22,27 @@ final class ScreenHighlight {
     private var window: NSWindow?
     private var pendingHide: Task<Void, Never>?
 
-    func show(_ rect: CGRect) {
+    /// - Parameter untilHidden: Leaves the box up rather than fading it out.
+    ///
+    ///   For the follow-along highlight, where the box moves from one control
+    ///   to the next as Max names them and is taken down when the voice stops.
+    ///   A timeout there would blink the box out mid-sentence, since a clause
+    ///   takes longer to say than the box is otherwise worth leaving up.
+    func show(_ rect: CGRect, untilHidden: Bool = false) {
         pendingHide?.cancel()
+        pendingHide = nil
 
         let framed = rect.insetBy(dx: -Self.padding, dy: -Self.padding)
         guard framed.width > 0, framed.height > 0 else { return }
 
         let window = existingWindow()
-        window.setFrame(framed, display: true)
+        // Animated, because this now moves between controls rather than only
+        // appearing: a box that jumps is a second box as far as the eye is
+        // concerned, where one that travels is plainly the same one.
+        window.setFrame(framed, display: true, animate: window.isVisible)
         window.orderFrontRegardless()
+
+        guard !untilHidden else { return }
 
         pendingHide = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.visible))

@@ -18,6 +18,12 @@ final class SpeechPlayback {
 
     private(set) var isSpeaking = false
 
+    /// Called with each clause as it starts being heard, and with nil when the
+    /// voice falls silent. Both halves matter to a caller that is showing
+    /// something alongside the speech: without the nil it has no idea when to
+    /// take it down again.
+    var onSpeakingClause: (@MainActor (String?) -> Void)?
+
     /// Surfaced when a chosen voice could not be used at all, so a silent
     /// answer has a stated reason rather than looking like a dead setting.
     private(set) var failure: String?
@@ -40,6 +46,10 @@ final class SpeechPlayback {
             synthesizerEngine = engine
             synthesizer?.onFinishedSpeaking = { [weak self] in
                 self?.isSpeaking = false
+                self?.onSpeakingClause?(nil)
+            }
+            synthesizer?.onStartedSpeaking = { [weak self] clause in
+                self?.onSpeakingClause?(clause)
             }
         }
         // Safe: `makeSynthesizer` always returns one.
@@ -74,8 +84,29 @@ final class SpeechPlayback {
     /// Enqueues whatever has become speakable since the last call.
     func speakArriving(_ text: String) {
         guard AppSettings.speaksAnswers else { return }
+        consume(Self.speakable(from: text), toTheEnd: false)
+    }
 
-        var pending = String(text.dropFirst(spokenPrefixLength))
+    /// Speaks whatever is left once the stream has finished, including a final
+    /// fragment with no terminating punctuation.
+    func finish(_ text: String) {
+        guard AppSettings.speaksAnswers else { return }
+        consume(Self.speakable(from: text), toTheEnd: true)
+    }
+
+    /// Sends on whatever of the speakable text has not been sent yet.
+    ///
+    /// Note what is passed in: the *whole* answer, stripped, every time. Markup
+    /// used to be removed from each chunk just before it was spoken, and the
+    /// consequence was the worst bug in this file — a fence is opened on one
+    /// chunk and closed on another, so a chunk starting inside a code block
+    /// began with `insideFence` false and the voice read the code out, bracket
+    /// by bracket. Stripping the document rather than the fragment is the only
+    /// way the state can be right, because the state is a property of the
+    /// document.
+    private func consume(_ speakable: String, toTheEnd: Bool) {
+        var pending = String(speakable.dropFirst(spokenPrefixLength))
+
         while let chunk = Self.nextChunk(in: pending,
                                          allowingShort: spokenPrefixLength == 0),
               !chunk.isEmpty {
@@ -83,24 +114,18 @@ final class SpeechPlayback {
             pending = String(pending.dropFirst(chunk.count))
             enqueue(chunk)
         }
-    }
 
-    /// Speaks whatever is left once the stream has finished, including a final
-    /// fragment with no terminating punctuation.
-    func finish(_ text: String) {
-        guard AppSettings.speaksAnswers else { return }
-
-        var remainder = String(text.dropFirst(spokenPrefixLength))
-        spokenPrefixLength = text.count
+        guard toTheEnd, !pending.isEmpty else { return }
+        spokenPrefixLength = speakable.count
 
         // Still broken up: the tail can be longer than one synthesis accepts.
-        while remainder.count > Self.maximumChunk,
-              let chunk = Self.nextChunk(in: remainder, allowingShort: true),
+        while pending.count > Self.maximumChunk,
+              let chunk = Self.nextChunk(in: pending, allowingShort: true),
               !chunk.isEmpty {
-            remainder = String(remainder.dropFirst(chunk.count))
+            pending = String(pending.dropFirst(chunk.count))
             enqueue(chunk)
         }
-        enqueue(remainder)
+        enqueue(pending)
     }
 
     /// The next stretch of text worth speaking, or `nil` while there is not yet
@@ -163,6 +188,7 @@ final class SpeechPlayback {
     func stop() {
         spokenPrefixLength = 0
         isSpeaking = false
+        onSpeakingClause?(nil)
         // A load in flight is deliberately left running: it is the expensive
         // part, it is what the next answer needs, and cancelling it halfway
         // through a download buys nothing.
@@ -175,8 +201,7 @@ final class SpeechPlayback {
         guard !trimmed.isEmpty else { return }
 
         let voice = voice()
-        let spoken = spoken(from: trimmed)
-        guard !spoken.isEmpty else { return }
+        let spoken = trimmed
 
         // Prepared lazily rather than at launch: a voice nobody switches on
         // should not load a model, and the system voice has nothing to load.
@@ -224,29 +249,95 @@ final class SpeechPlayback {
         }
     }
 
-    /// Strips markup that is meant to be read with the eyes.
+    /// The answer with everything that is meant for the eyes taken out.
     ///
-    /// Without this the voice pronounces every asterisk and backtick, and a
-    /// fenced code block is read out character by character — which is both
-    /// unbearable and long enough that the user cannot interrupt it easily.
-    private func spoken(from text: String) -> String {
-        var result = ""
+    /// Pure and given the whole document, so it is testable and so the fence
+    /// state is right — see `consume`.
+    ///
+    /// Lines are joined with newlines rather than spaces because `nextChunk`
+    /// treats a line ending as a place it may break, and a list whose items
+    /// carry no full stops has no other one.
+    static func speakable(from text: String) -> String {
+        var lines: [String] = []
         var insideFence = false
 
         for line in text.components(separatedBy: .newlines) {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                if !insideFence { result += "Code block. " }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") {
+                // Announced, not read. A function read out character by
+                // character is unbearable and too long to interrupt.
+                if !insideFence { lines.append("Code block.") }
                 insideFence.toggle()
                 continue
             }
             guard !insideFence else { continue }
 
-            result += line.filter { !"*_`#>|".contains($0) } + " "
+            let spoken = spokenLine(trimmed)
+            if !spoken.isEmpty { lines.append(spoken) }
         }
 
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return lines.joined(separator: "\n")
     }
 
+    /// One line of prose, without the characters that are punctuation to a
+    /// reader and noise to a listener.
+    private static func spokenLine(_ line: String) -> String {
+        var withoutMarkers = line
+        for marker in ["- ", "* ", "+ ", "• ", "> "] where withoutMarkers.hasPrefix(marker) {
+            withoutMarkers = String(withoutMarkers.dropFirst(marker.count))
+            break
+        }
+
+        var result = ""
+        var span = ""
+        var insideCode = false
+
+        func closeSpan() {
+            // An inline span with no word in it is a symbol being *shown* —
+            // "`(` was never closed" — and a synthesizer either skips it or
+            // says "left parenthesis" in the middle of a sentence about it.
+            // Either way the sentence is better without it.
+            if span.contains(where: { $0.isLetter || $0.isNumber }) { result += span }
+            span = ""
+        }
+
+        for character in withoutMarkers {
+            if character == "`" {
+                if insideCode { closeSpan() }
+                insideCode.toggle()
+                continue
+            }
+            if insideCode {
+                span.append(character)
+                continue
+            }
+            guard !"*_#|".contains(character) else { continue }
+            result.append(character)
+        }
+
+        // A span still open is the stream stopping mid-word, not a mistake.
+        if insideCode { closeSpan() }
+
+        return Self.withoutMath(result)
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+    }
+
+    /// Removes the delimiters of a LaTeX expression.
+    ///
+    /// `Prompt.formatting` asks for mathematics in plain words, and this is the
+    /// belt to that pair of braces: a model that reaches for LaTeX anyway
+    /// produces `\(O(n \cdot 2^n)\)`, which is read out as a string of
+    /// backslashes and letters. Only the delimiters go, because what is between
+    /// them is at least the right symbols in the right order.
+    private static func withoutMath(_ text: String) -> String {
+        var result = text
+        for delimiter in ["\\(", "\\)", "\\[", "\\]"] {
+            result = result.replacingOccurrences(of: delimiter, with: "")
+        }
+        return result
+    }
 }
 
 extension SpeechPlayback {

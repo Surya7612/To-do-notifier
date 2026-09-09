@@ -32,6 +32,8 @@ struct AskContext: Sendable {
     var history: [Turn] = []
     /// The file the user opened for editing, if any.
     var editableFile: EditableFileContext?
+    /// Whether the user pressed "Teach me" rather than asking a question.
+    var isTeaching = false
 }
 
 /// One exchange. Kept as a pair rather than a flat list of messages because
@@ -114,7 +116,8 @@ enum Prompt {
     static let system = """
     You are \(assistantName), a patient teacher sitting beside the user's screen. You are shown what \
     is currently on it, any notes the user saved earlier that look related, and their question. \
-    Answer directly in at most four sentences. If you do not know, say that instead of guessing.
+    Answer directly in at most four sentences of prose — a fenced code block and the items of a \
+    list do not count towards that. If you do not know, say that instead of guessing.
 
     Explain rather than assert. Define any jargon you use in the same breath, name the specific \
     button, menu, or panel the user should look at rather than describing it vaguely, and when \
@@ -178,9 +181,67 @@ enum Prompt {
     through it, and if you would not change anything, say that and emit no block at all.
     """
 
-    /// The system prompt for one request, which grows only when a file is open.
+    /// Appended only when the user pressed "Teach me".
+    ///
+    /// It asks for a numbered list whose items quote what they are about, and
+    /// that is all — no coordinates, no drawing instructions, no format of its
+    /// own. The app turns the list into a walk through the screen because it
+    /// can resolve a quoted label to a box through OCR; the model is never told
+    /// where anything is and never gets to say.
+    ///
+    /// The quoting rule is stated twice over, here and in `system`, because
+    /// here it is load-bearing rather than stylistic: a step that quotes
+    /// nothing is a step with nothing to point at.
+    static let teachingSystem = """
+
+    The user has asked to be taught what is on their screen rather than to have it explained in a \
+    paragraph. Reply with a numbered list of short steps, in the order someone should look at them, \
+    and nothing before it but a single sentence of introduction if one is genuinely needed.
+
+    Every step must quote, in double quotes and character for character, the text on screen it is \
+    about — a variable name, a line, a label, an error. Those quotes are what the app draws a box \
+    around while it reads the step aloud, so a step that quotes nothing points at nothing. Quote \
+    what is actually printed on the screen, never a paraphrase of it, and never quote something \
+    you cannot see there.
+
+    Keep each step to one or two sentences. Teach the idea, not just the fix: say why the thing you \
+    are pointing at matters, so the user could spot it themselves next time.
+    """
+
+    /// Asked of every model, because the panel now draws structure rather than
+    /// printing one run of body text.
+    ///
+    /// This is the half of that feature that lives in the prompt. A model left
+    /// to itself sometimes fences code and sometimes indents it, and an
+    /// indented block arrives as a paragraph in a proportional font — which for
+    /// code destroys the alignment that says what is nested inside what. Asking
+    /// for the language tag is what lets the block be coloured at all.
+    static let formatting = """
+    Write the reply as Markdown. Put code, commands, and configuration in a fenced block tagged \
+    with its language — ```swift, ```bash, ```json — never as indented text and never as a run of \
+    prose. Use a numbered list when the answer is a sequence of steps to carry out in order, and \
+    plain sentences when it is not. Do not add headings, and never wrap ordinary prose in a fence.
+
+    Write mathematics in words, or in a code span if it is short: "n times two to the n" or \
+    `O(n * 2^n)`. Never use LaTeX — no \\(, no \\[, no \\cdot. The reply is drawn as plain text and \
+    may be read out loud, and in both of those a LaTeX expression comes out as its own source code.
+    """
+
+    /// The system prompt for one request.
+    ///
+    /// Grows in two ways: the formatting rules are always there, and the screen
+    /// contributes a paragraph about the kind of material on it. See
+    /// `ScreenKind` for why an inference is allowed to do this and nothing else.
     static func system(for context: AskContext) -> String {
-        context.editableFile == nil ? system : system + editingSystem
+        var prompt = system + "\n\n" + formatting
+
+        if let text = context.observation?.recognizedText, !text.isEmpty {
+            prompt += "\n\n" + ScreenKind.inferred(from: text).guidance
+        }
+
+        if context.editableFile != nil { prompt += editingSystem }
+        if context.isTeaching { prompt += teachingSystem }
+        return prompt
     }
 
     /// How many earlier turns are sent.

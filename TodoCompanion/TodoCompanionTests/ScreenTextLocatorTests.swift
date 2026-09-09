@@ -171,6 +171,79 @@ struct ScreenTextLocatorTests {
     }
 }
 
+/// Follow-along draws while an answer is being read aloud, so unlike the button
+/// it cannot show the user its match first and wait to be told to go ahead.
+/// What replaces that consent is this: only a label Max put in double quotes can
+/// ever be boxed. Quoting is Max stating which words it meant, so nothing
+/// inferred from prose reaches the screen — which is the standing rule, kept
+/// rather than relaxed.
+@Suite("Pointing along with the voice")
+struct FollowAlongMatchingTests {
+    private func menuBar() -> [TextRegion] {
+        ["Media", "Fusion", "Color", "Fairlight"].enumerated().map { position, label in
+            TextRegion(
+                string: label,
+                boundingBox: CGRect(x: 0.1 + Double(position) * 0.1, y: 0.02, width: 0.08, height: 0.03),
+                line: 0,
+                position: position
+            )
+        }
+    }
+
+    @Test("a quoted label is still found")
+    func quotedLabelMatches() throws {
+        let match = try #require(
+            ScreenTextLocator.locate(named: "Open the \"Color\" page.",
+                                     in: menuBar(),
+                                     requiringQuoted: true)
+        )
+
+        #expect(match.text == "Color")
+    }
+
+    /// The whole point of the flag. "Fairlight" is believed by the button,
+    /// because it is long and printed like a name, and that is still an
+    /// inference — fine when the user is shown it on a button beforehand, not
+    /// fine when it draws on the screen unannounced.
+    @Test("an unquoted name the button would believe is refused here")
+    func unquotedNameIsRefused() throws {
+        let clause = "Audio work happens in Fairlight."
+
+        // Believed on the button's terms.
+        #expect(try #require(ScreenTextLocator.locate(named: clause, in: menuBar())).text == "Fairlight")
+
+        // And refused on these.
+        #expect(ScreenTextLocator.locate(named: clause, in: menuBar(), requiringQuoted: true) == nil)
+    }
+
+    /// Most clauses of most answers quote nothing at all, so this is the common
+    /// case rather than an edge: the box stays where it was and the sentence
+    /// goes by without anything being drawn.
+    @Test("a clause quoting nothing matches nothing")
+    func unquotedClauseMatchesNothing() {
+        #expect(ScreenTextLocator.locate(named: "That should take about a minute.",
+                                         in: menuBar(),
+                                         requiringQuoted: true) == nil)
+    }
+
+    @Test("a quoted label that is not on screen is still not drawn")
+    func absentQuotedLabelMatchesNothing() {
+        #expect(ScreenTextLocator.locate(named: "Press \"Render\" now.",
+                                         in: menuBar(),
+                                         requiringQuoted: true) == nil)
+    }
+
+    /// The button's behaviour has to be byte-for-byte what it was, since this
+    /// added a parameter to the function it depends on.
+    @Test("the default is unchanged, so the button still believes a long name")
+    func defaultIsUnchanged() throws {
+        let match = try #require(ScreenTextLocator.locate(named: "Audio lives in Fairlight.",
+                                                          in: menuBar()))
+
+        #expect(match.text == "Fairlight")
+    }
+}
+
 /// Vision normalizes from the bottom left and so does AppKit's screen space, so
 /// this mapping needs no flip — where `cropped(to:)` does, because it targets a
 /// `CGImage`. Getting that wrong puts the box a mirrored distance up the screen,

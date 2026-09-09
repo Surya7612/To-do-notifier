@@ -26,7 +26,7 @@ Related things you saved before are scored against the screen
    ↓
 Question + screen + those memories + your open tasks go to the model
    ↓
-Answer streams into the panel · ⌘P boxes the control it named, on screen
+Answer streams in, formatted · ⌘P boxes the control it named, on screen
 ```
 
 Press **⌘R** to drag out one region and ask about that instead. It crops the screenshot already in
@@ -145,6 +145,28 @@ unlabelled icon is not findable, and the button simply does not appear. That is 
 describes those by position, and a confident box over the wrong icon is worse than no box at all.
 
 Your pointer is never moved. The box shows you where to look, and your hands stay yours.
+
+If Max is reading answers aloud, **Box each control on screen as Max names it** makes the box keep up
+with the voice: it moves from one control to the next as they come up in the sentence being read, and
+disappears when the voice stops. This is the only thing in the app that draws on your screen without a
+press immediately before it, so it is off until you switch it on, and while it is on it will only box a
+label Max **quoted exactly**. The unquoted guesses that the ⌘P button is willing to make — a long name
+like "Fairlight" that is probably a label — are refused here, because that button shows you its match
+and waits, and this one cannot.
+
+### Answers that look like what they are
+
+Code comes back in a fenced block: monospaced, syntax-coloured, on its own background, with the
+language named and a copy button, because the panel floats over the editor the code is headed for.
+Steps come back as a numbered list, and the labels Max quotes are picked out in the same blue as the
+box drawn on your screen — those are exactly the words the app is willing to point at.
+
+The model is asked for this rather than left to choose: without a language tag on the fence there is
+nothing to colour by, and a model left alone fences code about half the time and indents it the rest,
+which arrives as a paragraph in a proportional font. What is on screen also shapes the request — a
+terminal is asked for the cause before the fix, source code for exact identifiers, a document for a
+quoted passage. That is a guess about your screen, so it is confined to *how* an answer is written;
+it never becomes your stated reason for a save, and it never draws anything.
 
 ### Who answers
 
@@ -395,9 +417,9 @@ would eventually lose an edit or truncate the file.
 ## Capturing from your phone
 
 Point **Capture from your phone** in Settings at a folder, put that folder in iCloud Drive, and a
-Shortcut on your iPhone can save into it. Anything it drops there is brought in when the app launches
-and each time you summon the panel, and then **removed from the folder** — it is a transport, not
-storage, and the screenshot lives in the app's own store once imported.
+Shortcut on your iPhone can save into it. Anything it drops there is brought in when the app launches,
+each time you summon the panel, and when you open the library — and then **removed from the folder**;
+it is a transport, not storage, and the screenshot lives in the app's own store once imported.
 
 This is a folder rather than an iCloud container on purpose. A real iCloud container needs an
 entitlement that requires the paid Apple Developer Program, which this project does not have. A
@@ -516,7 +538,9 @@ your calendar; nothing does.
 - **Editing more than one file.** No project-wide agent, no running your tests, no applying a change
   you were not shown. See above for why that is a product judgement and not only a cautious one.
 - **Moving your cursor for you.** Clicky flies the pointer to the element it names. Max draws a box
-  around it instead and leaves your hands alone — see "Showing you where" above.
+  around it instead and leaves your hands alone. Turn on follow-along and that box tracks the answer
+  being read out, which gets you what the moving pointer was for without taking the mouse off you
+  mid-drag — see "Showing you where" above.
 - **Speaking up on its own.** Related material appears when you summon the panel and never otherwise.
   Without Accessibility the only trigger left is "the user switched apps", which says nothing about
   whether they need anything; acting on it would mean either matching on a window title, which is

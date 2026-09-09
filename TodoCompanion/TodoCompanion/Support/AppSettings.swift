@@ -13,6 +13,7 @@ enum AppSettings {
         static let semanticEnabled = "semanticEnabled"
         static let embeddingModel = "embeddingModel"
         static let speaksAnswers = "speaksAnswers"
+        static let followsAlongWhileSpeaking = "followsAlongWhileSpeaking"
         static let voiceIdentifier = "voiceIdentifier"
         static let dictationEngine = "dictationEngine"
         static let voiceEngine = "voiceEngine"
@@ -218,6 +219,20 @@ enum AppSettings {
     /// Whether answers are read aloud, always by the system voice on this Mac.
     static var speaksAnswers: Bool {
         UserDefaults.standard.bool(forKey: Key.speaksAnswers)
+    }
+
+    /// Whether the box on screen moves to whichever control Max is naming as it
+    /// reads an answer aloud.
+    ///
+    /// Off by default, and this one is not merely caution. The standing rule is
+    /// that nothing is drawn over the user's screen unasked — the existing box
+    /// is a button press that names its match first. Follow-along cannot name
+    /// each match beforehand, because the point is that it keeps up with the
+    /// speech, so what stands in for that consent is this switch plus the
+    /// narrower matching it turns on: only a label Max put in double quotes is
+    /// ever boxed, never a phrase inferred from prose.
+    static var followsAlongWhileSpeaking: Bool {
+        UserDefaults.standard.bool(forKey: Key.followsAlongWhileSpeaking)
     }
 
     /// nil means the system default voice.

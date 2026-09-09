@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct CompanionView: View {
@@ -17,6 +18,12 @@ struct CompanionView: View {
     /// is actually sent, so a switch applies to the very next ask.
     @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
     @AppStorage(AppSettings.Key.sendsImage) private var sendsImage = false
+
+    /// Both drive the follow-along control offered beside "Show me", so
+    /// flipping either one redraws the row rather than waiting for the next
+    /// answer.
+    @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
+    @AppStorage(AppSettings.Key.followsAlongWhileSpeaking) private var followsAlongWhileSpeaking = false
 
     /// Observed but never read, purely so that changing a model in Settings
     /// while the panel is open invalidates this view. The badge keeps taking its
@@ -480,7 +487,13 @@ struct CompanionView: View {
                         ForEach(viewModel.turns) { turn in
                             turnView(turn)
                         }
-                        if let target = viewModel.pointerTarget {
+                        if viewModel.lesson != nil {
+                            lessonBar
+                        } else if let target = viewModel.pointerTarget {
+                            // Not both: a lesson is already boxing what its
+                            // current step names, so offering to box one more
+                            // thing on a button is a second claim about the
+                            // same screen.
                             pointerRow(target)
                         }
                         if let edit = viewModel.proposedEdit {
@@ -517,11 +530,70 @@ struct CompanionView: View {
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             } else {
-                Text(turn.answer)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                answerBody(turn.answer)
+            }
+        }
+    }
+
+    /// Max's reply, drawn according to what is in it.
+    ///
+    /// Re-parsed on every streamed chunk rather than incrementally, because the
+    /// text is a few hundred characters and the alternative is keeping a parser
+    /// and a view in agreement about a half-written document.
+    private func answerBody(_ answer: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+            ForEach(Array(AnswerContent.blocks(in: answer).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case let .heading(text):
+                    Text(AnswerContent.styled(text))
+                        .font(.callout.weight(.semibold))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                case let .paragraph(text):
+                    prose(text)
+
+                case let .bulleted(items):
+                    listView(items.enumerated().map {
+                        AnswerListRow(id: $0.offset, marker: "•", text: $0.element)
+                    })
+
+                case let .numbered(items):
+                    listView(items.enumerated().map {
+                        AnswerListRow(id: $0.offset, marker: "\($0.offset + 1).", text: $0.element)
+                    })
+
+                case let .code(code):
+                    CodeBlockView(code: code)
+                }
+            }
+        }
+    }
+
+    /// Max's words. Kept a shade under full strength so the user's question
+    /// above still reads as the louder of the two, but well clear of
+    /// `.secondary`, which on a translucent panel over a bright window is
+    /// closer to unreadable than to quiet.
+    private func prose(_ text: String) -> some View {
+        Text(AnswerContent.styled(text))
+            .font(.callout)
+            .foregroundStyle(.primary.opacity(0.82))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A list, with the marker in its own column so wrapped lines line up under
+    /// the text rather than under the bullet.
+    private func listView(_ rows: [AnswerListRow]) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.hair) {
+            ForEach(rows) { row in
+                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.tight) {
+                    Text(row.marker)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .frame(minWidth: 16, alignment: .trailing)
+                    prose(row.text)
+                }
             }
         }
     }
@@ -532,17 +604,80 @@ struct CompanionView: View {
     /// user knows what is about to be boxed before anything is drawn over their
     /// screen — and can ignore it when the match is not what they meant.
     private func pointerRow(_ target: ScreenTextLocator.Match) -> some View {
-        Button {
-            viewModel.showPointerTarget()
-        } label: {
-            Label("Show me “\(target.text)”", systemImage: "viewfinder.rectangular")
+        HStack(spacing: DS.Spacing.normal) {
+            Button {
+                viewModel.showPointerTarget()
+            } label: {
+                Label("Show me “\(target.text)”", systemImage: "viewfinder.rectangular")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.Status.saved)
+            .help("Draw a box around “\(target.text)” on screen (⌘P)")
+            .keyboardShortcut("p", modifiers: .command)
+
+            // Offered here rather than only in Settings, where it sat under a
+            // section that appears after the voice is switched on and was
+            // therefore never found. This is the row where someone has just
+            // seen the box work once and wonders whether it can keep up on its
+            // own, which is the question the switch answers.
+            if speaksAnswers { followAlongToggle }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, DS.Spacing.hair)
+    }
+
+    private var followAlongToggle: some View {
+        Toggle(isOn: $followsAlongWhileSpeaking) {
+            Label("Follow along",
+                  systemImage: followsAlongWhileSpeaking ? "waveform.circle.fill" : "waveform")
                 .font(.caption)
         }
+        .toggleStyle(.button)
         .buttonStyle(.plain)
-        .foregroundStyle(DS.Status.saved)
-        .help("Draw a box around “\(target.text)” on screen (⌘P)")
-        .keyboardShortcut("p", modifiers: .command)
-        .padding(.top, DS.Spacing.hair)
+        .foregroundStyle(followsAlongWhileSpeaking ? DS.Status.saved : Color.secondary)
+        .help("Move the box from control to control as \(Prompt.assistantName) reads the answer. "
+              + "Only labels it quotes exactly are boxed, so nothing is drawn on a guess.")
+    }
+
+    /// The controls for walking a lesson, shown only while one is playing.
+    ///
+    /// The steps themselves are not repeated here — they are already drawn as
+    /// the numbered list of the answer, a few points above this row. What is
+    /// missing without it is a way to go at your own pace, which is the whole
+    /// difference between being taught and being read to.
+    private var lessonBar: some View {
+        HStack(spacing: DS.Spacing.tight) {
+            Image(systemName: "graduationcap.fill")
+                .foregroundStyle(DS.Status.saved)
+
+            Text("Step \(viewModel.lessonStep + 1) of \(viewModel.lessonStepCount)")
+                .font(.caption.weight(.medium))
+
+            Spacer(minLength: DS.Spacing.tight)
+
+            Button { viewModel.stepLesson(by: -1) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .disabled(!viewModel.canRewindLesson)
+            .help("Previous step")
+
+            Button { viewModel.stepLesson(by: 1) } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(!viewModel.canAdvanceLesson)
+            .help("Next step — reads the screen again first, in case it moved")
+
+            Button("Done") { viewModel.endLesson() }
+                .help("Take the boxes off the screen")
+        }
+        .font(.caption)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.tight)
+        .background(DS.Status.saved.opacity(DS.Alpha.hairline),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
     }
 
     /// The change Max is proposing, shown before anything is written.
@@ -638,5 +773,132 @@ struct CompanionView: View {
         case .saved: return DS.Status.saved
         case .needsPermission, .failed: return DS.Status.problem
         }
+    }
+}
+
+/// One line of a bulleted or numbered list.
+///
+/// A named type rather than a tuple because `ForEach` needs stable identity and
+/// the index is the only thing available: the same step can be written twice in
+/// one list.
+private struct AnswerListRow: Identifiable {
+    let id: Int
+    let marker: String
+    let text: String
+}
+
+/// A fenced code block: monospaced, on a recessed background, with the language
+/// named and the whole thing copyable in one press.
+///
+/// Copying matters more here than it looks. The panel is a floating window over
+/// whatever the user is working in, so the code in it is nearly always destined
+/// for the editor behind it, and selecting monospaced text inside a scroll view
+/// with the mouse is the slowest possible way to move it there.
+private struct CodeBlockView: View {
+    let code: AnswerContent.Code
+
+    /// How long the button stays confirmed. Long enough to be seen after the
+    /// eye has gone back to the code, which two seconds was not.
+    private static let confirmationSeconds: Double = 3
+
+    @State private var copiedAt: Date?
+
+    private var hasCopied: Bool { copiedAt != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: DS.Spacing.tight) {
+                Text(code.language?.uppercased() ?? "CODE")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+
+                Spacer(minLength: DS.Spacing.hair)
+
+                // Said out loud, because a block that is still arriving looks
+                // exactly like a finished one that is missing its last lines.
+                if code.isStreaming {
+                    Text("writing…")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    copyButton
+                }
+            }
+            .padding(.horizontal, DS.Spacing.card)
+            .padding(.top, DS.Spacing.tight)
+            .padding(.bottom, DS.Spacing.hair)
+
+            Divider().opacity(DS.Alpha.divider)
+
+            // Scrolled rather than wrapped: a wrapped line of code loses the
+            // indentation that says what is nested inside what.
+            ScrollView(.horizontal) {
+                Text(CodeHighlighter.highlight(code.text, language: code.language))
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(DS.Spacing.card)
+            }
+            .scrollIndicators(.never)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.control)
+                .fill(DS.Code.well)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.control)
+                        .strokeBorder(DS.Code.border)
+                )
+        )
+        // Driven by the timestamp rather than by a stored `Task`, so a redraw
+        // in the middle of the confirmation cannot strand a cancelled timer
+        // with the button left reading "Copied".
+        .task(id: copiedAt) {
+            guard copiedAt != nil else { return }
+            try? await Task.sleep(for: .seconds(Self.confirmationSeconds))
+            guard !Task.isCancelled else { return }
+            copiedAt = nil
+        }
+    }
+
+    /// Confirmation is a filled pill rather than a word swap.
+    ///
+    /// "Copy" becoming "Copied" is two grey words a few pixels apart in the
+    /// corner of a panel the user is not looking at — they are looking at the
+    /// code, or at the editor they are about to paste into. The shape and the
+    /// colour both changing is what makes it register peripherally.
+    private var copyButton: some View {
+        Button(action: copy) {
+            // Both labels are laid out and one is faded out, so confirming
+            // cannot change the button's size. That is a hard requirement
+            // rather than a neatness one: the panel sizes itself to its
+            // content, so a control that grows mid-answer asks the window to
+            // resize during a layout pass — see `CompanionPanel.setContentSize`.
+            // Opacity and colour are the only things that move here.
+            ZStack(alignment: .trailing) {
+                copyLabel("Copied", systemImage: "checkmark.circle.fill")
+                    .opacity(hasCopied ? 1 : 0)
+                copyLabel("Copy", systemImage: "doc.on.doc")
+                    .opacity(hasCopied ? 0 : 1)
+            }
+            .foregroundStyle(hasCopied ? DS.Status.ready : Color.secondary)
+            .padding(.horizontal, DS.Spacing.hair)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.chip)
+                    .fill(DS.Status.ready.opacity(hasCopied ? DS.Alpha.hairline : 0))
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Copy this block (the panel stays open)")
+        .animation(.easeOut(duration: 0.15), value: hasCopied)
+    }
+
+    private func copyLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage).font(.caption2)
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code.text, forType: .string)
+        copiedAt = Date()
     }
 }

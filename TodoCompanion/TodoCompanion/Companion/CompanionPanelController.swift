@@ -14,6 +14,7 @@ final class CompanionPanelController {
 
     private let indicator = CaptureIndicator()
     private let highlight = ScreenHighlight()
+    private let lessonMarks = LessonOverlay()
     private var outsideClickMonitor: Any?
 
     init(modelContext: ModelContext) {
@@ -24,7 +25,14 @@ final class CompanionPanelController {
             self?.indicator.show(.listening, level: { [weak self] in self?.viewModel.currentInputLevel ?? 0 })
         }
         viewModel.onListeningEnded = { [weak self] in self?.indicator.hide() }
-        viewModel.onHighlight = { [weak self] rect in self?.highlight.show(rect) }
+        viewModel.onHighlight = { [weak self] rect, untilHidden in
+            self?.highlight.show(rect, untilHidden: untilHidden)
+        }
+        viewModel.onHighlightEnded = { [weak self] in self?.highlight.hide() }
+        viewModel.onLessonMarks = { [weak self] current, covered, number, screen in
+            self?.lessonMarks.show(current: current, covered: covered, number: number, on: screen)
+        }
+        viewModel.onLessonEnded = { [weak self] in self?.lessonMarks.hide() }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -137,7 +145,21 @@ final class CompanionPanelController {
             )
         )
         // Lets the answer drive the window height rather than a fixed guess.
-        hosting.sizingOptions = .preferredContentSize
+        //
+        // `.standardBounds` and not `.preferredContentSize`, which crashed the
+        // app. The two differ in *when* the window is told how big to be:
+        // `.preferredContentSize` has the hosting view set the controller's
+        // ideal size during layout, so SwiftUI resizes the window from inside
+        // the window's own layout pass — `windowDidLayout` → `_setFrameCommon`
+        // → `displayIfNeeded` → layout again. Auto Layout accumulates the
+        // pending constraint work across that re-entry until flushing it
+        // overflows the main thread's stack, which surfaces as a segfault in
+        // CoreAutoLayout with nothing of ours on the stack.
+        //
+        // `.standardBounds` publishes minimum, ideal and maximum size as
+        // constraints instead, so the window is sized by the solver in the
+        // ordinary way rather than by a frame change made mid-pass.
+        hosting.sizingOptions = .standardBounds
         panel.contentViewController = hosting
 
         self.panel = panel

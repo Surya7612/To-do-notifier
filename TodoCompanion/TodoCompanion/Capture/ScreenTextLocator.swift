@@ -37,11 +37,24 @@ nonisolated enum ScreenTextLocator {
     /// "Menu" printed somewhere unrelated.
     static let minimumUnquotedLength = 6
 
-    static func locate(named answer: String, in regions: [TextRegion]) -> Match? {
+    /// - Parameter requiringQuoted: Drops the inferred-from-prose path
+    ///   entirely, so only a label Max put in double quotes can match.
+    ///
+    ///   Used by the follow-along highlight, which draws while the answer is
+    ///   being read aloud and so cannot show the user its match beforehand the
+    ///   way the button does. A quoted label is not a guess — `Prompt.system`
+    ///   asks for a control's label character for character, so quoting is Max
+    ///   stating which words it meant. Requiring it is what keeps the standing
+    ///   rule intact: nothing unexplained is ever drawn on the screen.
+    static func locate(named answer: String,
+                       in regions: [TextRegion],
+                       requiringQuoted: Bool = false) -> Match? {
         guard !regions.isEmpty else { return nil }
 
         let haystack = answer.lowercased()
         let quoted = quotedPhrases(in: answer)
+        guard !requiringQuoted || !quoted.isEmpty else { return nil }
+
         var best: (score: Int, match: Match)?
 
         for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
@@ -52,7 +65,10 @@ nonisolated enum ScreenTextLocator {
                     let run = Array(words[start..<(start + length)])
                     let phrase = run.map(\.string).joined(separator: " ")
 
-                    guard let score = score(phrase: phrase, in: haystack, quoted: quoted),
+                    guard let score = score(phrase: phrase,
+                                            in: haystack,
+                                            quoted: quoted,
+                                            requiringQuoted: requiringQuoted),
                           score > (best?.score ?? 0)
                     else { continue }
 
@@ -62,6 +78,65 @@ nonisolated enum ScreenTextLocator {
         }
 
         return best?.match
+    }
+
+    /// Where each of these labels is on screen, for the ones Vision can find.
+    ///
+    /// A lesson step names several things at once, so this exists alongside
+    /// `locate`, which answers the different question of which *one* thing an
+    /// answer was most likely pointing at. Labels that do not resolve are
+    /// dropped rather than approximated: a step that boxes two of the three
+    /// things it mentions is still a useful step, and a box over the wrong
+    /// words is not.
+    static func locate(labels: [String], in regions: [TextRegion]) -> [Match] {
+        labels.compactMap { locate(label: $0, in: regions) }
+    }
+
+    /// The longest run of words on screen that reads exactly as this label.
+    ///
+    /// Longest because Vision splits a label across as many `TextRegion`s as it
+    /// has words, and a box around "Run" inside "Run All Tests" is a box around
+    /// a third of the control.
+    static func locate(label: String, in regions: [TextRegion]) -> Match? {
+        let needle = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard needle.count >= minimumLength, needle.contains(where: \.isLetter) else { return nil }
+
+        var best: Match?
+
+        for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
+            let words = unordered.sorted { $0.position < $1.position }
+
+            for start in words.indices {
+                for length in 1...maximumWords where start + length <= words.count {
+                    let run = Array(words[start..<(start + length)])
+                    let phrase = run.map(\.string).joined(separator: " ")
+                    guard phrase.lowercased() == needle else { continue }
+                    guard phrase.count > (best?.text.count ?? 0) else { continue }
+
+                    best = Match(boundingBox: union(of: run), text: phrase)
+                }
+            }
+        }
+
+        return best
+    }
+
+    /// The labels an answer put in double quotes, in the order they appear.
+    ///
+    /// Ordered and case-preserving, unlike the set used for scoring: a lesson
+    /// step draws its boxes in the order Max named them, and the label is shown
+    /// to the user as Max wrote it.
+    static func quotedLabels(in answer: String) -> [String] {
+        var labels: [String] = []
+        var seen: Set<String> = []
+
+        for phrase in quotedRuns(in: answer) {
+            let trimmed = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
+            labels.append(trimmed)
+        }
+
+        return labels
     }
 
     /// Vision's normalized box placed into global screen coordinates.
@@ -81,7 +156,10 @@ nonisolated enum ScreenTextLocator {
     /// "Color Page" beats "Color", which beats "Page". Quoting outranks all of
     /// it, since that is Max stating which words it meant rather than us
     /// inferring them from prose.
-    private static func score(phrase: String, in haystack: String, quoted: Set<String>) -> Int? {
+    private static func score(phrase: String,
+                              in haystack: String,
+                              quoted: Set<String>,
+                              requiringQuoted: Bool = false) -> Int? {
         let cleaned = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count >= minimumLength, cleaned.contains(where: \.isLetter) else { return nil }
 
@@ -89,6 +167,7 @@ nonisolated enum ScreenTextLocator {
         guard haystack.containsWholeWord(needle) else { return nil }
 
         if quoted.contains(needle) { return cleaned.count + 100 }
+        guard !requiringQuoted else { return nil }
 
         // Unquoted, this is a guess drawn from ordinary prose, so it has to earn
         // it: long enough not to be a common word, never a word Max uses to talk
@@ -126,15 +205,21 @@ nonisolated enum ScreenTextLocator {
 
     /// Text inside double quotes, straight or curly, lowercased.
     private static func quotedPhrases(in answer: String) -> Set<String> {
-        var phrases: Set<String> = []
+        Set(quotedRuns(in: answer).map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }.filter { !$0.isEmpty })
+    }
+
+    /// Every run of text between a pair of quote characters, as written.
+    private static func quotedRuns(in answer: String) -> [String] {
+        var runs: [String] = []
         var current: String?
 
         for character in answer {
             switch character {
             case "\"", "\u{201C}", "\u{201D}", "`":
                 if let open = current {
-                    let trimmed = open.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty { phrases.insert(trimmed.lowercased()) }
+                    runs.append(open)
                     current = nil
                 } else {
                     current = ""
@@ -144,7 +229,7 @@ nonisolated enum ScreenTextLocator {
             }
         }
 
-        return phrases
+        return runs
     }
 
     /// Words Max uses to describe a control rather than to name one. Matching
