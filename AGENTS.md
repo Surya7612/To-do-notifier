@@ -191,11 +191,36 @@ the folder is a transport — but a manifest that *fails* to parse is left in pl
 only signal the user gets that something went wrong. An item with no stated reason is refused rather
 than imported with an inferred one.
 
-The inbox is collected at launch, on every summon, **and when the library window opens**. That last
-one is not symmetry for its own sake: the library is where someone goes to look at what they kept, so
-being told to summon the panel first is the wrong answer in the one place the question gets asked.
-Opening a window is as much a user-initiated moment as pressing the hotkey, which is what keeps this
-from being the background collection the app otherwise refuses.
+The inbox is collected at launch, on every summon, **when the library window opens**, and **when the
+Mac wakes**. The library one is not symmetry for its own sake: the library is where someone goes to
+look at what they kept, so being told to summon the panel first is the wrong answer in the one place
+the question gets asked. Opening a window is as much a user-initiated moment as pressing the hotkey,
+which is what keeps this from being the background collection the app otherwise refuses.
+
+**Waking is a trigger because launch is not one on a machine that never restarts.** This app is built
+to stay running, so launch fires once and then not for days, and a capture that landed while the lid
+was shut waited for the next summon — at precisely the moment the user has no reason to summon
+anything, having just sat down to deal with what they sent themselves. It is worst where it fails
+*silently*: an imported reminder already past is recorded but deliberately not scheduled, because a
+non-repeating trigger in the past has no next matching date, so "remind me in 30 minutes" sent to a
+sleeping Mac is not late, it is gone. Waking is the last moment it can be caught. This is the same
+argument the Apple Reminders mirror makes for sweeping at launch, and it runs on the same footing —
+when the machine does something, never on a timer.
+
+`sweepAfterWake` reads the folder **four times over two minutes**, and that is not defensiveness about
+the folder. Wi-Fi associates and iCloud begins syncing *after* `didWakeNotification` fires, so a single
+read at that instant reliably finds the folder exactly as empty as it was before the Mac slept. It is
+bounded rather than repeating so it cannot become the background worker the app refuses to have.
+
+**A file in iCloud can be a name with nothing behind it, and nothing downloads it until asked.** So the
+manifests this importer most needs — the ones that arrived while the Mac was asleep — are exactly the
+ones liable to be placeholders, and the folder would sit visibly non-empty forever while the import did
+nothing, which reads as the feature being broken rather than as a download never requested.
+`requestDownloads` asks for them, and `isReadable` keeps a placeholder out of that pass rather than
+reading it: reading one *blocks* on the download, and this runs on the main actor on every summon, so a
+slow network would freeze the panel as it opened. It is picked up on the next sweep instead. A
+placeholder may also carry a different name — the legacy form is `.thing.json.icloud`, which the `json`
+filter does not match at all — so both shapes are asked for, and `pendingCount` counts both.
 
 **A reminder asked for on the phone is carried out on arrival, at the same bar as one typed here.**
 "Remind me to eat the same in 12 hours" cleared `isReminderInstruction` at the Mac and did nothing

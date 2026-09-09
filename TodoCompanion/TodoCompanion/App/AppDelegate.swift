@@ -8,7 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var companion = CompanionPanelController(modelContext: ContextStore.shared.mainContext)
 
     private var storeObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
     private var republishTask: Task<Void, Never>?
+    private var wakeSweepTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSettings.registerDefaults()
@@ -26,12 +28,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         watchForProjectChanges()
+        watchForWake()
 
         // Anything captured on the phone while this Mac was asleep is waiting
         // in the folder, so launch is the moment to collect it.
         InboxImporter.importAll(into: ContextStore.shared.mainContext)
 
         mirrorTasksToAppleReminders()
+    }
+
+    /// Collects the phone inbox again when the Mac comes back from sleep.
+    ///
+    /// Launch was the only *unattended* trigger, and this app is built to stay
+    /// running — so on the machine it is actually used on, launch happens once
+    /// and then never again for days. A capture that landed while the lid was
+    /// shut therefore waited for the next summon or for the library to be
+    /// opened, which is the one moment the user has no reason to do either:
+    /// they have just sat down, and what they sent themselves last night is
+    /// what they sat down to deal with.
+    ///
+    /// It matters most for the case that fails *silently*. An imported reminder
+    /// whose time has already passed is recorded but deliberately not
+    /// scheduled, because a non-repeating calendar trigger in the past has no
+    /// next matching date and would never fire anyway — so "remind me in 30
+    /// minutes", sent to a sleeping Mac, is not merely late, it is gone. Waking
+    /// is the last moment at which it can still be caught.
+    ///
+    /// Still not a poll, on the same footing as the launch sweep: it runs when
+    /// the machine does something, not on a timer.
+    private func watchForWake() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sweepAfterWake() }
+        }
+    }
+
+    /// The inbox is read a few times over the first couple of minutes awake,
+    /// which is not defensiveness about the folder — it is a fact about what
+    /// wakes up when. Wi-Fi associates and iCloud starts syncing *after* the
+    /// wake notification fires, so a single read at that instant reliably finds
+    /// the folder exactly as empty as it was before the Mac went to sleep.
+    ///
+    /// Bounded rather than repeating, so this cannot become the background
+    /// worker the app otherwise refuses to have. If nothing has arrived by the
+    /// last attempt, the ordinary triggers take over again.
+    private func sweepAfterWake() {
+        wakeSweepTask?.cancel()
+        wakeSweepTask = Task { [weak self] in
+            for delay in [Duration.seconds(0), .seconds(15), .seconds(45), .seconds(120)] {
+                if delay > .zero {
+                    try? await Task.sleep(for: delay)
+                }
+                guard !Task.isCancelled, let self else { return }
+
+                InboxImporter.importAll(into: ContextStore.shared.mainContext)
+                self.mirrorTasksToAppleReminders()
+            }
+        }
     }
 
     /// Catches up the Apple Reminders list without waiting to be summoned.
@@ -74,6 +130,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         GlobalHotkey.shared.unregister()
+        wakeSweepTask?.cancel()
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+        }
     }
 
     /// Keeps the file the to-do app reads in step with the store.

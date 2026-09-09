@@ -70,11 +70,19 @@ enum InboxImporter {
     }
 
     /// How many files are waiting. Cheap enough to call when opening Settings.
+    ///
+    /// Counts placeholders too, so a manifest iCloud has named but not yet
+    /// delivered still reads as waiting rather than as nothing there.
     static var pendingCount: Int {
         withFolder { folder in
             (try? FileManager.default.contentsOfDirectory(at: folder,
                                                           includingPropertiesForKeys: nil))
-                .map { $0.filter { $0.pathExtension.lowercased() == "json" }.count } ?? 0
+                .map { files in
+                    files.filter { file in
+                        let name = file.lastPathComponent.lowercased()
+                        return file.pathExtension.lowercased() == "json" || name.hasSuffix(".json.icloud")
+                    }.count
+                } ?? 0
         } ?? 0
     }
 
@@ -96,8 +104,11 @@ enum InboxImporter {
                 includingPropertiesForKeys: [.contentModificationDateKey]
             )) ?? []
 
+            requestDownloads(for: files)
+
             let manifests = files
                 .filter { $0.pathExtension.lowercased() == "json" }
+                .filter(isReadable)
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
             // Read the other app's settings only when there is something to
@@ -124,6 +135,45 @@ enum InboxImporter {
 
         schedule(for: imported, now: now)
         return imported.count
+    }
+
+    /// Asks iCloud for anything it has told us about but not yet handed over.
+    ///
+    /// A file in iCloud Drive can exist as a name with no contents behind it,
+    /// and nothing downloads it until something asks. So the manifests this
+    /// importer most needs — the ones that arrived while the Mac was asleep —
+    /// are exactly the ones liable to be sitting there as placeholders, and
+    /// without this call the folder stays visibly non-empty forever while the
+    /// import does nothing, which reads as the feature being broken.
+    ///
+    /// A placeholder may also appear under a *different name*: the legacy form
+    /// is `.thing.json.icloud`, which the `json` filter above does not match at
+    /// all. Both shapes are asked for here rather than special-cased below.
+    private static func requestDownloads(for files: [URL]) {
+        for file in files {
+            let name = file.lastPathComponent.lowercased()
+            guard name.hasSuffix(".icloud") || (file.pathExtension.lowercased() == "json" && !isReadable(file))
+            else { continue }
+
+            try? FileManager.default.startDownloadingUbiquitousItem(at: file)
+        }
+    }
+
+    /// Whether the bytes are actually on this disk.
+    ///
+    /// Checked rather than discovered by reading, because reading a placeholder
+    /// blocks on the download — and this runs on the main actor, on every
+    /// summon, so a slow network would freeze the panel as it opened. Anything
+    /// not yet here is left for the next sweep, by which time the download this
+    /// pass requested has usually landed.
+    private static func isReadable(_ file: URL) -> Bool {
+        let status = try? file.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
+            .ubiquitousItemDownloadingStatus
+
+        // No status at all means it is not an iCloud item — a plain local
+        // folder, or Dropbox — and those are readable by definition.
+        guard let status else { return true }
+        return status == .current || status == .downloaded
     }
 
     /// Arms the notifications behind whatever was just brought in.
