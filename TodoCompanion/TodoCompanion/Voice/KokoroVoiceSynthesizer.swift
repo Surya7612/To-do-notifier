@@ -193,8 +193,12 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         }
 
         unplayedBuffers += 1
+        // The audio thread calls this, so the hop to the main actor is the
+        // point. `self` is captured by the `Task` rather than read out of the
+        // enclosing closure: a weak capture is mutable, and reading one across
+        // a concurrency boundary is an error under the Swift 6 language mode.
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.unplayedBuffers = max(0, self.unplayedBuffers - 1)
                 self.settleIfDrained()
