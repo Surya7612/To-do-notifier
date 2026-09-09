@@ -487,7 +487,13 @@ struct CompanionView: View {
                         ForEach(viewModel.turns) { turn in
                             turnView(turn)
                         }
-                        if let target = viewModel.pointerTarget {
+                        if viewModel.lesson != nil {
+                            lessonBar
+                        } else if let target = viewModel.pointerTarget {
+                            // Not both: a lesson is already boxing what its
+                            // current step names, so offering to box one more
+                            // thing on a button is a second claim about the
+                            // same screen.
                             pointerRow(target)
                         }
                         if let edit = viewModel.proposedEdit {
@@ -633,6 +639,45 @@ struct CompanionView: View {
         .foregroundStyle(followsAlongWhileSpeaking ? DS.Status.saved : Color.secondary)
         .help("Move the box from control to control as \(Prompt.assistantName) reads the answer. "
               + "Only labels it quotes exactly are boxed, so nothing is drawn on a guess.")
+    }
+
+    /// The controls for walking a lesson, shown only while one is playing.
+    ///
+    /// The steps themselves are not repeated here — they are already drawn as
+    /// the numbered list of the answer, a few points above this row. What is
+    /// missing without it is a way to go at your own pace, which is the whole
+    /// difference between being taught and being read to.
+    private var lessonBar: some View {
+        HStack(spacing: DS.Spacing.tight) {
+            Image(systemName: "graduationcap.fill")
+                .foregroundStyle(DS.Status.saved)
+
+            Text("Step \(viewModel.lessonStep + 1) of \(viewModel.lessonStepCount)")
+                .font(.caption.weight(.medium))
+
+            Spacer(minLength: DS.Spacing.tight)
+
+            Button { viewModel.stepLesson(by: -1) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .disabled(!viewModel.canRewindLesson)
+            .help("Previous step")
+
+            Button { viewModel.stepLesson(by: 1) } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(!viewModel.canAdvanceLesson)
+            .help("Next step — reads the screen again first, in case it moved")
+
+            Button("Done") { viewModel.endLesson() }
+                .help("Take the boxes off the screen")
+        }
+        .font(.caption)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.tight)
+        .background(DS.Status.saved.opacity(DS.Alpha.hairline),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
     }
 
     /// The change Max is proposing, shown before anything is written.

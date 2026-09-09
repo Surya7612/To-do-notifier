@@ -14,6 +14,7 @@ final class CompanionPanelController {
 
     private let indicator = CaptureIndicator()
     private let highlight = ScreenHighlight()
+    private let lessonMarks = LessonOverlay()
     private var outsideClickMonitor: Any?
 
     init(modelContext: ModelContext) {
@@ -28,6 +29,10 @@ final class CompanionPanelController {
             self?.highlight.show(rect, untilHidden: untilHidden)
         }
         viewModel.onHighlightEnded = { [weak self] in self?.highlight.hide() }
+        viewModel.onLessonMarks = { [weak self] current, covered, number, screen in
+            self?.lessonMarks.show(current: current, covered: covered, number: number, on: screen)
+        }
+        viewModel.onLessonEnded = { [weak self] in self?.lessonMarks.hide() }
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }

@@ -752,6 +752,47 @@ An unlabelled glyph is likewise unfindable, which is the right failure: Max desc
 positionally, and a confident box over the wrong icon is worse than no box. If a change would let an
 unexplained or unquoted guess draw on the screen, it is the wrong change.
 
+**A lesson is a numbered list, and that is the entire format.** "Teach me" walks the screen a step at
+a time, boxing what each step names, and the striking thing about it is how little it added: `Lesson`
+reads the first numbered block `AnswerContent` already parses, and takes each item's quoted labels as
+its anchors through the same `quotedLabels` the follow-along box uses. A bespoke block — JSON, or a
+line format with coordinates in it — was the obvious alternative and is the wrong one twice over. It
+is a second thing the model must get right, and when it gets it wrong the failure is a mode that
+silently does not appear; reusing the list means a reply that ignored every instruction is still a
+perfectly good answer, drawn the way answers always are. **The model never says where anything is.**
+It names, and Vision's OCR boxes decide the pixels, which is what keeps a feature that draws
+continuously on the same footing as one that draws once.
+
+Refusing is most of the logic. Fewer than three steps is a list rather than a lesson, and playing it
+costs a mode to escape from to show a box ⌘P would have given. A list where *no* step quotes anything
+is an ordinary answer that happens to be numbered — "1. sort 2. recurse 3. backtrack" — and starting a
+lesson on it puts a bar over the panel that never draws. A step quoting nothing inside a lesson that
+does is kept, because it is still worth saying and simply draws nothing while it is said.
+
+**A lesson outlives the panel, because the user is meant to be working underneath it.** That is the
+same argument the conversation makes for surviving dismissal, and it is stronger here: reaching the
+code being taught means clicking outside this app, so tearing the boxes down at that moment would
+leave them visible only while the user was looking at the panel instead of at their work. It is why
+`lessonMarks` holds resolved geometry rather than re-deriving it from `observation`, which
+`endSession` drops. Bounded rather than indefinite — nothing guarantees a next summon, and an overlay
+with no window left to switch it off is something drawn that the user cannot undraw.
+
+**Advancing by hand re-reads the screen; advancing by voice does not.** The anchors were resolved
+against the screen as it was when the question was asked, and a few keystrokes reflow an editor so
+that every box below the caret is a line out — pointing confidently at the wrong line is the failure
+that would make this unusable, and it is worse than pointing at nothing. So `stepLesson` re-captures
+and re-resolves. `refreshLessonAnchors` deliberately does **not** touch `observation`: the
+conversation is about the screen the question was asked against, and quietly swapping it would answer
+a follow-up against a screen nobody asked about, which is what `lookAgain` is for. Speech advances
+without re-capturing because there is no press, the screen is very unlikely to have moved mid-sentence,
+and a capture between every clause is the continuous capture this app refuses.
+
+Following the voice matches on **quoted labels rather than sentence similarity**, and only ever
+forwards. A quote is Max stating what it meant; a resemblance between two sentences is this app
+guessing. Matching on quotes also survives `SpeechPlayback.speakable`, which rewrites the sentence and
+leaves the quotes alone. Forwards-only because a label mentioned again in a later step would otherwise
+drag the lesson back to the first step that used it.
+
 ## Key files — `TodoCompanion/TodoCompanion/`
 
 | File | Lines | Purpose |
@@ -761,17 +802,19 @@ unexplained or unquoted guess draw on the screen, it is the wrong change.
 | `App/SettingsView.swift` | ~409 | Hotkey, provider choice, Ollama and OpenAI settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
 | `Companion/CompanionPanelController.swift` | ~160 | Panel lifecycle, cursor-relative placement, wiring the view model to the capture indicator. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~846 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~1165 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, and the box that follows the voice. |
+| `Companion/CompanionView.swift` | ~904 | Panel UI: status header with the who-answers and open-file menus, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
+| `Companion/CompanionViewModel.swift` | ~1348 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, and the lesson being walked. |
 | `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
 | `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
-| `Capture/ScreenTextLocator.swift` | ~218 | Finds the control an answer named among those boxes, and maps one onto the screen. `requiringQuoted` narrows it to labels Max quoted, for the follow-along box. Pure. |
+| `Capture/ScreenTextLocator.swift` | ~283 | Finds the control an answer named among those boxes, and maps one onto the screen. `requiringQuoted` narrows it to labels Max quoted; `locate(labels:)` resolves every label a lesson step names. Pure. |
 | `Capture/ScreenHighlight.swift` | ~101 | The box drawn around it, briefly on a button press or until hidden while Max is talking. |
+| `Capture/LessonOverlay.swift` | ~136 | The click-through layer a lesson draws on: the current step's boxes numbered, the steps already covered left faint. |
+| `Teaching/Lesson.swift` | ~84 | Reads a lesson out of a numbered answer, and says which step a spoken clause belongs to. Pure. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~286 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, and the file-editing rules. |
+| `Brain/Brain.swift` | ~320 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, and the file-editing rules. |
 | `Brain/ScreenKind.swift` | ~148 | What sort of material is on screen, and the paragraph of prompt guidance it earns. Pure. |
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
@@ -865,6 +908,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `ContextGraphTests` | Nodes and edges built from saves | A wrong edge is a wrong claim about how the user's material relates, and it is drawn large enough to be believed. Pins that shared tags collapse to one node and that filtering a kind removes its edges too. |
 | `GraphLayoutTests` | Force-directed placement | No assertable "correct" coordinates, so it pins the properties that make it usable: everything placed, nothing off-canvas, connected nodes closer than unconnected, and the same picture every time. |
 | `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
+| `LessonTests` | Reading a lesson out of an answer, following the voice through it, and resolving every label a step names | The parse is the only thing between a reply and a mode that draws continuously on the user's screen, and it fails silently in both directions: too eager and any answer containing a list puts boxes over an editor, too reluctant and "Teach me" appears to do nothing. Most of it pins what must **not** become a lesson — a list too short to be worth a mode, and a numbered answer that quotes nothing on screen. Also pins that matching survives `SpeechPlayback.speakable`, since the voice rewrites the sentence the match is made against, and that it never runs backwards to a label mentioned twice. |
 | `FollowAlongMatchingTests` | What the box may point at while Max is speaking | The one path that draws on the screen without a press in front of it, so it pins the narrowing that makes that acceptable: a name the button believes on its own terms must be refused here unless Max quoted it. Also pins that the button's own behaviour is unchanged, since this added a parameter to the function it calls. |
 | `AnswerContentTests` | Splitting a reply into what the panel draws | Runs on every streamed chunk, against a document whose last fence is usually still open — so an unclosed fence must parse as code rather than as failure. The wrong-parse failures are silent: a block simply renders as the wrong thing. Found the bug where "3.5 GB free" parsed as list item three. |
 | `CodeHighlighterTests` | Colouring a fenced block | Colouring wrongly costs nothing, but the highlighter rebuilds the text character by character, so a scanner bug silently *drops* code the user is about to copy into their editor. Nearly all of it pins that the text survives intact; which token got which colour is barely asserted, so the palette stays free to change. |

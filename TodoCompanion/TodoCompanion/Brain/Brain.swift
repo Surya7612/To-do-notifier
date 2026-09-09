@@ -32,6 +32,8 @@ struct AskContext: Sendable {
     var history: [Turn] = []
     /// The file the user opened for editing, if any.
     var editableFile: EditableFileContext?
+    /// Whether the user pressed "Teach me" rather than asking a question.
+    var isTeaching = false
 }
 
 /// One exchange. Kept as a pair rather than a flat list of messages because
@@ -179,6 +181,33 @@ enum Prompt {
     through it, and if you would not change anything, say that and emit no block at all.
     """
 
+    /// Appended only when the user pressed "Teach me".
+    ///
+    /// It asks for a numbered list whose items quote what they are about, and
+    /// that is all — no coordinates, no drawing instructions, no format of its
+    /// own. The app turns the list into a walk through the screen because it
+    /// can resolve a quoted label to a box through OCR; the model is never told
+    /// where anything is and never gets to say.
+    ///
+    /// The quoting rule is stated twice over, here and in `system`, because
+    /// here it is load-bearing rather than stylistic: a step that quotes
+    /// nothing is a step with nothing to point at.
+    static let teachingSystem = """
+
+    The user has asked to be taught what is on their screen rather than to have it explained in a \
+    paragraph. Reply with a numbered list of short steps, in the order someone should look at them, \
+    and nothing before it but a single sentence of introduction if one is genuinely needed.
+
+    Every step must quote, in double quotes and character for character, the text on screen it is \
+    about — a variable name, a line, a label, an error. Those quotes are what the app draws a box \
+    around while it reads the step aloud, so a step that quotes nothing points at nothing. Quote \
+    what is actually printed on the screen, never a paraphrase of it, and never quote something \
+    you cannot see there.
+
+    Keep each step to one or two sentences. Teach the idea, not just the fix: say why the thing you \
+    are pointing at matters, so the user could spot it themselves next time.
+    """
+
     /// Asked of every model, because the panel now draws structure rather than
     /// printing one run of body text.
     ///
@@ -211,6 +240,7 @@ enum Prompt {
         }
 
         if context.editableFile != nil { prompt += editingSystem }
+        if context.isTeaching { prompt += teachingSystem }
         return prompt
     }
 

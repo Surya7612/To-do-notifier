@@ -245,6 +245,10 @@ final class CompanionViewModel {
         phase = .reading
         // The boxes it was resolved against belong to the screen being replaced.
         pointerTarget = nil
+        // A summon is a new question about a new screen, which is where a
+        // lesson left up over the last one stops being a lesson and starts
+        // being litter.
+        endLesson()
         onCaptureBegan?()
         // A key may have been added in Settings since the last summon.
         refreshCloudKey()
@@ -343,8 +347,15 @@ final class CompanionViewModel {
     nonisolated enum Preset: String, CaseIterable, Identifiable {
         case explain
         case nextStep
+        case teach
 
         var id: String { rawValue }
+
+        /// Whether the answer should be a walk through the screen rather than
+        /// a reply. Only `teach` changes the prompt, and only pressing it turns
+        /// the lesson machinery on — asking the same thing in words does not,
+        /// because a lesson draws on the screen and that stays behind a press.
+        var isTeaching: Bool { self == .teach }
 
         /// Kept short deliberately. These sit in a row with the region controls
         /// inside a 420pt panel, and the full question does not fit.
@@ -352,6 +363,7 @@ final class CompanionViewModel {
             switch self {
             case .explain: "Explain"
             case .nextStep: "Next step"
+            case .teach: "Teach me"
             }
         }
 
@@ -359,6 +371,7 @@ final class CompanionViewModel {
             switch self {
             case .explain: "text.book.closed"
             case .nextStep: "arrow.turn.down.right"
+            case .teach: "graduationcap"
             }
         }
 
@@ -368,6 +381,8 @@ final class CompanionViewModel {
                 "Explain what this is, in plain language. Define any jargon."
             case .nextStep:
                 "Based on this, what is the single next thing I should do? Be specific."
+            case .teach:
+                "Walk me through what is on screen, step by step, so I understand it."
             }
         }
     }
@@ -393,7 +408,10 @@ final class CompanionViewModel {
     func ask(_ preset: Preset) {
         let asked = Self.presetAsk(typed: question, preset: preset)
         question = asked.question
-        submit(isFromPreset: asked.isFromPreset)
+        // Teaching follows the button, not the wording. Pressing "Teach me"
+        // with a question already typed means teach me *that*, so the user's
+        // own words are still what gets asked.
+        submit(isFromPreset: asked.isFromPreset, isTeaching: preset.isTeaching)
     }
 
     /// Whether the preset buttons would ask the user's own words instead.
@@ -565,9 +583,9 @@ final class CompanionViewModel {
         if let url { NSWorkspace.shared.open(url) }
     }
 
-    func submit() { submit(isFromPreset: false) }
+    func submit() { submit(isFromPreset: false, isTeaching: false) }
 
-    private func submit(isFromPreset: Bool) {
+    private func submit(isFromPreset: Bool, isTeaching: Bool) {
         let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
 
@@ -592,6 +610,7 @@ final class CompanionViewModel {
         speech.stop()
         proposedEdit = nil
         pointerTarget = nil
+        endLesson()
         phase = .thinking
 
         // The question moves into the transcript immediately so a follow-up
@@ -610,7 +629,8 @@ final class CompanionViewModel {
             // Everything before the turn just added, so the model is not shown
             // the question it is currently answering twice.
             history: turns.dropLast(),
-            editableFile: editableFile.context
+            editableFile: editableFile.context,
+            isTeaching: isTeaching
         )
 
         answerTask = Task {
@@ -632,6 +652,7 @@ final class CompanionViewModel {
                 speech.finish(streamed)
                 captureProposedEdit(from: streamed)
                 findPointerTarget(in: streamed)
+                if isTeaching { beginLesson(from: streamed) }
                 lastTurnAt = Date()
                 phase = .idle
             } catch {
@@ -701,6 +722,15 @@ final class CompanionViewModel {
     /// since an answer is mostly sentences about the one control it named and
     /// flickering the box off for each of them would be worse than useless.
     private func followAlong(with clause: String?) {
+        // A lesson is already boxing what the current step names, and the two
+        // would otherwise fight over the same screen: the single box would jump
+        // to whichever label the clause happened to quote first while the
+        // lesson's own marks stayed where they were.
+        if lesson != nil {
+            advanceLesson(spokenIn: clause)
+            return
+        }
+
         guard AppSettings.followsAlongWhileSpeaking else { return }
 
         guard let clause else {
@@ -716,6 +746,152 @@ final class CompanionViewModel {
         else { return }
 
         onHighlight?(ScreenTextLocator.screenRect(for: match.boundingBox, in: frame), true)
+    }
+
+    // MARK: - Teaching
+
+    /// Draws the marks for one step of a lesson, in global screen coordinates:
+    /// the current step's boxes, the boxes of the steps already covered, the
+    /// step's number, and the screen they are measured against.
+    var onLessonMarks: (([CGRect], [CGRect], Int, CGRect) -> Void)?
+    var onLessonEnded: (() -> Void)?
+
+    private(set) var lesson: Lesson?
+    private(set) var lessonStep = 0
+
+    /// Where each step's labels are, resolved once and re-resolved on demand.
+    ///
+    /// Held here rather than looked up from `observation` on each step, because
+    /// a lesson outlives the capture: `endSession` drops the observation, and
+    /// dismissing the panel is exactly what the user does to get back to the
+    /// code being taught. Keeping the geometry is what lets the boxes stay up
+    /// while they work underneath them.
+    private var lessonMarks: [[CGRect]] = []
+    private var lessonFrame: CGRect = .zero
+
+    /// Takes the marks down if the panel is dismissed and never comes back.
+    ///
+    /// The lesson surviving dismissal is the point of it, but "until the next
+    /// summon" is not a bound when the next summon may never happen — and an
+    /// overlay with no window to switch it off is the app having drawn
+    /// something the user cannot undraw.
+    private static let lessonLingerAfterDismissal: TimeInterval = 300
+    private var lessonExpiry: Task<Void, Never>?
+
+    var lessonStepCount: Int { lesson?.steps.count ?? 0 }
+    var canAdvanceLesson: Bool { lesson.map { lessonStep + 1 < $0.steps.count } ?? false }
+    var canRewindLesson: Bool { lesson != nil && lessonStep > 0 }
+
+    /// Turns a finished answer into a lesson, if it turned out to be one.
+    ///
+    /// Silent when it did not. A model that wrote prose where steps were asked
+    /// for has still answered the question, and putting an empty lesson bar
+    /// over that answer would report a failure the user cannot act on.
+    private func beginLesson(from answer: String) {
+        guard let parsed = Lesson.from(answer: answer),
+              let observation,
+              let frame = observation.primaryScreenFrame
+        else { return }
+
+        lesson = parsed
+        lessonStep = 0
+        resolveLessonMarks(in: observation.primary.textRegions, on: frame)
+        showLessonStep()
+    }
+
+    func endLesson() {
+        lessonExpiry?.cancel()
+        lessonExpiry = nil
+        guard lesson != nil else { return }
+
+        lesson = nil
+        lessonStep = 0
+        lessonMarks = []
+        onLessonEnded?()
+    }
+
+    /// Moves to a step because the user pressed a button.
+    ///
+    /// Re-reads the screen first, which the spoken advance deliberately does
+    /// not. The anchors were resolved against the screen as it was when the
+    /// question was asked, and the whole point of this feature is that the user
+    /// keeps working underneath it — a few keystrokes reflow an editor and
+    /// every box below the caret is a line out. Failing to find a label is
+    /// recoverable; a confident box around the wrong line is not, so the pause
+    /// is worth it on a press. While speaking there is no press, the screen is
+    /// very unlikely to have moved, and a capture between every sentence would
+    /// be the continuous capture this app refuses.
+    func stepLesson(by offset: Int) {
+        guard let lesson else { return }
+        let target = max(0, min(lesson.steps.count - 1, lessonStep + offset))
+        guard target != lessonStep else { return }
+
+        lessonStep = target
+        showLessonStep()
+
+        Task {
+            await refreshLessonAnchors()
+            guard self.lesson != nil else { return }
+            showLessonStep()
+        }
+    }
+
+    /// Moves to whichever step the clause now being read aloud belongs to.
+    private func advanceLesson(spokenIn clause: String?) {
+        guard let lesson, let clause else { return }
+        guard let target = lesson.step(spokenIn: clause, notBefore: lessonStep),
+              target != lessonStep
+        else { return }
+
+        lessonStep = target
+        showLessonStep()
+    }
+
+    private func startLessonExpiry() {
+        guard lesson != nil else { return }
+        lessonExpiry?.cancel()
+        lessonExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.lessonLingerAfterDismissal))
+            guard !Task.isCancelled else { return }
+            self?.endLesson()
+        }
+    }
+
+    private func resolveLessonMarks(in regions: [TextRegion], on frame: CGRect) {
+        guard let lesson else { return }
+        lessonFrame = frame
+        lessonMarks = lesson.steps.map { step in
+            ScreenTextLocator.locate(labels: step.anchors, in: regions)
+                .map { ScreenTextLocator.screenRect(for: $0.boundingBox, in: frame) }
+        }
+    }
+
+    private func showLessonStep() {
+        guard lesson != nil, lessonMarks.indices.contains(lessonStep) else { return }
+
+        let covered = lessonMarks.prefix(lessonStep).flatMap { $0 }
+        onLessonMarks?(lessonMarks[lessonStep], covered, lessonStep + 1, lessonFrame)
+    }
+
+    /// Reads the screen again and works out where the labels have moved to.
+    ///
+    /// Deliberately does not touch `observation`. The conversation is about the
+    /// screen the question was asked against, and quietly swapping it here
+    /// would answer a follow-up against a screen the user never asked about —
+    /// `lookAgain` is the control that does that, on purpose and visibly.
+    private func refreshLessonAnchors() async {
+        // A cropped capture is measured against the region the user dragged
+        // out, so a fresh full-screen grab would re-anchor every label to the
+        // whole display without saying so.
+        guard observation?.isCropped != true else { return }
+
+        guard let fresh = try? await ScreenCapture.captureAllDisplays(frontmostApp: nil),
+              let frame = fresh.primaryScreenFrame
+        else { return }
+
+        let read = await Self.readText(in: fresh.primary.image)
+        guard lesson != nil else { return }
+        resolveLessonMarks(in: read.regions, on: frame)
     }
 
     private func recordAnswer(_ text: String, for turnID: UUID) {
@@ -1065,6 +1241,13 @@ final class CompanionViewModel {
         question = ""
         proposedEdit = nil
         pointerTarget = nil
+        // A lesson deliberately survives, and its marks stay on screen. This is
+        // the same argument the conversation makes for surviving: reaching the
+        // code being taught means clicking outside this app, so tearing the
+        // boxes down here would leave them visible only while the user was
+        // looking at the panel instead of at their work. It is bounded, since
+        // nothing guarantees a next summon to end it.
+        startLessonExpiry()
         // The opened file deliberately survives, because dismissing the panel
         // between questions about the same file is the normal way to use this
         // and re-picking it every time through a modal would be absurd.
