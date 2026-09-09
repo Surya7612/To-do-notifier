@@ -23,6 +23,15 @@ final class GlobalHotkey {
     private var eventHandler: EventHandlerRef?
     private var storedActions: [Role: () -> Void] = [:]
 
+    /// First half of a talk double-press, waiting for the second.
+    private var talkFirstPressAt: ContinuousClock.Instant?
+
+    /// How close together two presses of the talk shortcut must be.
+    ///
+    /// Long enough to hit deliberately, short enough that two unrelated
+    /// presses a second apart do not summon the microphone by accident.
+    private static let talkDoublePressWindow: Duration = .milliseconds(450)
+
     private init() {}
 
     /// Registers `choice` for `role`. Pass `action` on first call; later calls
@@ -31,13 +40,29 @@ final class GlobalHotkey {
     /// A nil `choice` unregisters the role, which is how the talk shortcut is
     /// switched off — the summon one has no such state, since an app with no
     /// way to summon it is not a lesser configuration, it is a broken one.
+    ///
+    /// The talk role requires two presses inside `talkDoublePressWindow`. A
+    /// single press of modifiers alone cannot be registered at all — Carbon
+    /// needs a real key — and a double-tap of ⌥⌘ with no letter would need a
+    /// `CGEvent` tap and the Accessibility permission this app declines to
+    /// ask for. Two presses of the chosen combo is the nearest thing that
+    /// still opens the microphone directly.
     func activate(_ choice: HotkeyChoice?, for role: Role = .summon, action: (() -> Void)? = nil) {
         if let action { storedActions[role] = action }
         if role == .summon, let choice { current = choice }
+        if role == .talk { talkFirstPressAt = nil }
 
         release(role)
         installHandlerIfNeeded()
-        hotkeyActions[role.rawValue] = storedActions[role]
+
+        switch role {
+        case .summon:
+            hotkeyActions[role.rawValue] = storedActions[role]
+        case .talk:
+            hotkeyActions[role.rawValue] = { [weak self] in
+                Task { @MainActor in self?.handleTalkPress() }
+            }
+        }
 
         guard let choice else { return }
 
@@ -54,6 +79,17 @@ final class GlobalHotkey {
         } else {
             if role == .summon { didFailToRegister = true }
             NSLog("[GlobalHotkey] \(choice.displayName) rejected with status \(status)")
+        }
+    }
+
+    /// Completes a talk double-press, or starts waiting for one.
+    private func handleTalkPress() {
+        let now = ContinuousClock.now
+        if let first = talkFirstPressAt, first.duration(to: now) <= Self.talkDoublePressWindow {
+            talkFirstPressAt = nil
+            storedActions[.talk]?()
+        } else {
+            talkFirstPressAt = now
         }
     }
 

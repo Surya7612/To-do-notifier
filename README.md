@@ -37,7 +37,7 @@ development, and it has [its own README](TodoCompanion/README.md).
 | --- | --- |
 | **Ask about your screen** | `⌃⌥Space` captures every display and answers a question about it; `⌘R` narrows it to a region you drag out |
 | **Keep asking** | Follow-ups remember the conversation, and `⌘L` re-reads the screen when it has changed |
-| **Talk to it** | `⌃⌥Q` opens the mic straight away; dictation and the spoken answers both run on this Mac |
+| **Talk to it** | `⌥⌘Q` twice opens the mic straight away; dictation and the spoken answers both run on this Mac |
 | **Point at things** | It draws a box around the control it just named — on your real screen, not in the panel |
 | **Teach me** | Walks a screen a step at a time, boxing and captioning each step as it reads it aloud |
 | **Keep a screen** | `⌘S` saves the screenshot with your reason for keeping it, plus `#tags` and a project |
@@ -195,7 +195,7 @@ was built, because on this project the rejections carry most of the reasoning.
 | A cloud model doing background work | A hosted model may answer a question you deliberately asked, and may never work unprompted. Enforced structurally: `summarize` and `embed` exist only on the local provider, so a cloud one cannot be wired to them. |
 | An autonomous coding agent | It sees a screenshot, has no file tree, and cannot run your tests, so it would be strictly worse than the editor you already have open. It proposes one file, shows a diff, and writes only on a button press. |
 | An iCloud container for phone capture | Needs an entitlement requiring the paid Apple Developer Program. A *folder* inside iCloud Drive needs none and syncs identically. |
-| A wake word | An always-hot microphone sits badly beside explicit capture. The Electron app has one and ships it **off** by default, which is the evidence rather than the counter-example. The companion's `⌃⌥Q` is not one either: nothing listens until it is pressed, and a shortcut is you opening the mic. |
+| A wake word | An always-hot microphone sits badly beside explicit capture. The Electron app has one and ships it **off** by default, which is the evidence rather than the counter-example. The companion's `⌥⌘Q` ×2 is not one either: nothing listens until it is pressed twice, and a shortcut is you opening the mic. |
 | Boxing whatever an answer seems to mention | Drawing on your screen is a confident claim about your pixels. The box appears on a button that names its match first — and when it follows the spoken answer instead, it is restricted to labels Max quoted character for character, so what gets drawn is something stated rather than something inferred. |
 | A lesson format with coordinates in it | A taught step is an ordinary numbered answer, parsed by the code that already draws numbered lists. Max names things and the OCR boxes decide the pixels, so a reply that ignored the instructions is still a good answer rather than a broken mode. An arrow is drawn only where Max wrote one; two labels in one step is not a claim that one becomes the other. |
 

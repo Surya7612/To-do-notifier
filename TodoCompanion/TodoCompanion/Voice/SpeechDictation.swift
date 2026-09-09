@@ -52,6 +52,9 @@ final class SpeechDictation {
     private(set) var inputDeviceName = ""
 
     private let level = LevelMeter()
+    /// Delivers microphone buffers to the live recognizer without capturing a
+    /// MainActor existential in the tap closure — see `RecognizerTap`.
+    private let tap = RecognizerTap()
     private var silenceWatchdog: Task<Void, Never>?
 
     /// Speech occupies a narrow band of the available amplitude range, so the
@@ -97,8 +100,17 @@ final class SpeechDictation {
         inputDeviceName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "unknown input"
         level.reset()
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level, recognizer] buffer, _ in
-            recognizer.receive(buffer)
+        // Bound through a Sendable box rather than capturing `recognizer` in the
+        // tap. Under Swift 6 the protocol existential is MainActor-isolated, so
+        // a tap that closed over it became MainActor too — and the first buffer
+        // arriving on the audio render thread trapped in
+        // `_swift_task_checkIsolatedSwift`. That is the crash the talk hotkey
+        // hit: the shortcut worked, the microphone opened, and then the process
+        // died on the first sample.
+        tap.bind(recognizer)
+
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [level, tap] buffer, _ in
+            tap.receive(buffer)
             level.record(buffer)
         }
 
@@ -136,6 +148,7 @@ final class SpeechDictation {
     private func cleanUp() {
         silenceWatchdog?.cancel()
         silenceWatchdog = nil
+        tap.unbind()
         if let engine {
             engine.inputNode.removeTap(onBus: 0)
             if engine.isRunning { engine.stop() }
@@ -143,6 +156,34 @@ final class SpeechDictation {
         engine = nil
         // The recognizer deliberately survives, holding its loaded model. Only
         // a change of engine replaces it.
+    }
+
+    /// Forwards audio-tap buffers to the live recognizer without hopping actors.
+    ///
+    /// Written on the main actor when listening starts, cleared when it stops,
+    /// and called from the render thread. `@unchecked Sendable` for the same
+    /// reason `LevelMeter` is: the lock is the synchronisation, and the values
+    /// it holds are themselves safe to call from any thread (`receive` on both
+    /// recognizers is `nonisolated` and only touches lock-guarded state).
+    private nonisolated final class RecognizerTap: @unchecked Sendable {
+        private let lock = NSLock()
+        private var destination: (@Sendable (AVAudioPCMBuffer) -> Void)?
+
+        @MainActor
+        func bind(_ recognizer: any DictationRecognizer) {
+            // The `@Sendable` receiver only touches lock-guarded state inside
+            // the backend — never the MainActor existential itself.
+            let destination = recognizer.audioReceiver
+            lock.withLock { self.destination = destination }
+        }
+
+        func unbind() {
+            lock.withLock { destination = nil }
+        }
+
+        func receive(_ buffer: AVAudioPCMBuffer) {
+            lock.withLock { destination }?(buffer)
+        }
     }
 
     /// Tracks whether any non-silent audio arrived. Written from the audio

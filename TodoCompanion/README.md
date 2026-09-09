@@ -41,18 +41,21 @@ thing as pressing Return.
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.
 
-**⌃⌥Q** skips straight to that: it brings the panel up with the microphone already open, and stops it
-when pressed again, so one key both starts and ends the sentence. Summoning and *then* finding the
-dictation button is enough friction that a spoken question tends to get typed instead, which defeats
-the point of asking about the screen in front of you — typing means looking away from it.
+**⌥⌘Q ×2** skips straight to that: press the combo twice quickly and it brings the panel up with the
+microphone already open; twice again stops it. A single press does nothing, so an accidental brush
+does not start listening. Summoning and *then* finding the dictation button is enough friction that a
+spoken question tends to get typed instead, which defeats the point of asking about the screen in
+front of you — typing means looking away from it.
 
 This is not a wake word and will not become one. Nothing listens until you press the key; what the
 rule protects is whether the microphone is ever open when you did not open it, and a shortcut is you
 opening it. You can set it to **Off** in Settings, unlike the summon shortcut, which has to exist.
 
-It cannot be `Tab+Q`, which is the natural thing to reach for. A global shortcut here needs Command,
-Shift, Option or Control plus one key; Tab is an ordinary key rather than a modifier, and making it
-behave as one requires the Accessibility permission this app declines to ask for.
+It cannot be a double-tap of ⌥⌘ with no letter, and it cannot be `Tab+Q`. A global shortcut here needs
+Command, Shift, Option or Control plus one key; Tab is an ordinary key rather than a modifier, and a
+modifiers-only chord is the same kind of thing — both would need a `CGEvent` tap and the Accessibility
+permission this app declines to ask for. Pressing `⌥⌘Q` twice is the nearest that still opens the mic
+directly.
 
 Two recognizers are available under Settings → Dictation, and both run on this Mac. **Apple** is the
 default and needs nothing downloaded, but it ends a phrase at every pause. **Parakeet** runs on the
@@ -464,15 +467,16 @@ it sounds: TCC keys its permission grants to the code signature, so under ad-hoc
 silently invalidates Screen Recording while the app continues to *look* enabled in System Settings.
 
 Two shortcuts are registered, and both are picked from a list in Settings. Summoning defaults to
-`⌃⌥Space`; summoning straight into dictation defaults to `⌃⌥Q` and can be set to **Off**. The options
-are restricted to combos macOS does not reserve: a reserved combo such as `⌘Space` or `⌥⌘Space` is
-consumed by the system before the app sees it, and `RegisterEventHotKey` *still returns success*, so
-the shortcut silently does nothing rather than reporting an error.
+`⌃⌥Space`; summoning straight into dictation defaults to `⌥⌘Q` pressed **twice** and can be set to
+**Off**. The options are restricted to combos macOS does not reserve: a reserved combo such as
+`⌘Space` or `⌥⌘Space` is consumed by the system before the app sees it, and `RegisterEventHotKey`
+*still returns success*, so the shortcut silently does nothing rather than reporting an error.
 
 Every option needs at least one of Command, Shift, Option and Control, because that is what the API
 takes — a key code plus a mask of those four. An ordinary key cannot stand in for a modifier, so a
 combination like `Tab+Q` is not expressible without a `CGEvent` tap, which would need the Accessibility
-permission this app declines to require.
+permission this app declines to require. A double-tap of ⌥⌘ with no letter has the same constraint;
+pressing the chosen combo twice is how the talk shortcut approximates it.
 
 Run only one copy at a time. Carbon hot keys are exclusive, so a second instance fails to claim the
 shortcut and the first one to launch keeps it.

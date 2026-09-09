@@ -51,16 +51,17 @@ struct SettingsView: View {
                 Picker("Summon and start talking", selection: $talkHotkeyID) {
                     Text("Off").tag(HotkeyChoice.offIdentifier)
                     ForEach(HotkeyChoice.all) { choice in
-                        Text(choice.displayName).tag(choice.id)
+                        Text("\(choice.displayName) ×2").tag(choice.id)
                     }
                 }
                 .onChange(of: talkHotkeyID) { _, newValue in
                     GlobalHotkey.shared.activate(HotkeyChoice.optional(newValue), for: .talk)
                 }
 
-                Text("Brings the panel up with the microphone already open, and stops it when pressed "
-                     + "again. Nothing listens until you press it — \(Prompt.assistantName) has no wake "
-                     + "word and never will.")
+                Text("Press the combo twice quickly to bring the panel up with the microphone already "
+                     + "open, and twice again to stop. A single press does nothing, so an accidental "
+                     + "brush does not start listening. Nothing listens until you do — "
+                     + "\(Prompt.assistantName) has no wake word and never will.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -72,9 +73,11 @@ struct SettingsView: View {
                 }
 
                 Text("These combos avoid the ones macOS reserves for itself, such as ⌘Space and ⌥⌘Space. "
-                     + "A shortcut needs Command, Shift, Option or Control — Tab is an ordinary key "
-                     + "rather than a modifier, so combinations like Tab+Q cannot be registered without "
-                     + "the Accessibility permission this app does not ask for.")
+                     + "A shortcut needs a real key plus Command, Shift, Option or Control — Tab is an "
+                     + "ordinary key rather than a modifier, and a double-tap of ⌥⌘ with no letter is "
+                     + "the same kind of thing, so neither can be registered without the Accessibility "
+                     + "permission this app does not ask for. Pressing the chosen combo twice is the "
+                     + "nearest that still opens the mic directly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
