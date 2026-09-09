@@ -100,7 +100,12 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
         let samples: [Float]
         let sampleRate: Double
 
-        func makeBuffer() -> AVAudioPCMBuffer? {
+        /// `sending`, because the buffer is handed to the recognizer actor and
+        /// `AVAudioPCMBuffer` is not `Sendable`. It is allocated here from
+        /// values that are, and nothing keeps a reference to it, so the region
+        /// really is disconnected — the compiler just cannot see that across a
+        /// return without being told.
+        func makeBuffer() -> sending AVAudioPCMBuffer? {
             guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
                   let buffer = AVAudioPCMBuffer(pcmFormat: format,
                                                 frameCapacity: AVAudioFrameCount(samples.count)),
