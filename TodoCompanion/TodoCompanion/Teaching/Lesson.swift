@@ -24,7 +24,36 @@ nonisolated struct Lesson: Equatable {
         /// are names, never positions: where they are on screen is decided by
         /// Vision's OCR boxes, never by the model.
         let anchors: [String]
+        /// Whether to join the boxes with arrows rather than leave them
+        /// separate. True when Max wrote an arrow between the quoted labels.
+        let isConnected: Bool
+
+        /// The few words drawn beside the mark, for the reader who is looking
+        /// at their code rather than at the panel.
+        ///
+        /// The step's own opening, cut at a word: the sentence is already in
+        /// the panel in full, and the caption exists to say which step this box
+        /// belongs to, not to reproduce the lesson on top of the user's work.
+        var caption: String {
+            let stripped = text.replacingOccurrences(of: "\u{201C}", with: "\"")
+                .replacingOccurrences(of: "\u{201D}", with: "\"")
+            guard stripped.count > Lesson.captionLength else { return stripped }
+
+            let cut = stripped.prefix(Lesson.captionLength)
+            guard let lastGap = cut.lastIndex(of: " ") else { return String(cut) + "…" }
+            return cut[..<lastGap] + "…"
+        }
     }
+
+    /// Long enough to carry a clause, short enough not to become a second
+    /// panel floating over the user's editor.
+    static let captionLength = 64
+
+    /// Max writing one label into another. The only mark this app draws that
+    /// is not a box, and it is drawn because Max *stated* a relation between
+    /// two things it named — not because two names happened to be in one step,
+    /// which would be this app inferring a connection from adjacency.
+    static let connector: Character = "\u{2192}"
 
     let steps: [Step]
 
@@ -47,7 +76,9 @@ nonisolated struct Lesson: Equatable {
         guard let items, items.count >= minimumSteps else { return nil }
 
         let steps = items.map { item in
-            Step(text: item, anchors: ScreenTextLocator.quotedLabels(in: item))
+            Step(text: item,
+                 anchors: ScreenTextLocator.quotedLabels(in: item),
+                 isConnected: item.contains(connector))
         }
 
         // Every step naming nothing is a numbered list that happens to be in

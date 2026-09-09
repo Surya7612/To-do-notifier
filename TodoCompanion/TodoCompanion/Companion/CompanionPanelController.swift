@@ -29,8 +29,13 @@ final class CompanionPanelController {
             self?.highlight.show(rect, untilHidden: untilHidden)
         }
         viewModel.onHighlightEnded = { [weak self] in self?.highlight.hide() }
-        viewModel.onLessonMarks = { [weak self] current, covered, number, screen in
-            self?.lessonMarks.show(current: current, covered: covered, number: number, on: screen)
+        viewModel.onLessonMarks = { [weak self] marks in
+            self?.lessonMarks.show(current: marks.current,
+                                   covered: marks.covered,
+                                   number: marks.number,
+                                   caption: marks.caption,
+                                   isConnected: marks.isConnected,
+                                   on: marks.screen)
         }
         viewModel.onLessonEnded = { [weak self] in self?.lessonMarks.hide() }
         viewModel.onPinnedChanged = { [weak self] isPinned in

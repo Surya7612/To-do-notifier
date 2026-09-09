@@ -765,10 +765,8 @@ final class CompanionViewModel {
 
     // MARK: - Teaching
 
-    /// Draws the marks for one step of a lesson, in global screen coordinates:
-    /// the current step's boxes, the boxes of the steps already covered, the
-    /// step's number, and the screen they are measured against.
-    var onLessonMarks: (([CGRect], [CGRect], Int, CGRect) -> Void)?
+    /// Draws the marks for one step of a lesson, in global screen coordinates.
+    var onLessonMarks: ((LessonMarks) -> Void)?
     var onLessonEnded: (() -> Void)?
 
     private(set) var lesson: Lesson?
@@ -881,11 +879,34 @@ final class CompanionViewModel {
         }
     }
 
-    private func showLessonStep() {
-        guard lesson != nil, lessonMarks.indices.contains(lessonStep) else { return }
+    /// One step's worth of drawing, in global screen coordinates.
+    ///
+    /// A value type rather than five arguments, because the overlay is reached
+    /// through a closure and the fourth `CGRect` in a row is exactly where a
+    /// caller silently passes the covered boxes as the current ones.
+    struct LessonMarks {
+        let current: [CGRect]
+        let covered: [CGRect]
+        let number: Int
+        let caption: String
+        let isConnected: Bool
+        let screen: CGRect
+    }
 
-        let covered = lessonMarks.prefix(lessonStep).flatMap { $0 }
-        onLessonMarks?(lessonMarks[lessonStep], covered, lessonStep + 1, lessonFrame)
+    private func showLessonStep() {
+        guard let lesson, lessonMarks.indices.contains(lessonStep) else { return }
+
+        let step = lesson.steps[lessonStep]
+        onLessonMarks?(LessonMarks(
+            current: lessonMarks[lessonStep],
+            covered: lessonMarks.prefix(lessonStep).flatMap { $0 },
+            number: lessonStep + 1,
+            caption: step.caption,
+            // An arrow needs somewhere to go: a step whose second label Vision
+            // could not find would otherwise draw one from a box to itself.
+            isConnected: step.isConnected && lessonMarks[lessonStep].count > 1,
+            screen: lessonFrame
+        ))
     }
 
     /// Reads the screen again and works out where the labels have moved to.

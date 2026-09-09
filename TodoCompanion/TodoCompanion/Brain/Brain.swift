@@ -204,8 +204,15 @@ enum Prompt {
     what is actually printed on the screen, never a paraphrase of it, and never quote something \
     you cannot see there.
 
-    Keep each step to one or two sentences. Teach the idea, not just the fix: say why the thing you \
-    are pointing at matters, so the user could spot it themselves next time.
+    When a step is about one thing becoming, feeding, or being confused with another, write the two \
+    quoted labels with an arrow between them — "res" → "return res" — and the app will draw that \
+    arrow on the screen. Use it only for a real relation between two things you can see, never as \
+    punctuation between two labels you happen to mention in the same step.
+
+    Keep each step to one or two sentences, and put the point of the step in the opening words: the \
+    first line is printed on the screen beside what it is about, where the user is looking. Teach the \
+    idea, not just the fix — say why the thing you are pointing at matters, so the user could spot it \
+    themselves next time.
     """
 
     /// Asked of every model, because the panel now draws structure rather than
