@@ -51,10 +51,10 @@ final class SpeechDictation {
     /// and they record perfect silence without producing any error.
     private(set) var inputDeviceName = ""
 
-    private let level = LevelMeter()
+    private let level = DictationLevelMeter()
     /// Delivers microphone buffers to the live recognizer without capturing a
-    /// MainActor existential in the tap closure — see `RecognizerTap`.
-    private let tap = RecognizerTap()
+    /// MainActor existential in the tap closure — see `DictationAudioTap`.
+    private let tap = DictationAudioTap()
     private var silenceWatchdog: Task<Void, Never>?
 
     /// Speech occupies a narrow band of the available amplitude range, so the
@@ -104,20 +104,14 @@ final class SpeechDictation {
         // tap. Under Swift 6 the protocol existential is MainActor-isolated, so
         // a tap that closed over it became MainActor too — and the first buffer
         // arriving on the audio render thread trapped in
-        // `_swift_task_checkIsolatedSwift`. That is the crash the talk hotkey
-        // hit: the shortcut worked, the microphone opened, and then the process
-        // died on the first sample.
+        // `_swift_task_checkIsolatedSwift`.
         tap.bind(recognizer)
 
-        // Locals, not `self.level` / `self.tap`: reading MainActor properties
-        // into the capture list can still mark the closure MainActor-isolated
-        // even when the values themselves are nonisolated boxes.
-        let meter = level
-        let feed = tap
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            feed.receive(buffer)
-            meter.record(buffer)
-        }
+        // The block is formed inside a `nonisolated` helper on purpose. A
+        // closure written here inherits MainActor isolation from `start`, and
+        // AVAudioEngine then calls it on the render thread — which is exactly
+        // the Tab+Q crash, even after the captured types were made Sendable.
+        DictationAudioTap.install(on: input, format: format, feed: tap, meter: level)
 
         engine.prepare()
         do {
@@ -162,84 +156,88 @@ final class SpeechDictation {
         // The recognizer deliberately survives, holding its loaded model. Only
         // a change of engine replaces it.
     }
+}
 
-    /// Forwards audio-tap buffers to the live recognizer without hopping actors.
+/// Forwards audio-tap buffers to the live recognizer without hopping actors.
+///
+/// File-scoped (not nested in `SpeechDictation`) so it cannot inherit MainActor
+/// from the outer type under `SWIFT_DEFAULT_ACTOR_ISOLATION`.
+nonisolated final class DictationAudioTap: @unchecked Sendable {
+    private let lock = NSLock()
+    private var destination: (@Sendable (AVAudioPCMBuffer) -> Void)?
+
+    @MainActor
+    func bind(_ recognizer: any DictationRecognizer) {
+        let destination = recognizer.audioReceiver
+        lock.withLock { self.destination = destination }
+    }
+
+    func unbind() {
+        lock.withLock { destination = nil }
+    }
+
+    func receive(_ buffer: AVAudioPCMBuffer) {
+        lock.withLock { destination }?(buffer)
+    }
+
+    /// Forms the `installTap` block off the main actor.
     ///
-    /// Written on the main actor when listening starts, cleared when it stops,
-    /// and called from the render thread. `@unchecked Sendable` for the same
-    /// reason `LevelMeter` is: the lock is the synchronisation, and the values
-    /// it holds are themselves safe to call from any thread (`receive` on both
-    /// recognizers is `nonisolated` and only touches lock-guarded state).
-    private nonisolated final class RecognizerTap: @unchecked Sendable {
-        private let lock = NSLock()
-        private var destination: (@Sendable (AVAudioPCMBuffer) -> Void)?
-
-        @MainActor
-        func bind(_ recognizer: any DictationRecognizer) {
-            // The `@Sendable` receiver only touches lock-guarded state inside
-            // the backend — never the MainActor existential itself.
-            let destination = recognizer.audioReceiver
-            lock.withLock { self.destination = destination }
+    /// Must not be called from a MainActor context that inlines a literal
+    /// closure — that closure would still be MainActor-isolated and trap when
+    /// the first buffer arrives. Building it here is what keeps Tab+Q alive.
+    static func install(on input: AVAudioInputNode,
+                        format: AVAudioFormat,
+                        feed: DictationAudioTap,
+                        meter: DictationLevelMeter) {
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            feed.receive(buffer)
+            meter.record(buffer)
         }
+    }
+}
 
-        func unbind() {
-            lock.withLock { destination = nil }
-        }
+/// Tracks whether any non-silent audio arrived. Written from the audio
+/// render thread and read from the main actor, so access is locked.
+nonisolated final class DictationLevelMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    /// Loudest sample of the whole session, for the silence watchdog.
+    private var sessionPeak: Float = 0
+    /// Loudest sample since the UI last looked, for the waveform.
+    private var unreadPeak: Float = 0
 
-        func receive(_ buffer: AVAudioPCMBuffer) {
-            lock.withLock { destination }?(buffer)
+    var isSilent: Bool {
+        lock.withLock { sessionPeak < 0.0015 }
+    }
+
+    func reset() {
+        lock.withLock {
+            sessionPeak = 0
+            unreadPeak = 0
         }
     }
 
-    /// Tracks whether any non-silent audio arrived. Written from the audio
-    /// render thread and read from the main actor, so access is locked.
-    ///
-    /// `nonisolated` is load-bearing: under Swift 6's default MainActor
-    /// isolation a nested class inherits the outer actor, and capturing that
-    /// meter in the audio tap made the whole callback MainActor-isolated —
-    /// the same `_swift_task_checkIsolatedSwift` trap as capturing the
-    /// recognizer. The lock is the synchronisation; the actor is not.
-    private nonisolated final class LevelMeter: @unchecked Sendable {
-        private let lock = NSLock()
-        /// Loudest sample of the whole session, for the silence watchdog.
-        private var sessionPeak: Float = 0
-        /// Loudest sample since the UI last looked, for the waveform.
-        private var unreadPeak: Float = 0
-
-        var isSilent: Bool {
-            lock.withLock { sessionPeak < 0.0015 }
+    /// Consumes the peak so the meter falls back to zero when the user stops
+    /// speaking instead of holding the loudest value forever.
+    func drainRecentLevel() -> Float {
+        lock.withLock {
+            let value = unreadPeak
+            unreadPeak = 0
+            return value
         }
+    }
 
-        func reset() {
-            lock.withLock {
-                sessionPeak = 0
-                unreadPeak = 0
+    func record(_ buffer: AVAudioPCMBuffer) {
+        guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return }
+        var frameMax: Float = 0
+        for channel in 0..<Int(buffer.format.channelCount) {
+            let samples = channels[channel]
+            for frame in 0..<Int(buffer.frameLength) {
+                frameMax = max(frameMax, abs(samples[frame]))
             }
         }
-
-        /// Consumes the peak so the meter falls back to zero when the user stops
-        /// speaking instead of holding the loudest value forever.
-        func drainRecentLevel() -> Float {
-            lock.withLock {
-                let value = unreadPeak
-                unreadPeak = 0
-                return value
-            }
-        }
-
-        func record(_ buffer: AVAudioPCMBuffer) {
-            guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return }
-            var frameMax: Float = 0
-            for channel in 0..<Int(buffer.format.channelCount) {
-                let samples = channels[channel]
-                for frame in 0..<Int(buffer.frameLength) {
-                    frameMax = max(frameMax, abs(samples[frame]))
-                }
-            }
-            lock.withLock {
-                sessionPeak = max(sessionPeak, frameMax)
-                unreadPeak = max(unreadPeak, frameMax)
-            }
+        lock.withLock {
+            sessionPeak = max(sessionPeak, frameMax)
+            unreadPeak = max(unreadPeak, frameMax)
         }
     }
 }
