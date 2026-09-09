@@ -175,8 +175,9 @@ enum ScreenCapture {
 
         let captured = try await withThrowingTaskGroup(of: (Int, CGImage).self) { group in
             for (offset, display) in ordered.enumerated() {
+                let shot = DisplayShot(display: display, excluded: excluded)
                 group.addTask {
-                    (offset, try await shoot(display, excluding: excluded))
+                    (offset, try await shoot(shot.display, excluding: shot.excluded))
                 }
             }
             var byIndex: [Int: CGImage] = [:]
@@ -198,6 +199,27 @@ enum ScreenCapture {
         )
         observation.primaryScreenFrame = nsScreen(for: focused)?.frame
         return observation
+    }
+
+    /// Carries ScreenCaptureKit's descriptors into the per-display child tasks.
+    ///
+    /// Neither `SCDisplay` nor `SCRunningApplication` is `Sendable`, and the
+    /// displays are captured concurrently, so the compiler refuses the transfer
+    /// and cannot be shown otherwise from here.
+    ///
+    /// It is sound because the child tasks only ever *read* them: `shoot` takes
+    /// the display's dimensions and hands both straight to an `SCContentFilter`.
+    /// Nothing in this file mutates a descriptor that `SCShareableContent`
+    /// returned, and nothing outside it ever sees one. Boxing them is preferred
+    /// to capturing the displays one at a time, which would trade a real
+    /// property of the code — every screen grabbed at the same instant — for
+    /// the convenience of not having to say this.
+    /// `nonisolated` as well as `Sendable`: the module defaults to `MainActor`,
+    /// so without it the properties could not be read from the child task that
+    /// the box exists to reach.
+    private nonisolated struct DisplayShot: @unchecked Sendable {
+        let display: SCDisplay
+        let excluded: [SCRunningApplication]
     }
 
     private static func shoot(_ display: SCDisplay,
