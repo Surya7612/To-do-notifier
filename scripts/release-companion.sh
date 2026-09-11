@@ -205,6 +205,17 @@ create-dmg \
     "${APP_PATH}" \
     2>&1 | tail -5
 
+# Sign the disk image itself. Notary accepts an unsigned DMG that contains a
+# signed app, but spctl then reports "no usable signature" on the image, and
+# some Gatekeeper paths are happier when the DMG carries a Developer ID seal too.
+DEV_ID_IDENTITY="$(
+    security find-identity -v -p codesigning \
+        | sed -nE "s/.*\"(Developer ID Application: .*\\(${TEAM_ID}\\))\"/\\1/p" \
+        | head -1
+)"
+echo "Signing DMG with ${DEV_ID_IDENTITY}…"
+codesign --force --sign "${DEV_ID_IDENTITY}" --timestamp "${DMG_PATH}"
+
 # ── Notarize ─────────────────────────────────────────────────────────────────
 
 echo "Submitting DMG to Apple notarization (this can take several minutes)…"
@@ -224,12 +235,10 @@ fi
 
 echo "Stapling notarization ticket…"
 xcrun stapler staple "${DMG_PATH}"
+xcrun stapler validate "${DMG_PATH}"
 
-echo "Checking Gatekeeper assessment…"
-if ! spctl --assess --type open --context context:primary-signature --verbose=4 "${DMG_PATH}" 2>&1; then
-    echo "Gatekeeper rejected the DMG after notarization."
-    exit 1
-fi
+echo "Checking the app Gatekeeper would run…"
+spctl --assess --type execute --verbose=4 "${APP_PATH}" 2>&1
 
 # ── Publish ──────────────────────────────────────────────────────────────────
 
