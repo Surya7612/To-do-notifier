@@ -1149,10 +1149,24 @@ Keep argument names the same as the variables they came from rather than abbrevi
 
 ## Distribution
 
-`scripts/release-companion.sh` builds a DMG and publishes a GitHub Release. It stops short of Developer
-ID signing, notarization, and Sparkle auto-updates, all of which need the paid Apple Developer Program.
-Until that exists, downloaders must right-click → Open once to get past Gatekeeper, and the script says
-so in the release notes it generates.
+`scripts/release-companion.sh` archives an Apple Silicon Release build, exports it with
+`method=developer-id`, wraps a DMG, notarizes with `notarytool`, staples the ticket, checks
+Gatekeeper, and publishes a GitHub Release. Sparkle auto-updates are still out of scope.
+
+One-time setup on a machine that ships builds:
+
+1. Xcode → Settings → Accounts → Manage Certificates… → **+** → **Developer ID Application**
+2. Create an app-specific password at appleid.apple.com
+3. Store it for notarization (Team ID from `Local.xcconfig`):
+
+```bash
+xcrun notarytool store-credentials "TodoCompanion-notary" \
+  --apple-id "YOUR_APPLE_ID" \
+  --team-id "YOUR_TEAM_ID" \
+  --password "app-specific-password"
+```
+
+Override the profile with `NOTARY_PROFILE`. Skip the interactive confirm with `CONFIRM=yes`.
 
 ## Self-update
 

@@ -456,9 +456,10 @@ in Settings are opt-in and unlock Tab+Q plus Show me / Guided Teach pointer warp
 Microphone and Speech Recognition.
 
 Signing is per-developer, so copy `Local.xcconfig.example` to `Local.xcconfig` and put your Apple
-Developer Team ID in it — any team will do, since a paid one is only needed to notarize a build for
-other people. Xcode's Signing & Capabilities tab does the same thing. Without it the build asks for a
-team rather than failing against somebody else's.
+Developer Team ID in it. Xcode's Signing & Capabilities tab does the same thing. Without it the build
+asks for a team rather than failing against somebody else's. Shipping a Gatekeeper-clean DMG also
+needs a **Developer ID Application** certificate and a `notarytool` keychain profile — see
+`scripts/release-companion.sh` and the distribution notes in `AGENTS.md`.
 
 Set a team once and the signature is stable across rebuilds. This matters more than
 it sounds: TCC keys its permission grants to the code signature, so under ad-hoc signing every rebuild
@@ -641,6 +642,5 @@ your calendar; nothing does.
   for a tool like this it is the better one.
 - **An iPhone app.** Phone capture is a Shortcut writing to a folder, deliberately, and that is
   expected to stay true for a long time.
-- **Signing and notarization.** `scripts/release-companion.sh` builds a DMG and publishes a release,
-  but stops short of Developer ID signing, notarization, and auto-updates, all of which need the paid
-  Apple Developer Program. Until then, downloaders must right-click → Open once.
+- **Sparkle auto-updates.** Releases are Developer ID signed and notarized via
+  `scripts/release-companion.sh`, but the app does not yet check for updates on its own.

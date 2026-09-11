@@ -4,41 +4,42 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:$PATH"
 
 # =============================================================================
-# release-companion.sh — build TodoCompanion, wrap it in a DMG, publish it.
+# release-companion.sh — build TodoCompanion, Developer ID sign, notarize, ship.
 #
 # What it does:
 #   1. Works out the next version from the latest GitHub release
-#   2. Archives and exports the app
-#   3. Wraps it in a drag-to-Applications DMG
-#   4. Creates a GitHub release with the DMG and honest install instructions
+#   2. Archives (Apple Silicon only — see ARCHS note below)
+#   3. Exports with method=developer-id
+#   4. Wraps the app in a drag-to-Applications DMG
+#   5. Submits the DMG to notarytool, staples the ticket, checks Gatekeeper
+#   6. Creates a GitHub release with the DMG
 #
-# What it deliberately does NOT do, and why:
-#   Developer ID signing, Apple notarization, stapling, and Sparkle
-#   auto-updates all require the paid Apple Developer Program ($99/year).
-#   With a free account the best available is a locally-signed build, so the
-#   script says so in the release notes rather than shipping a download that
-#   fails in a way users cannot diagnose.
+# One-time setup (paid Apple Developer Program):
+#   1. Xcode → Settings → Accounts → Manage Certificates… → + → Developer ID Application
+#   2. Create an app-specific password at appleid.apple.com
+#   3. Store it for notarytool:
+#        xcrun notarytool store-credentials "TodoCompanion-notary" \
+#          --apple-id "YOUR_APPLE_ID" \
+#          --team-id "YOUR_TEAM_ID" \
+#          --password "app-specific-password"
+#   Team ID lives in TodoCompanion/Local.xcconfig (untracked).
 #
-#   The archive is Apple Silicon only, and the architecture has to be forced on
-#   the command line rather than set in the project. FluidAudio does not build
-#   for x86_64 — it reaches for Float16, which the standard library marks
-#   unavailable there — and Xcode compiles a Swift package for every
-#   architecture in the build request, ignoring ARCHS and EXCLUDED_ARCHS set on
-#   the project that depends on it. Only a build-request-level override reaches
-#   the package. Debug builds escape this because ONLY_ACTIVE_ARCH is already
-#   YES for them.
+#   Override the keychain profile with NOTARY_PROFILE if needed.
+#   Skip the interactive confirm with CONFIRM=yes.
 #
-#   Once a paid membership exists, the missing steps are:
-#     xcodebuild -exportArchive with method=developer-id
-#     xcrun notarytool submit "$DMG" --keychain-profile AC_PASSWORD --wait
-#     xcrun stapler staple "$DMG"
+# Architecture: Release archives are Apple Silicon only. FluidAudio does not
+# build for x86_64 (Float16), and Xcode compiles Swift packages for every arch
+# in the build request — ignoring project-level ARCHS — so the override must
+# be on the xcodebuild command line. Debug escapes this via ONLY_ACTIVE_ARCH.
 #
 # Usage:
 #   ./scripts/release-companion.sh          # auto-bump minor: 0.1 -> 0.2
 #   ./scripts/release-companion.sh 1.0      # explicit version
+#   CONFIRM=yes ./scripts/release-companion.sh 0.1
 #
 # Prerequisites:
 #   brew install create-dmg gh && gh auth login
+#   Developer ID Application identity + notarytool keychain profile (above)
 # =============================================================================
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,7 +49,10 @@ APP_NAME="TodoCompanion"
 BUILD_DIR="${PROJECT_DIR}/build/companion-release"
 ARCHIVE_PATH="${BUILD_DIR}/${APP_NAME}.xcarchive"
 EXPORT_DIR="${BUILD_DIR}/export"
+EXPORT_OPTIONS="${BUILD_DIR}/ExportOptions.plist"
 DMG_PATH="${BUILD_DIR}/${APP_NAME}.dmg"
+NOTARY_PROFILE="${NOTARY_PROFILE:-TodoCompanion-notary}"
+LOCAL_XCCONFIG="${COMPANION_DIR}/Local.xcconfig"
 
 GITHUB_REPO="$(git -C "${PROJECT_DIR}" remote get-url origin \
     | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
@@ -64,6 +68,39 @@ done
 
 if ! gh auth status >/dev/null 2>&1; then
     echo "GitHub CLI is not authenticated. Run: gh auth login"
+    exit 1
+fi
+
+if [ ! -f "${LOCAL_XCCONFIG}" ]; then
+    echo "Missing ${LOCAL_XCCONFIG}"
+    echo "Copy Local.xcconfig.example and set DEVELOPMENT_TEAM to your Team ID."
+    exit 1
+fi
+
+TEAM_ID="$(
+    sed -nE 's/^[[:space:]]*DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*([A-Z0-9]+).*/\1/p' \
+        "${LOCAL_XCCONFIG}" | head -1
+)"
+if [ -z "${TEAM_ID}" ]; then
+    echo "DEVELOPMENT_TEAM is empty in ${LOCAL_XCCONFIG}"
+    exit 1
+fi
+
+if ! security find-identity -v -p codesigning 2>/dev/null \
+    | grep -q "Developer ID Application:.*(${TEAM_ID})"; then
+    echo "No Developer ID Application certificate for team ${TEAM_ID}."
+    echo "Create one: Xcode → Settings → Accounts → Manage Certificates… → + → Developer ID Application"
+    echo "Then confirm with: security find-identity -v -p codesigning"
+    exit 1
+fi
+
+if ! xcrun notarytool history --keychain-profile "${NOTARY_PROFILE}" >/dev/null 2>&1; then
+    echo "No notarytool keychain profile named '${NOTARY_PROFILE}'."
+    echo "Create an app-specific password at appleid.apple.com, then run:"
+    echo "  xcrun notarytool store-credentials \"${NOTARY_PROFILE}\" \\"
+    echo "    --apple-id \"YOUR_APPLE_ID\" \\"
+    echo "    --team-id \"${TEAM_ID}\" \\"
+    echo "    --password \"app-specific-password\""
     exit 1
 fi
 
@@ -98,8 +135,11 @@ fi
 
 echo "Releasing ${APP_NAME} v${VERSION} (build ${BUILD_NUMBER}) to ${GITHUB_REPO}"
 echo "Previous: ${LATEST_TAG:-none}"
-read -r -p "Proceed? (y/N) " REPLY
-[[ "$REPLY" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+echo "Team: ${TEAM_ID}  Notary profile: ${NOTARY_PROFILE}"
+if [ "${CONFIRM:-}" != "yes" ]; then
+    read -r -p "Proceed? (y/N) " REPLY
+    [[ "$REPLY" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+fi
 
 # ── Build ────────────────────────────────────────────────────────────────────
 
@@ -115,14 +155,39 @@ xcodebuild archive \
     -archivePath "${ARCHIVE_PATH}" \
     MARKETING_VERSION="${VERSION}" \
     CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
+    DEVELOPMENT_TEAM="${TEAM_ID}" \
     ARCHS=arm64 \
     EXCLUDED_ARCHS=x86_64 \
-    2>&1 | tail -3
+    2>&1 | tail -5
 
-# A free account cannot export for developer-id, so take the app straight out
-# of the archive with the signature Xcode already applied.
-cp -R "${ARCHIVE_PATH}/Products/Applications/${APP_NAME}.app" "${EXPORT_DIR}/"
-echo "Built $(defaults read "${EXPORT_DIR}/${APP_NAME}.app/Contents/Info" CFBundleShortVersionString)"
+cat > "${EXPORT_OPTIONS}" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>developer-id</string>
+	<key>teamID</key>
+	<string>${TEAM_ID}</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+</dict>
+</plist>
+PLIST
+
+echo "Exporting Developer ID build…"
+xcodebuild -exportArchive \
+    -archivePath "${ARCHIVE_PATH}" \
+    -exportPath "${EXPORT_DIR}" \
+    -exportOptionsPlist "${EXPORT_OPTIONS}" \
+    2>&1 | tail -5
+
+APP_PATH="${EXPORT_DIR}/${APP_NAME}.app"
+if [ ! -d "${APP_PATH}" ]; then
+    echo "Export did not produce ${APP_PATH}"
+    exit 1
+fi
+echo "Built $(defaults read "${APP_PATH}/Contents/Info" CFBundleShortVersionString)"
 
 # ── Package ──────────────────────────────────────────────────────────────────
 
@@ -135,8 +200,24 @@ create-dmg \
     --icon "${APP_NAME}.app" 160 190 \
     --app-drop-link 480 190 \
     "${DMG_PATH}" \
-    "${EXPORT_DIR}/${APP_NAME}.app" \
-    2>&1 | tail -3
+    "${APP_PATH}" \
+    2>&1 | tail -5
+
+# ── Notarize ─────────────────────────────────────────────────────────────────
+
+echo "Submitting DMG to Apple notarization (this can take several minutes)…"
+xcrun notarytool submit "${DMG_PATH}" \
+    --keychain-profile "${NOTARY_PROFILE}" \
+    --wait
+
+echo "Stapling notarization ticket…"
+xcrun stapler staple "${DMG_PATH}"
+
+echo "Checking Gatekeeper assessment…"
+if ! spctl --assess --type open --context context:primary-signature --verbose=4 "${DMG_PATH}" 2>&1; then
+    echo "Gatekeeper rejected the DMG after notarization."
+    exit 1
+fi
 
 # ── Publish ──────────────────────────────────────────────────────────────────
 
@@ -148,19 +229,14 @@ what is on your screen and remembers things with the reason you kept them.
 **Installing**
 
 1. Open the DMG and drag TodoCompanion to Applications.
-2. **Right-click the app and choose Open**, then confirm. A normal double-click
-   will be blocked.
+2. Double-click to launch. This build is signed with a Developer ID and
+   notarized by Apple, so Gatekeeper should accept a normal open.
 3. Grant Screen Recording when asked, and Microphone plus Speech Recognition if
    you want dictation.
 
-Step 2 is needed because this build is signed with a personal Apple account
-rather than a Developer ID, so it is not notarized. That is a distribution
-limitation, not a sign the app is doing anything unusual — the source is all
-here and it makes no network calls except to Ollama on your own machine.
-
 **Requirements**
 
-- macOS 14 or later
+- Apple Silicon Mac, macOS 14 or later
 - [Ollama](https://ollama.com) running locally (\`ollama serve\`) with a model pulled
 NOTES
 

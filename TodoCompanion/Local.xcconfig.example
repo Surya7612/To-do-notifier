@@ -1,5 +1,7 @@
 // Copy to Local.xcconfig and set your own Apple Developer Team ID.
-// Xcode → Settings → Accounts shows it, and it is also in the Membership tab
-// of the developer portal. Any team works; a paid one is only needed to
-// notarize a build for other people.
+// Find it at developer.apple.com/account → Membership details (10 characters).
+//
+// Local builds need only the team. Shipping a Gatekeeper-clean DMG also needs:
+//   1. Developer ID Application certificate (Xcode → Accounts → Manage Certificates…)
+//   2. notarytool keychain profile "TodoCompanion-notary" — see scripts/release-companion.sh
 DEVELOPMENT_TEAM = YOURTEAMID
