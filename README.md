@@ -225,17 +225,35 @@ tested with Swift Testing. Its [README](TodoCompanion/README.md) covers building
 
 ---
 
-## Install the Electron app
+## Download (recommended)
+
+**One DMG, both apps.** Grab the latest suite release:
+
+**[Download To-Do Notifier + Max](https://github.com/Surya7612/To-do-notifier/releases/latest)**
+
+1. Open the DMG and drag **To-Do Notifier** and **TodoCompanion** to Applications.
+2. Launch both. In Max → Settings, link your To-Do Notifier data file so tasks and projects connect.
+3. Grant Screen Recording for Max; Microphone (and Speech Recognition) if you use voice.
+4. For Max, run [Ollama](https://ollama.com) locally (`ollama serve`) with a model pulled.
+
+Source stays open (MIT). Suite releases are additive — older tags such as `companion-v0.1` remain available.
+
+Building from source (contributors) is below.
+
+---
+
+## Install from source
+
+### Electron app (To-Do Notifier)
 
 ```bash
 npm install
 npm run install:app   # packs, ad-hoc signs, installs to /Applications
 ```
 
-DMG: `npm run dist` → open `release/*.dmg`.
+DMG alone: `npm run dist` → open `release/*.dmg` (local/ad-hoc; prefer the suite release above for Gatekeeper-clean installs).
 
-The companion is a separate Xcode build and is not produced by any of these scripts —
-see [its README](TodoCompanion/README.md#running-it). Everything from here to
+The companion is a separate Xcode build — see [its README](TodoCompanion/README.md#running-it). Everything from here to
 [Development](#development) is the Electron app; the two do not share a toolchain.
 
 ### First launch
@@ -272,8 +290,9 @@ npm run check
 | --- | --- |
 | `npm run dev` | Vite + Electron |
 | `npm test` | Vitest |
-| `npm run pack` / `dist` | Unpackaged `.app` / DMG |
+| `npm run pack` / `dist` | Unpackaged `.app` / DMG (local) |
 | `npm run install:app` | Install to `/Applications` |
+| `./scripts/release-suite.sh` | Family DMG (both apps), notarized GitHub release |
 
 ### Tests
 

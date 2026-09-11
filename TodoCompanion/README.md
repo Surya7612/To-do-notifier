@@ -459,7 +459,8 @@ Signing is per-developer, so copy `Local.xcconfig.example` to `Local.xcconfig` a
 Developer Team ID in it. Xcode's Signing & Capabilities tab does the same thing. Without it the build
 asks for a team rather than failing against somebody else's. Shipping a Gatekeeper-clean DMG also
 needs a **Developer ID Application** certificate and a `notarytool` keychain profile — see
-`scripts/release-companion.sh` and the distribution notes in `AGENTS.md`.
+`scripts/release-suite.sh` (family DMG with both apps), `scripts/release-companion.sh` (Max-only),
+and the distribution notes in `AGENTS.md`.
 
 Set a team once and the signature is stable across rebuilds. This matters more than
 it sounds: TCC keys its permission grants to the code signature, so under ad-hoc signing every rebuild
@@ -642,5 +643,6 @@ your calendar; nothing does.
   for a tool like this it is the better one.
 - **An iPhone app.** Phone capture is a Shortcut writing to a folder, deliberately, and that is
   expected to stay true for a long time.
-- **Sparkle auto-updates.** Releases are Developer ID signed and notarized via
-  `scripts/release-companion.sh`, but the app does not yet check for updates on its own.
+- **Sparkle auto-updates.** Suite and companion releases are Developer ID signed and notarized
+  (`scripts/release-suite.sh` / `scripts/release-companion.sh`), but neither app checks for updates
+  on its own yet.

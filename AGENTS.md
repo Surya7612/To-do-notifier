@@ -1149,9 +1149,12 @@ Keep argument names the same as the variables they came from rather than abbrevi
 
 ## Distribution
 
-`scripts/release-companion.sh` archives an Apple Silicon Release build, exports it with
-`method=developer-id`, wraps a DMG, notarizes with `notarytool`, staples the ticket, checks
-Gatekeeper, and publishes a GitHub Release. Sparkle auto-updates are still out of scope.
+`scripts/release-suite.sh` builds **both** apps into one family DMG (`To-Do Notifier.app` +
+`TodoCompanion.app`), Developer ID signs them, notarizes the DMG, staples it, and publishes a GitHub
+Release (for example `v1.5.0`). That is the recommended download for new users.
+
+`scripts/release-companion.sh` remains for Max-only hotfix releases (`companion-v*`). Suite releases
+are additive and do not delete companion tags.
 
 One-time setup on a machine that ships builds:
 
@@ -1167,6 +1170,9 @@ xcrun notarytool store-credentials "TodoCompanion-notary" \
 ```
 
 Override the profile with `NOTARY_PROFILE`. Skip the interactive confirm with `CONFIRM=yes`.
+
+Electron suite signing uses `SUITE_SIGN=1` (see `scripts/after-pack-sign.cjs`); local `npm run pack`
+stays ad-hoc so day-to-day Microphone TCC prompts keep working.
 
 ## Self-update
 
