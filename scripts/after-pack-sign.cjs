@@ -5,8 +5,9 @@
  * show Microphone toggles — unsigned Electron builds often hang forever on
  * getUserMedia with no prompt.
  *
- * Suite release (`SUITE_SIGN=1`): Developer ID + hardened runtime + timestamp,
- * so the app can sit inside a notarized family DMG.
+ * Suite release (`SUITE_SIGN=1`): Developer ID via `@electron/osx-sign` (nested
+ * frameworks, helpers, and native modules). Plain `codesign --deep` is not
+ * enough for notarization.
  */
 const { execFileSync } = require("child_process");
 const path = require("path");
@@ -18,8 +19,7 @@ function developerIdIdentity() {
       encoding: "utf8",
     });
     const team = (process.env.SUITE_TEAM_ID || "").trim();
-    const lines = out.split("\n");
-    for (const line of lines) {
+    for (const line of out.split("\n")) {
       const match = line.match(/"(Developer ID Application: .+)"/);
       if (!match) continue;
       if (team && !match[1].includes(`(${team})`)) continue;
@@ -41,6 +41,7 @@ exports.default = async function afterPack(context) {
     "build",
     "entitlements.mac.plist"
   );
+  const hasEntitlements = fs.existsSync(entitlements);
 
   if (!fs.existsSync(appPath)) {
     console.warn("[after-pack-sign] app missing:", appPath);
@@ -48,31 +49,39 @@ exports.default = async function afterPack(context) {
   }
 
   const suite = process.env.SUITE_SIGN === "1";
-  const identity = suite ? developerIdIdentity() : null;
 
-  if (suite && !identity) {
+  if (!suite) {
+    const args = ["--force", "--deep", "--sign", "-"];
+    if (hasEntitlements) {
+      args.push("--entitlements", entitlements);
+    }
+    args.push(appPath);
+    try {
+      execFileSync("codesign", args, { stdio: "inherit" });
+      console.log("[after-pack-sign] ad-hoc signed", appPath);
+    } catch (err) {
+      console.warn("[after-pack-sign] codesign failed:", err.message);
+    }
+    return;
+  }
+
+  const identity = developerIdIdentity();
+  if (!identity) {
     throw new Error(
       "[after-pack-sign] SUITE_SIGN=1 but no Developer ID Application identity found"
     );
   }
 
-  const args = ["--force", "--deep", "--sign", identity || "-"];
-  if (identity) {
-    args.splice(2, 0, "--options", "runtime", "--timestamp");
-  }
-  if (fs.existsSync(entitlements)) {
-    args.push("--entitlements", entitlements);
-  }
-  args.push(appPath);
-
-  try {
-    execFileSync("codesign", args, { stdio: "inherit" });
-    console.log(
-      "[after-pack-sign]",
-      identity ? `Developer ID signed ${appPath}` : `ad-hoc signed ${appPath}`
-    );
-  } catch (err) {
-    if (suite) throw err;
-    console.warn("[after-pack-sign] codesign failed:", err.message);
-  }
+  const { signAsync } = require("@electron/osx-sign");
+  await signAsync({
+    app: appPath,
+    identity,
+    platform: "darwin",
+    hardenedRuntime: true,
+    optionsForFile: () => ({
+      entitlements: hasEntitlements ? entitlements : undefined,
+      hardenedRuntime: true,
+    }),
+  });
+  console.log("[after-pack-sign] Developer ID signed (osx-sign)", appPath);
 };
