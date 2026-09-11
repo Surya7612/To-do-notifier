@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 
@@ -20,6 +21,14 @@ struct LibraryView: View {
     var body: some View {
         LibraryBrowser()
             .id(browserGeneration)
+            .onAppear {
+                // An accessory app is never a normal foreground application, so
+                // macOS hands this window no key focus: it draws, and it takes
+                // mouse clicks, but text fields and some SwiftData faults behave
+                // as though nobody is looking. Settings activates for the same
+                // reason.
+                NSApp.activate(ignoringOtherApps: true)
+            }
             .task { collectInbox() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { collectInbox() }
@@ -171,7 +180,10 @@ private struct LibraryBrowser: View {
                     }
                 }
             } else if let selection {
-                ContextDetailView(context: selection, quietHours: work.quietHours)
+                ContextDetailView(context: selection, quietHours: work.quietHours) {
+                    forget(selection)
+                }
+                .id(selection.persistentModelID)
             } else if case let .project(identifier) = scope,
                       let project = projects.first(where: { $0.identifier == identifier }) {
                 ProjectOverview(project: project, work: work)
@@ -304,17 +316,34 @@ private struct LibraryBrowser: View {
                 description: Text("Pick this project in the panel before saving, or move something here.")
             )
         } else {
+            // Selection alone drives the detail column. A NavigationLink plus
+            // navigationDestination used to mount a second ContextDetailView,
+            // which kept reading imageData after Forget had cleared selection.
             List(filtered, id: \.persistentModelID, selection: $selection) { context in
-                NavigationLink(value: context) {
-                    LibraryRow(context: context,
-                               matchedByMeaningOnly: isMeaningOnlyMatch(context))
-                }
-                .tag(context)
+                LibraryRow(context: context,
+                           matchedByMeaningOnly: isMeaningOnlyMatch(context))
+                    .tag(context)
             }
             .listStyle(.sidebar)
-            .navigationDestination(for: SavedContext.self) {
-                ContextDetailView(context: $0, quietHours: work.quietHours)
-            }
+        }
+    }
+
+    /// Clears selection before the model is deleted so the detail pane is not
+    /// still reading `@Attribute(.externalStorage) imageData` on a tombstone —
+    /// that path traps inside SwiftData rather than returning nil.
+    private func forget(_ context: SavedContext) {
+        let reminderID = context.reminderIdentifier
+        selection = nil
+        isShowingGraph = false
+        // Yield so SwiftUI can drop ContextDetailView before the model is gone.
+        // Deleting in the same turn left the detail reading `imageData` and
+        // trapped in SwiftData's external-storage getter.
+        Task { @MainActor in
+            await Task.yield()
+            Reminders.cancel(id: reminderID)
+            guard context.modelContext != nil, !context.isDeleted else { return }
+            modelContext.delete(context)
+            try? modelContext.save()
         }
     }
 }
@@ -504,7 +533,7 @@ private struct LibraryRow: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let data = context.imageData, let image = NSImage(data: data) {
+        if let image = Self.screenshot(from: context) {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -516,6 +545,14 @@ private struct LibraryRow: View {
                 .frame(width: 52, height: 34)
         }
     }
+
+    /// Safe to call from layout: skips tombstones so Forget cannot trap inside
+    /// SwiftData's external-storage getter mid-draw.
+    fileprivate static func screenshot(from context: SavedContext) -> NSImage? {
+        guard context.modelContext != nil, !context.isDeleted else { return nil }
+        guard let data = context.imageData, !data.isEmpty else { return nil }
+        return NSImage(data: data)
+    }
 }
 
 private struct ContextDetailView: View {
@@ -525,16 +562,23 @@ private struct ContextDetailView: View {
     /// moved out of it exactly as one set from the panel is.
     var quietHours = QuietHours()
 
+    /// Parent clears selection before the model is deleted.
+    var onForget: () -> Void
+
     @Query(sort: \Project.name) private var projects: [Project]
     @Environment(\.modelContext) private var modelContext
     @State private var showingFullText = false
     @State private var reminderProblem: String?
+    /// Held so a cold external-storage fault can retry. Drawn with the original
+    /// in-scroll `.aspectRatio(.fit)` layout — a max-height outside the scroll
+    /// view made phone screenshots letterbox with empty gutters.
+    @State private var screenshot: NSImage?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let data = context.imageData, let image = NSImage(data: data) {
-                    Image(nsImage: image)
+                if let screenshot {
+                    Image(nsImage: screenshot)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -680,15 +724,17 @@ private struct ContextDetailView: View {
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .task(id: context.persistentModelID) {
+            screenshot = LibraryRow.screenshot(from: context)
+            if screenshot == nil {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                screenshot = LibraryRow.screenshot(from: context)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .destructiveAction) {
-                Button(role: .destructive) {
-                    // Otherwise the notification still fires for something the
-                    // user has deleted, and nothing can cancel it afterwards.
-                    Reminders.cancel(id: context.reminderIdentifier)
-                    modelContext.delete(context)
-                    try? modelContext.save()
-                } label: {
+                Button(role: .destructive, action: onForget) {
                     Label("Forget", systemImage: "trash")
                 }
                 .help("Delete this saved context")

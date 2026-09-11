@@ -83,8 +83,8 @@ private struct LibraryMenuButton: View {
 
     var body: some View {
         Button("Saved Context…") {
-            openWindow(id: AppWindow.library)
             NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: AppWindow.library)
         }
     }
 }
