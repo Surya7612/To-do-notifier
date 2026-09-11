@@ -156,6 +156,8 @@ xcodebuild archive \
     MARKETING_VERSION="${VERSION}" \
     CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
     DEVELOPMENT_TEAM="${TEAM_ID}" \
+    ENABLE_HARDENED_RUNTIME=YES \
+    OTHER_CODE_SIGN_FLAGS="--timestamp" \
     ARCHS=arm64 \
     EXCLUDED_ARCHS=x86_64 \
     2>&1 | tail -5
@@ -206,9 +208,19 @@ create-dmg \
 # ── Notarize ─────────────────────────────────────────────────────────────────
 
 echo "Submitting DMG to Apple notarization (this can take several minutes)…"
+NOTARY_JSON="${BUILD_DIR}/notary.json"
 xcrun notarytool submit "${DMG_PATH}" \
     --keychain-profile "${NOTARY_PROFILE}" \
-    --wait
+    --wait \
+    --output-format json > "${NOTARY_JSON}"
+NOTARY_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "${NOTARY_JSON}")"
+NOTARY_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "${NOTARY_JSON}")"
+echo "Notary status: ${NOTARY_STATUS} (id ${NOTARY_ID})"
+if [ "${NOTARY_STATUS}" != "Accepted" ]; then
+    echo "Notarization failed. Apple's log:"
+    xcrun notarytool log "${NOTARY_ID}" --keychain-profile "${NOTARY_PROFILE}" || true
+    exit 1
+fi
 
 echo "Stapling notarization ticket…"
 xcrun stapler staple "${DMG_PATH}"
