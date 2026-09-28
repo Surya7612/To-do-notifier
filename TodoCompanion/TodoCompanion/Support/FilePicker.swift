@@ -14,6 +14,11 @@ import Foundation
 /// it. The cost is a Dock icon visible while the dialog is open, which is a
 /// worse look than this app otherwise keeps but is strictly better than a
 /// control that does nothing. The policy is restored afterwards.
+///
+/// When a normal window is already open (Settings, Library), the panel is
+/// presented as a **sheet** on that window. A free-floating open panel from an
+/// accessory app often lands *behind* the Settings window that opened it — the
+/// Choose folder button then looks dead even though FilePicker ran.
 @MainActor
 enum FilePicker {
     /// - Parameter configure: applied to the panel before it is shown.
@@ -34,11 +39,42 @@ enum FilePicker {
 
         NSApp.activate(ignoringOtherApps: true)
 
-        // Above the Settings window it was opened from, which is an ordinary
-        // window and would otherwise be allowed to cover it.
-        panel.level = .modalPanel
+        if let host = hostWindow() {
+            host.makeKeyAndOrderFront(nil)
+            return chooseAsSheet(panel, on: host)
+        }
 
+        panel.level = .modalPanel
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return url
+    }
+
+    /// A visible, activating window that can host a sheet — never the companion
+    /// panel, which is non-activating and would swallow the dialog.
+    private static func hostWindow() -> NSWindow? {
+        let candidates = NSApp.windows.filter { window in
+            guard window.isVisible, !(window is NSPanel) else { return false }
+            // Preference / Settings windows are ordinary NSWindows; the floating
+            // companion panel is an NSPanel and must not host the sheet.
+            return true
+        }
+
+        if let key = candidates.first(where: \.isKeyWindow) { return key }
+        if let main = candidates.first(where: \.isMainWindow) { return main }
+        return candidates.first
+    }
+
+    /// Runs the open panel as a sheet and blocks until it closes, so callers can
+    /// keep a synchronous `URL?` API.
+    private static func chooseAsSheet(_ panel: NSOpenPanel, on window: NSWindow) -> URL? {
+        var picked: URL?
+        panel.beginSheetModal(for: window) { response in
+            if response == .OK {
+                picked = panel.url
+            }
+            NSApp.stopModal()
+        }
+        NSApp.runModal(for: window)
+        return picked
     }
 }

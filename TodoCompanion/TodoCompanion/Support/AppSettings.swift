@@ -10,6 +10,8 @@ enum AppSettings {
         static let talkHotkeyID = "talkHotkeyID"
         static let provider = "provider"
         static let openAIModel = "openAIModel"
+        static let anthropicModel = "anthropicModel"
+        static let geminiModel = "geminiModel"
         static let currentProjectID = "currentProjectID"
         static let semanticEnabled = "semanticEnabled"
         static let embeddingModel = "embeddingModel"
@@ -20,6 +22,8 @@ enum AppSettings {
         static let voiceEngine = "voiceEngine"
         static let mirrorsToAppleReminders = "mirrorsToAppleReminders"
         static let accessibilityExtrasEnabled = "accessibilityExtrasEnabled"
+        /// Teach me also warps the cursor to each step (Accessibility extras).
+        static let guideCursorWhileTeaching = "guideCursorWhileTeaching"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -34,6 +38,8 @@ enum AppSettings {
     enum Provider: String, CaseIterable, Identifiable {
         case ollama
         case openAI
+        case anthropic
+        case gemini
 
         var id: String { rawValue }
 
@@ -41,6 +47,16 @@ enum AppSettings {
             switch self {
             case .ollama: "On this Mac"
             case .openAI: "OpenAI"
+            case .anthropic: "Claude"
+            case .gemini: "Gemini"
+            }
+        }
+
+        /// Whether this choice would send a question off the machine when a key is present.
+        var isCloud: Bool {
+            switch self {
+            case .ollama: false
+            case .openAI, .anthropic, .gemini: true
             }
         }
     }
@@ -141,13 +157,16 @@ enum AppSettings {
     enum AnswerDestination: Equatable, Sendable {
         case local
         case cloud(String)
-        case cloudWithoutKey
+        /// Selected cloud vendor with no Keychain secret — still distinct from local.
+        case cloudWithoutKey(String)
 
         /// Pure so it can be tested without a Keychain or a defaults domain.
         static func resolve(provider: Provider, hasCloudKey: Bool, cloudModel: String) -> AnswerDestination {
             switch provider {
-            case .ollama: return .local
-            case .openAI: return hasCloudKey ? .cloud(cloudModel) : .cloudWithoutKey
+            case .ollama:
+                return .local
+            case .openAI, .anthropic, .gemini:
+                return hasCloudKey ? .cloud(cloudModel) : .cloudWithoutKey(provider.displayName)
             }
         }
 
@@ -155,7 +174,7 @@ enum AppSettings {
             switch self {
             case .local: return "Local"
             case let .cloud(model): return model
-            case .cloudWithoutKey: return "OpenAI — no key"
+            case let .cloudWithoutKey(vendor): return "\(vendor) — no key"
             }
         }
 
@@ -181,8 +200,8 @@ enum AppSettings {
                 return "Answered by \(localModel) on this Mac. Nothing leaves the device. Click to change."
             case let .cloud(model):
                 return "Your question and the captured screen go to \(model). Saved summaries stay local. Click to change."
-            case .cloudWithoutKey:
-                return "OpenAI is selected but no API key is saved, so \(localModel) is answering on this Mac. Add a key in Settings."
+            case let .cloudWithoutKey(vendor):
+                return "\(vendor) is selected but no API key is saved, so \(localModel) is answering on this Mac. Add a key in Settings."
             }
         }
     }
@@ -196,6 +215,8 @@ enum AppSettings {
             Key.talkHotkeyID: HotkeyChoice.talkFallback.id,
             Key.provider: Provider.ollama.rawValue,
             Key.openAIModel: OpenAIBrain.defaultModel,
+            Key.anthropicModel: AnthropicBrain.defaultModel,
+            Key.geminiModel: GeminiBrain.defaultModel,
             // Off by default because it needs a second model pulled, and a
             // feature that silently does nothing until an unrelated command is
             // run is worse than one the user turned on deliberately.
@@ -209,6 +230,9 @@ enum AppSettings {
             // works fully without it. Tab+Q and pointer move/click unlock only
             // when the user flips this and macOS trusts the process.
             Key.accessibilityExtrasEnabled: false,
+            // Off until asked: warping the pointer mid-lesson is Guided's whole
+            // point, and Teach me must stay the calm default (boxes only).
+            Key.guideCursorWhileTeaching: false,
         ])
     }
 
@@ -218,6 +242,14 @@ enum AppSettings {
     static var accessibilityExtrasEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: Key.accessibilityExtrasEnabled) }
         set { UserDefaults.standard.set(newValue, forKey: Key.accessibilityExtrasEnabled) }
+    }
+
+    /// Teach me warps the cursor to each step's box when Accessibility extras
+    /// are on. Same behaviour as the old Guided preset — kept as a Teach option
+    /// so the action row is one loop, not three modes.
+    static var guideCursorWhileTeaching: Bool {
+        get { UserDefaults.standard.bool(forKey: Key.guideCursorWhileTeaching) }
+        set { UserDefaults.standard.set(newValue, forKey: Key.guideCursorWhileTeaching) }
     }
 
     /// Whether dated tasks are copied into Apple Reminders so iCloud can alert
@@ -276,7 +308,38 @@ enum AppSettings {
         return raw.isEmpty ? OpenAIBrain.defaultModel : raw
     }
 
+    static var anthropicModel: String {
+        let raw = UserDefaults.standard.string(forKey: Key.anthropicModel) ?? AnthropicBrain.defaultModel
+        return raw.isEmpty ? AnthropicBrain.defaultModel : raw
+    }
+
+    static var geminiModel: String {
+        let raw = UserDefaults.standard.string(forKey: Key.geminiModel) ?? GeminiBrain.defaultModel
+        return raw.isEmpty ? GeminiBrain.defaultModel : raw
+    }
+
+    /// Model name for the currently selected cloud provider, or the OpenAI default when local.
+    static var cloudModel: String {
+        switch provider {
+        case .ollama, .openAI: openAIModel
+        case .anthropic: anthropicModel
+        case .gemini: geminiModel
+        }
+    }
+
     static var openAIKey: String? { Keychain.get(OpenAIBrain.keychainAccount) }
+    static var anthropicKey: String? { Keychain.get(AnthropicBrain.keychainAccount) }
+    static var geminiKey: String? { Keychain.get(GeminiBrain.keychainAccount) }
+
+    /// Whether the selected provider has a usable Keychain secret.
+    static var hasKeyForSelectedProvider: Bool {
+        switch provider {
+        case .ollama: false
+        case .openAI: openAIKey != nil
+        case .anthropic: anthropicKey != nil
+        case .gemini: geminiKey != nil
+        }
+    }
 
     static var hotkey: HotkeyChoice {
         HotkeyChoice.named(UserDefaults.standard.string(forKey: Key.hotkeyID))

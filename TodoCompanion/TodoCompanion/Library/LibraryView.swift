@@ -75,6 +75,8 @@ private struct LibraryBrowser: View {
         case everything
         case project(String)
         case unfiled
+        case dueSoon
+        case overdue
     }
 
     private var inScope: [SavedContext] {
@@ -85,6 +87,10 @@ private struct LibraryBrowser: View {
             return contexts.filter { $0.project == nil }
         case let .project(identifier):
             return contexts.filter { $0.project?.identifier == identifier }
+        case .dueSoon:
+            return contexts.filter { $0.hasReminderDue(within: 48 * 60 * 60) }
+        case .overdue:
+            return contexts.filter(\.hasOverdueReminder)
         }
     }
 
@@ -155,6 +161,8 @@ private struct LibraryBrowser: View {
         switch scope {
         case .everything: return "Everything"
         case .unfiled: return "No project"
+        case .dueSoon: return "Due soon"
+        case .overdue: return "Overdue"
         case let .project(identifier):
             return projects.first { $0.identifier == identifier }?.name ?? "Project"
         }
@@ -284,6 +292,14 @@ private struct LibraryBrowser: View {
         HStack(spacing: DS.Spacing.tight) {
             Picker("Show", selection: $scope) {
                 Text("Everything (\(contexts.count))").tag(Scope.everything)
+                let dueSoon = contexts.count { $0.hasReminderDue(within: 48 * 60 * 60) }
+                if dueSoon > 0 {
+                    Text("Due soon (\(dueSoon))").tag(Scope.dueSoon)
+                }
+                let overdue = contexts.count { $0.hasOverdueReminder }
+                if overdue > 0 {
+                    Text("Overdue (\(overdue))").tag(Scope.overdue)
+                }
                 ForEach(projects) { project in
                     Text("\(project.name) (\(project.contexts.count))")
                         .tag(Scope.project(project.identifier))

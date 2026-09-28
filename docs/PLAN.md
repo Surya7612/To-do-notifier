@@ -1374,7 +1374,8 @@ control, and drawing on the user's screen unasked is the app acting on inference
 - [x] A **Teach me** preset, and a bar in the panel that steps the lesson
 - [x] A caption per step, printed beside its first box
 - [x] An arrow between two boxes, where Max wrote one between the two quoted labels
-- [~] Generated diagrams drawn over the screen — not built, see below
+- [x] Teaching grid board (`BoardScene` / `BoardPanelController`) — invented diagrams on their own surface; see below
+- [~] Generated diagrams drawn over the screen — deliberately not; the board is the surface
 
 Phase 10 boxed one control on a button press. This turns that into something
 that can teach: the box keeps up with the spoken answer, and a lesson puts up
@@ -1409,11 +1410,12 @@ since a few keystrokes reflow an editor and a confident box a line out is worse
 than no box; advancing by voice does not, because there is no press and a
 capture between clauses is the continuous capture this project refuses.
 
-**Diagrams generated over the screen are deliberately absent.** Annotating what
-is there and drawing something that is not are different features: nothing
-anchors a sketch to an OCR box, so its geometry would be the model's rather than
-Vision's, which is the one thing this phase holds constant. If it is built it
-needs its own surface, not the lesson marks.
+**Diagrams invented over the screen stay absent; they have a board instead.**
+Annotating what is there and drawing something that is not are different features:
+nothing anchors a sketch to an OCR box, so its geometry would be the model's rather
+than Vision's. The teaching **grid board** (`BoardScene` / `BoardPanelController`) is
+the approved surface — a separate floating panel for Explain / Teach / Guided when
+the model emits a closed `board` fence. Lesson marks stay Vision-anchored.
 
 ---
 

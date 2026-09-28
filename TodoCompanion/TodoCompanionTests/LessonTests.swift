@@ -58,6 +58,26 @@ struct LessonParsingTests {
         #expect(Lesson.from(answer: answer) == nil)
     }
 
+    /// A two-item status list before the real walkthrough used to be `.first`
+    /// and kill Teach / Guided even when three quoted steps followed.
+    @Test("a short preamble list does not hide a later walkthrough")
+    func laterWalkthroughWinsOverShortPreamble() throws {
+        let answer = """
+        1. The agent's note is in "By design".
+        2. Credentials show "Success".
+
+        solve this and teach me how to
+
+        1. Look at "nums = [1,2,1]" first.
+        2. Then sort so equals sit together: "nums.sort()".
+        3. The base case appends when "start == len(nums)".
+        """
+
+        let lesson = try #require(Lesson.from(answer: answer))
+        #expect(lesson.steps.count == 3)
+        #expect(lesson.steps[0].anchors == ["nums = [1,2,1]"])
+    }
+
     /// A numbered list is a common way to write an answer that has nothing to
     /// do with what is on screen. Without this, "1. sort 2. recurse 3. undo"
     /// would start a lesson whose every step drew nothing.

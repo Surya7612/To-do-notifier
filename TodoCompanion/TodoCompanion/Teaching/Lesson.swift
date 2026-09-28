@@ -45,9 +45,10 @@ nonisolated struct Lesson: Equatable {
         }
     }
 
-    /// Long enough to carry a clause, short enough not to become a second
-    /// panel floating over the user's editor.
-    static let captionLength = 64
+    /// Long enough to carry a spoken tip, short enough not to become a second
+    /// panel floating over the user's editor. Conceptual steps (no OCR box)
+    /// rely on this alone, so it has to hold a real sentence.
+    static let captionLength = 96
 
     /// Max writing one label into another. The only mark this app draws that
     /// is not a box, and it is drawn because Max *stated* a relation between
@@ -68,26 +69,34 @@ nonisolated struct Lesson: Equatable {
     /// prose when it was asked for steps, and the right outcome then is the
     /// ordinary answer it produced rather than an empty lesson bar over it.
     static func from(answer: String) -> Lesson? {
-        let items = AnswerContent.blocks(in: answer).compactMap { block -> [String]? in
-            guard case let .numbered(items) = block else { return nil }
+        // Not merely the first numbered block. A short preamble list — two
+        // observations before "now the walkthrough" — used to win `.first` and
+        // fail the step floor, so Teach / Guided never started even when a
+        // real three-step list sat below it.
+        let candidates = AnswerContent.blocks(in: answer).compactMap { block -> [String]? in
+            guard case let .numbered(items) = block, items.count >= minimumSteps else {
+                return nil
+            }
             return items
-        }.first
-
-        guard let items, items.count >= minimumSteps else { return nil }
-
-        let steps = items.map { item in
-            Step(text: item,
-                 anchors: ScreenTextLocator.quotedLabels(in: item),
-                 isConnected: item.contains(connector))
         }
 
-        // Every step naming nothing is a numbered list that happens to be in
-        // the answer — "1. sort 2. recurse 3. backtrack" — rather than a walk
-        // through what is on screen. Playing it would put a mode on the panel
-        // and never draw anything.
-        guard steps.contains(where: { !$0.anchors.isEmpty }) else { return nil }
+        for items in candidates {
+            let steps = items.map { item in
+                Step(text: item,
+                     anchors: ScreenTextLocator.quotedLabels(in: item),
+                     isConnected: item.contains(connector))
+            }
 
-        return Lesson(steps: steps)
+            // Every step naming nothing is a numbered list that happens to be in
+            // the answer — "1. sort 2. recurse 3. backtrack" — rather than a walk
+            // through what is on screen. Playing it would put a mode on the panel
+            // and never draw anything.
+            guard steps.contains(where: { !$0.anchors.isEmpty }) else { continue }
+
+            return Lesson(steps: steps)
+        }
+
+        return nil
     }
 
     /// The step a spoken clause belongs to, searching forward from the one

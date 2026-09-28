@@ -47,7 +47,9 @@ the position of writing `app-data.json`, a file another process holds in memory 
 with no locking between them.
 
 The governing design document is `docs/PLAN.md`. Read it before proposing
-architecture; it records what was deliberately rejected and why.
+architecture; it records what was deliberately rejected and why. Current-version
+usability upgrades live in `docs/USABILITY.md` — prefer that when improving what
+already ships, without reopening the plan.
 
 ## Core principle
 
@@ -74,8 +76,9 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
 - **Capture**: ScreenCaptureKit, excluding this app's own windows so the panel never appears in its
   own screenshot
 - **OCR**: Vision `VNRecognizeTextRequest`, on device
-- **AI**: local Ollama by default; OpenAI as an opt-in for questions only. The key lives in the
-  Keychain, never in `UserDefaults`. The panel always states which one will answer
+- **AI**: local Ollama by default; OpenAI, Claude, or Gemini as an opt-in for questions only. Each
+  provider's key lives in the Keychain, never in `UserDefaults`. The panel always states which one
+  will answer
 - **Speech**: `AVAudioEngine` feeding either `SFSpeechRecognizer` with `requiresOnDeviceRecognition`
  or Parakeet on the Neural Engine via FluidAudio. Both on device
 - **Persistence**: SwiftData, with screenshots in `.externalStorage`
@@ -440,19 +443,20 @@ date and so never fires at all — silently, since scheduling itself succeeds.
 **Who answers is switchable from the panel, not only from Settings.** The badge in the panel header is a
 menu, because the choice is per-question in practice: the local model reads text back fine and is worth
 leaving for a diagram or an unfamiliar interface. It also carries the "Send the screenshot" toggle, which
-is the setting that decides whether a visual question can be answered *at all* — OpenAI sees the screen
-only if the screenshot goes with it, and otherwise receives OCR text and guesses at anything that is not
-words. Both were previously only reachable through a settings window, which the click that opens it
-dismisses.
+is the setting that decides whether a visual question can be answered *at all* — a cloud model sees the
+screen only if the screenshot goes with it, and otherwise receives OCR text and guesses at anything that
+is not words. Both were previously only reachable through a settings window, which the click that opens
+it dismisses.
 
-**A choice that cannot be honoured is stated, not silently downgraded.** Selecting OpenAI with no key
-in the Keychain falls back to the local model. Labelling that "Local" was a real bug rather than an
+**A choice that cannot be honoured is stated, not silently downgraded.** Selecting a cloud provider with
+no key in the Keychain falls back to the local model. Labelling that "Local" was a real bug rather than an
 honest simplification: the user flipped a switch, nothing on screen moved, and the fallback was
 indistinguishable from the control being broken. `AppSettings.AnswerDestination` therefore has three
-cases, not two — `cloudWithoutKey` is its own state, reads "OpenAI — no key" in the problem colour,
-and names what is answering instead. It is a pure function of the provider and whether a key exists,
-so it is testable without a Keychain, and it is derived from the same two facts as `makeBrain()` so
-the badge cannot name one model while another answers.
+cases, not two — `cloudWithoutKey(vendor)` is its own state, reads "OpenAI — no key" / "Claude — no key"
+/ "Gemini — no key" in the problem colour, and names what is answering instead. It is a pure function of
+the provider and whether a key exists for *that* provider, so it is testable without a Keychain, and it
+is derived from the same two facts as `makeBrain()` so the badge cannot name one model while another
+answers.
 
 **File dialogs need the app to stop being an accessory for a moment.** An
 `LSUIElement` app has no Dock presence and is never a normal foreground application, so macOS
@@ -474,14 +478,15 @@ click, show no caret, and silently swallow typing. `SettingsView` therefore acti
 `LibraryMenuButton` already did. A window where every control works except the ones needing a keyboard
 is this bug, not a SwiftUI binding problem.
 
-**The OpenAI model is picked from a list, not typed.** `OpenAIModelChoice.all` is fixed rather than
-fetched from `/v1/models`, because that endpoint only answers for a key that already works — the
-picker would be empty in exactly the state a new user is in — and it returns every model the key can
-reach, including embedding, audio and image models this app cannot call, so most of the list would be
-wrong answers presented as choices. `Selection.custom` keeps a model newer than the build reachable
-without an update, and the legacy default is listed so an existing setting shows as itself rather than
-as something the user typed. The blurbs describe the tier and deliberately quote **no prices**: these
-rates were cut twice in one quarter, and a stale number in the UI is worse than none.
+**Cloud models are picked from a list, not typed.** `OpenAIModelChoice`, `AnthropicModelChoice`, and
+`GeminiModelChoice` are fixed rather than fetched from each vendor's models endpoint, because that
+endpoint only answers for a key that already works — the picker would be empty in exactly the state a
+new user is in — and it returns every model the key can reach, including embedding, audio and image
+models this app cannot call, so most of the list would be wrong answers presented as choices.
+`Selection.custom` keeps a model newer than the build reachable without an update, and legacy defaults
+are listed so an existing setting shows as itself rather than as something the user typed. The blurbs
+describe the tier and deliberately quote **no prices**: these rates move often, and a stale number in
+the UI is worse than none.
 
 **A question is a conversation, not a lookup.** Every summon used to be one-shot, which made the panel
 useless for the thing it is best at: standing next to an unfamiliar interface and being asked "now
@@ -659,8 +664,9 @@ that is not even answering the question. So the picker has two entries rather th
 playback starts about a second in, rather than per word, which comes out as a stilted list because
 prosody needs a full clause. It is off by default, stops on `.immediate`, and stops when dictation
 starts: the voice plays through the speakers and the mic would transcribe it, so Max would otherwise
-dictate to itself. Markup is stripped before speaking, and a fenced block is announced rather than
-read, since reading code aloud character by character is both unbearable and too long to interrupt.
+dictate to itself. Markup is stripped before speaking, and a fenced block is skipped entirely rather
+than announced or read — saying "code block" mid-lesson breaks the feeling of a person teaching, and
+reading the fence aloud is worse. The panel still shows the code.
 
 `SpeechPlayback` decides *what* is spoken and when; a `VoiceSynthesizer` says it, on the same split as
 dictation and for the same reason — clause-breaking and markup-stripping are identical whoever talks.
@@ -849,6 +855,14 @@ step's first OCR box as Max speaks (Accessibility extras required for the warp; 
 without it). Plain Teach me stays the default and never moves the pointer. Neither mode types into
 the editor, clicks Run, or judges output — Max names and points; the user acts.
 
+**Invented diagrams get their own grid board, not the lesson overlay.** Annotating what Vision found
+and drawing something that is not on screen are different features — nothing anchors a sketch to an
+OCR box, so its geometry would be the model's rather than Vision's. Explain, Teach me, and Guided may
+emit a closed `board` JSON fence; `BoardScene` parses it and `BoardPanelController` draws shapes,
+concept-colour tokens, and tip text on graph paper in a separate floating panel. A missing or broken
+fence leaves the spoken answer alone, same refusal rule as `Lesson`. The panel answer hides the fence
+rather than showing raw JSON as a code well.
+
 Refusing is most of the logic. Fewer than three steps is a list rather than a lesson, and playing it
 costs a mode to escape from to show a box ⌘P would have given. A list where *no* step quotes anything
 is an ordinary answer that happens to be numbered — "1. sort 2. recurse 3. backtrack" — and starting a
@@ -907,11 +921,11 @@ the edge is the only part of this that fails invisibly.
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
 | `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~436 | Both hotkeys, provider choice, Ollama and OpenAI settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
-| `Companion/CompanionPanelController.swift` | ~221 | Panel lifecycle, cursor-relative placement, pinning, summoning straight into dictation, and wiring the view model to the capture indicator and the lesson overlay. Remembers the previously frontmost app so context is not attributed to us. |
+| `App/SettingsView.swift` | ~560 | Both hotkeys, provider choice, Ollama and OpenAI/Claude/Gemini settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
+| `Companion/CompanionPanelController.swift` | ~230 | Panel lifecycle, cursor-relative placement, pinning, summoning straight into dictation, and wiring the view model to the capture indicator, the lesson overlay, and the teaching grid board. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
 | `Companion/CompanionView.swift` | ~915 | Panel UI: status header with the who-answers and open-file menus and the pin, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~1348 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, and the lesson being walked. |
+| `Companion/CompanionViewModel.swift` | ~1600 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, the lesson being walked, and the teaching-grid board. |
 | `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
 | `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
 | `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
@@ -921,13 +935,19 @@ the edge is the only part of this that fails invisibly.
 | `Capture/ScreenHighlight.swift` | ~101 | The box drawn around it, briefly on a button press or until hidden while Max is talking. |
 | `Capture/LessonOverlay.swift` | ~230 | The click-through layer a lesson draws on: the current step's boxes numbered and captioned, arrows between them where Max stated one, the steps already covered left faint. |
 | `Teaching/Lesson.swift` | ~115 | Reads a lesson out of a numbered answer — its steps, their quoted anchors, each one's caption and whether Max joined two labels with an arrow — and says which step a spoken clause belongs to. Pure. |
+| `Teaching/BoardScene.swift` | ~280 | Parses a closed `board` JSON fence into frames of shapes with concept-colour tokens. Pure. |
+| `Teaching/BoardView.swift` | ~260 | Graph-paper grid and Canvas renderer for one board frame, including on-board tip text. |
+| `Teaching/BoardPanelController.swift` | ~90 | Floating non-activating panel that hosts the board beside the user's work. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~327 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, and the file-editing rules. |
+| `Brain/Brain.swift` | ~380 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, the file-editing rules, teaching, and the grid-board scene format. |
 | `Brain/ScreenKind.swift` | ~148 | What sort of material is on screen, and the paragraph of prompt guidance it earns. Pure. |
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
+| `Brain/AnthropicBrain.swift` | ~100 | Streaming Anthropic Messages client with vision. Opt-in; key from the Keychain. |
+| `Brain/GeminiBrain.swift` | ~100 | Streaming Gemini client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
+| `Brain/CloudModelChoice.swift` | ~70 | Vetted Claude and Gemini model lists (same pattern as OpenAI). Pure. |
 | `Voice/SpeechPlayback.swift` | ~357 | Decides what of a streaming answer gets read aloud, and when. Strips markup from the whole answer, sizes clauses, and reports which clause is being heard. |
 | `Voice/VoiceSynthesizer.swift` | ~152 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
 | `Voice/KokoroVoiceSynthesizer.swift` | ~234 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
@@ -940,6 +960,7 @@ the edge is the only part of this that fails invisibly.
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
 | `Store/ReminderPhrase.swift` | ~272 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
 | `Store/ReminderMirror.swift` | ~140 | Which of the to-do app's tasks belong in Apple Reminders, and what to withdraw. Pure. |
+| `Store/ReminderMirrorMessaging.swift` | ~55 | Settings copy and System Settings deep-link for the mirror destination. Pure. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
 | `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
@@ -949,11 +970,11 @@ the edge is the only part of this that fails invisibly.
 | `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
-| `Support/AppSettings.swift` | ~340 | `UserDefaults` keys, defaults, both hotkeys, Accessibility extras flag, the provider choice, and `AnswerDestination`. |
+| `Support/AppSettings.swift` | ~380 | `UserDefaults` keys, defaults, both hotkeys, Accessibility extras flag, the provider choice (Ollama / OpenAI / Claude / Gemini), and `AnswerDestination`. |
 | `Support/TrustAccessibility.swift` | ~70 | Opt-in Accessibility trust check, prompt, and System Settings deep link. |
 | `Support/DesignSystem.swift` | ~134 | Spacing, radius, alpha, status colours, the amber the app points with, and the opaque code well with its per-appearance token palette. `nonisolated`, so pure layout code can read it. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
-| `Support/Keychain.swift` | ~60 | Generic-password storage for the one secret the app has. |
+| `Support/Keychain.swift` | ~60 | Generic-password storage for each cloud provider's API key. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
 | `Hotkey/GlobalHotkey.swift` | ~140 | Carbon hot key registration, one role per combo; talk role requires a double-press. |
 | `Hotkey/EventTapHotkey.swift` | ~130 | CGEvent tap for Tab+Q when Accessibility extras are active. |
@@ -1021,6 +1042,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `GraphLayoutTests` | Force-directed placement | No assertable "correct" coordinates, so it pins the properties that make it usable: everything placed, nothing off-canvas, connected nodes closer than unconnected, and the same picture every time. |
 | `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
 | `LessonTests` | Reading a lesson out of an answer, following the voice through it, and resolving every label a step names | The parse is the only thing between a reply and a mode that draws continuously on the user's screen, and it fails silently in both directions: too eager and any answer containing a list puts boxes over an editor, too reluctant and "Teach me" appears to do nothing. Most of it pins what must **not** become a lesson — a list too short to be worth a mode, and a numbered answer that quotes nothing on screen. Also pins that matching survives `SpeechPlayback.speakable`, since the voice rewrites the sentence the match is made against, and that it never runs backwards to a label mentioned twice. The marks suite pins the two things a step draws besides boxes, both of which land on the user's own screen: an arrow only where Max wrote one — two labels in a step is not a relation between them — and a caption cut at a word rather than mid-word. |
+| `BoardSceneTests` | Parsing the teaching-grid `board` fence | Invented diagrams have their own surface; a bad or unclosed fence must yield nothing so Teach/Explain still work as prose. Pins step→frame selection and concept colour fallback. |
 | `FollowAlongMatchingTests` | What the box may point at while Max is speaking | The one path that draws on the screen without a press in front of it, so it pins the narrowing that makes that acceptable: a name the button believes on its own terms must be refused here unless Max quoted it. Also pins that the button's own behaviour is unchanged, since this added a parameter to the function it calls. |
 | `AnswerContentTests` | Splitting a reply into what the panel draws | Runs on every streamed chunk, against a document whose last fence is usually still open — so an unclosed fence must parse as code rather than as failure. The wrong-parse failures are silent: a block simply renders as the wrong thing. Found the bug where "3.5 GB free" parsed as list item three. |
 | `CodeHighlighterTests` | Colouring a fenced block | Colouring wrongly costs nothing, but the highlighter rebuilds the text character by character, so a scanner bug silently *drops* code the user is about to copy into their editor. Nearly all of it pins that the text survives intact; which token got which colour is barely asserted, so the palette stays free to change. |
@@ -1030,8 +1052,9 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `ReminderMirrorTests` | What is copied into Apple Reminders, and what is taken back | The only place this app writes into something Apple syncs, so every failure lands in the user's pocket rather than on screen. Pins that a backlog is *not* copied, since an alarm already past is delivered on sync and would alert for everything at once, and that a task merely falling due is not mistaken for one that was finished. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
-| `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
-| `VoiceEngineTests` | Which systems the Kokoro voice will run on, how an answer is cut into things to say, and the join between them | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. The chunking decides whether the delivery sounds like a person or a station announcement, which is inaudible from the code, and an over-long chunk is *dropped* rather than spoken — so it pins the upper bound as well as the lower. `SpeakableTextTests` covers what is said at all, where every failure is heard rather than seen: it pins that a fence still *open* — the normal mid-stream state, and the one the old per-chunk stripping got wrong — leaves its code unspoken, and that the quotes the follow-along box is found by survive the stripping. Also pins that neither offered voice is a hosted service. |
+| `CloudModelChoiceTests` / `ReminderMirrorMessagingTests` | Claude/Gemini model lists, and Reminders Settings copy | Same no-price rule for the other vendors; destination messaging must distinguish iCloud sync from this-Mac-only and point at System Settings on denial. |
+| `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable per vendor, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
+| `VoiceEngineTests` | Which systems the Kokoro voice will run on, how an answer is cut into things to say, and the join between them | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. The chunking decides whether the delivery sounds like a person or a station announcement, which is inaudible from the code, and an over-long chunk is *dropped* rather than spoken — so it pins the upper bound as well as the lower. `SpeakableTextTests` covers what is said at all, where every failure is heard rather than seen: it pins that a fence is skipped entirely (never announced as "code block", never read aloud), that a fence still *open* mid-stream leaves its code unspoken, and that the quotes the follow-along box is found by survive the stripping. Also pins that neither offered voice is a hosted service. |
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
@@ -1118,34 +1141,40 @@ Keep argument names the same as the variables they came from rather than abbrevi
 
 ### Do not
 
+Current-version usability upgrades (and the same non-goals restated as product intent) live in
+`docs/USABILITY.md`. Prefer that file when choosing what to improve next without reopening the plan.
+
 - Do not add cloud **transcription** or **speech synthesis**, or analytics. Voice and usage data stay
- on the machine
+  on the machine
 - Do not add a wake word or any always-listening mode. The mic opens when the user opens it. Note the
- Electron app's own wake word (`wakeWordEnabled`) ships **off by default**, which is the evidence, not the
- counter-example. `AppSettings.talkHotkey` is not a counter-example either: a shortcut is the user
- opening the mic, and nothing listens before it is pressed
+  Electron app's own wake word (`wakeWordEnabled`) ships **off by default**, which is the evidence, not the
+  counter-example. `AppSettings.talkHotkey` is not a counter-example either: a shortcut is the user
+  opening the mic, and nothing listens before it is pressed
 - Do not let inference write to disk. Max proposes a file change, the user is shown a diff, and only a
- button press writes anything. Do not extend editing past one explicitly-picked file
+  button press writes anything. Do not extend editing past one explicitly-picked file
 - Do not route background or automatic work to a cloud model. Foreground questions only, and only
   when the user has opted in. This rule replaced a blanket ban on hosted models once local vision
   proved too weak to explain what is on screen; the ban on *unprompted* export did not change
 - Do not *require* Accessibility permission for basic use. Carbon hotkeys and OCR pointing work
- without it. Extras (Tab+Q, Show me warping the pointer, Guided Teach cursor follow) are opt-in via
- Settings and still need a deliberate System Settings grant. Do not auto-move the pointer during
- follow-along or plain Teach me — only Show me (a press) and Guided Teach (a press) may warp
+  without it. Extras (Tab+Q, Show me warping the pointer, Guided Teach cursor follow) are opt-in via
+  Settings and still need a deliberate System Settings grant. Do not auto-move the pointer during
+  follow-along or plain Teach me — only Show me (a press) and Guided Teach (a press / Teach + Guide
+  cursor) may warp
 - Do not draw on the user's screen unasked, or move their pointer unasked. `ScreenHighlight` runs
- from a button press and names its match beforehand; a highlight after every answer would be the app
- acting on inference. Follow-along is the draw exception (opt-in, quoted labels only). Guided Teach
- is the pointer-follow exception (opt-in via the Guided preset, OCR boxes only, never clicks)
+  from a button press and names its match beforehand; a highlight after every answer would be the app
+  acting on inference. Follow-along is the draw exception (opt-in, quoted labels only). Guided Teach
+  is the pointer-follow exception (opt-in via Teach + Guide cursor, OCR boxes only, never clicks)
 - Do not type into other apps via Accessibility, click Run/Debug for the user, or judge program
- output. Max proposes file edits through one user-picked file and a confirmed diff only
+  output. Max proposes file edits through one user-picked file and a confirmed diff only
 - Do not add continuous or background screen capture. Capture is always explicit and user-initiated
 - Do not make resurfacing proactive. Related material appears on summon and never otherwise; plan §
- Phase 6 is **closed at that form**, not pending. An app-switch trigger says nothing about need, and
- acting on it means either matching a window title (usually wrong) or capturing unasked (contradicts
- the rule above)
+  Phase 6 is **closed at that form**, not pending. An app-switch trigger says nothing about need, and
+  acting on it means either matching a window title (usually wrong) or capturing unasked (contradicts
+  the rule above)
 - Do not present model inference as though the user wrote it
 - Do not add features beyond what was asked
+- Do not add multi-file autonomous agents — one user-picked file and a confirmed diff is the ceiling
+  (see `docs/USABILITY.md` §10)
 
 ## Distribution
 

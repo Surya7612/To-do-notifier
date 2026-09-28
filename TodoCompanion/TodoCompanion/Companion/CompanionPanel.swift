@@ -44,6 +44,20 @@ final class CompanionPanel: NSPanel {
     /// content size again. If nothing actually changed, that second pass is
     /// pure re-entry into a layout pass already in progress.
     override func setContentSize(_ size: NSSize) {
+        var size = size
+        // Grow downward from a fixed top-left. Near the bottom of the display
+        // that walks the panel off-screen and the last lines of an answer look
+        // "not auto-growing" — they are clipped by the screen edge, not by
+        // SwiftUI. Cap to the visible frame so the scroll view inside can take
+        // the overflow instead.
+        if let bounds = screen?.visibleFrame {
+            let margin: CGFloat = 8
+            let roomBelow = frame.maxY - bounds.minY - margin
+            if roomBelow > 0, size.height > roomBelow {
+                size.height = roomBelow
+            }
+        }
+
         let current = contentRect(forFrameRect: frame).size
         let isUnchanged = abs(size.width - current.width) < 0.5
             && abs(size.height - current.height) < 0.5

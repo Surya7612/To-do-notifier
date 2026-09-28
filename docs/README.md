@@ -8,6 +8,7 @@ This repository holds two applications. Start with whichever you came for.
 | [../TodoCompanion/README.md](../TodoCompanion/README.md) | The native macOS companion: asking, remembering, resurfacing |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Electron process layout, modules, data flow, external APIs |
 | [PLAN.md](PLAN.md) | The design document — roadmap, and what was rejected and why |
+| [USABILITY.md](USABILITY.md) | Current-version usability upgrades (and explicit non-goals) |
 | [../AGENTS.md](../AGENTS.md) | Working notes for contributors and AI coding agents |
 | [ASSETS.md](ASSETS.md) | Companion art licensing (not covered by MIT) |
 | [screenshots/](screenshots/) | App UI captures used in the README |

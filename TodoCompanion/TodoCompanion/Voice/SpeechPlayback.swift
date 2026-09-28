@@ -185,12 +185,37 @@ final class SpeechPlayback {
                 // otherwise every decimal point and file extension is one —
                 // "3." then "5 megabytes", "Brain." then "swift".
                 guard next == characters.count || characters[next].isWhitespace else { continue }
+                // "1. Sort the input" is a list item, not the sentence "1".
+                // Treating the index period as a boundary made the voice say
+                // "one" alone, then the line — and after we rewrote later
+                // steps, only that first stray number was ever heard.
+                if isListIndexPeriod(at: offset, in: characters) { continue }
                 boundaries.append(next)
             default:
                 continue
             }
         }
         return boundaries
+    }
+
+    /// Whether `characters[offset]` is the `.` in a `12. ` / `3) ` list marker.
+    private static func isListIndexPeriod(at offset: Int, in characters: [Character]) -> Bool {
+        guard offset < characters.count, characters[offset] == "." || characters[offset] == ")" else {
+            return false
+        }
+        let after = offset + 1
+        guard after == characters.count || characters[after].isWhitespace else { return false }
+
+        var cursor = offset - 1
+        var digits = 0
+        while cursor >= 0, characters[cursor].isNumber, digits < 2 {
+            digits += 1
+            cursor -= 1
+        }
+        guard digits >= 1 else { return false }
+        if cursor < 0 { return true }
+        let before = characters[cursor]
+        return before.isNewline || before.isWhitespace
     }
 
     func stop() {
@@ -273,9 +298,9 @@ final class SpeechPlayback {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if trimmed.hasPrefix("```") {
-                // Announced, not read. A function read out character by
-                // character is unbearable and too long to interrupt.
-                if !insideFence { lines.append("Code block.") }
+                // Skipped entirely, not announced. Saying "code block" mid-lesson
+                // breaks the feeling of a person teaching, and reading the fence
+                // aloud is worse. The panel still shows the code.
                 insideFence.toggle()
                 continue
             }
@@ -295,6 +320,14 @@ final class SpeechPlayback {
         for marker in ["- ", "* ", "+ ", "• ", "> "] where withoutMarkers.hasPrefix(marker) {
             withoutMarkers = String(withoutMarkers.dropFirst(marker.count))
             break
+        }
+
+        // Numbered steps keep their index in a form that sounds like teaching
+        // ("Step 2. …") rather than being stripped — stripping left only a
+        // stray "1" from an incomplete streamed marker, and later numbers
+        // never reached the voice at all.
+        if let numbered = spokenNumberedStep(withoutMarkers) {
+            withoutMarkers = numbered
         }
 
         var result = ""
@@ -330,6 +363,28 @@ final class SpeechPlayback {
         return Self.withoutMath(result)
             .split(separator: " ", omittingEmptySubsequences: true)
             .joined(separator: " ")
+    }
+
+    /// Turns `1. Sort the input` into `Step 1. Sort the input`.
+    ///
+    /// Returns an empty string for a bare `1.` / `2)` with no body yet — mid-
+    /// stream that fragment would otherwise be spoken as "one" alone before
+    /// the rest of the line arrives.
+    private static func spokenNumberedStep(_ line: String) -> String? {
+        let digits = line.prefix(while: \.isNumber)
+        guard !digits.isEmpty, digits.count <= 2 else { return nil }
+
+        var rest = line.dropFirst(digits.count)
+        guard let separator = rest.first, separator == "." || separator == ")" else { return nil }
+        rest = rest.dropFirst()
+        // "1." with nothing after it is still a list marker mid-stream — hold
+        // it. Requiring whitespace first let "1." fall through and get spoken.
+        if rest.isEmpty { return "" }
+        guard rest.first?.isWhitespace == true else { return nil }
+
+        let body = rest.trimmingCharacters(in: .whitespaces)
+        if body.isEmpty { return "" }
+        return "Step \(digits). \(body)"
     }
 
     /// Removes the delimiters of a LaTeX expression.

@@ -55,6 +55,10 @@ struct CompanionView: View {
         }
         .padding(DS.Spacing.roomy)
         .frame(width: DS.Size.panelWidth, alignment: .topLeading)
+        // ScrollView alone reports a short ideal height, so the hosting window
+        // stayed stubby until the user dragged it. Hug the real content height
+        // (capped inside `answerArea`) so the panel grows with the answer.
+        .fixedSize(horizontal: false, vertical: true)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
@@ -111,7 +115,7 @@ struct CompanionView: View {
             .foregroundStyle(viewModel.isPinned ? DS.Pointer.mark : Color.secondary)
             .help(viewModel.isPinned
                   ? "Unpin — the panel will close again when you click away"
-                  : "Pin the panel so it stays put while you work (⌘T)")
+                  : "Pin the panel so it stays put while you work (⌘T). Lessons pin automatically.")
             .keyboardShortcut("t", modifiers: .command)
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -288,6 +292,7 @@ struct CompanionView: View {
                 Label(viewModel.hasRegion ? "Region" : "Select region",
                       systemImage: viewModel.hasRegion ? "crop" : "rectangle.dashed")
             }
+            .disabled(viewModel.isBusy)
             .keyboardShortcut("r", modifiers: .command)
             .help("Drag out part of the screen to ask about (⌘R)")
 
@@ -299,6 +304,7 @@ struct CompanionView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .disabled(viewModel.isBusy)
                 .help("Back to the whole screen")
             }
 
@@ -317,7 +323,7 @@ struct CompanionView: View {
 
             Spacer(minLength: DS.Spacing.hair)
 
-            ForEach(CompanionViewModel.Preset.allCases) { preset in
+            ForEach(CompanionViewModel.primaryPresets) { preset in
                 Button {
                     viewModel.ask(preset)
                 } label: {
@@ -326,8 +332,8 @@ struct CompanionView: View {
                 .disabled(!viewModel.hasCapture || viewModel.isBusy)
                 .help(viewModel.presetWouldAskTypedText
                       ? "Asks what you typed — your words are used, not this preset"
-                      : (preset == .guidedTeach
-                         ? "Teach with boxes and move the pointer to each step as it is spoken"
+                      : (preset.isTeaching
+                         ? "Re-reads the screen, then walks it step by step with boxes. Turn on Guide cursor in the lesson bar to move the pointer."
                          : preset.question))
             }
         }
@@ -403,7 +409,7 @@ struct CompanionView: View {
                 Text("No API key saved, so \(viewModel.localModelName) is answering.")
             case .cloud where !sendsImage:
                 Divider()
-                Text("Sending recognized text only, so OpenAI cannot see images.")
+                Text("Sending recognized text only — the cloud model cannot see images.")
             default:
                 EmptyView()
             }
@@ -503,6 +509,8 @@ struct CompanionView: View {
                         }
                         if viewModel.lesson != nil {
                             lessonBar
+                        } else if viewModel.boardFrameCount > 1 {
+                            boardFrameBar
                         } else if let target = viewModel.pointerTarget {
                             // Not both: a lesson is already boxing what its
                             // current step names, so offering to box one more
@@ -510,17 +518,21 @@ struct CompanionView: View {
                             // same screen.
                             pointerRow(target)
                         }
+                        if viewModel.offersKeepThis {
+                            keepThisRow
+                        }
                         if let edit = viewModel.proposedEdit {
                             diffView(edit)
                         }
-                        // Anchored so a streaming answer keeps its own tail in
-                        // view instead of scrolling off the bottom.
-                        Color.clear.frame(height: 1).id(bottomAnchor)
+                        // Extra tail so the last glyph is not clipped mid-line
+                        // against the scroll view's bottom edge while streaming.
+                        Color.clear.frame(height: DS.Spacing.card).id(bottomAnchor)
                     }
                 }
             }
-            .scrollIndicators(.never)
+            .scrollIndicators(.automatic)
             .frame(maxHeight: DS.Size.maxAnswerHeight)
+            .fixedSize(horizontal: false, vertical: true)
             .onChange(of: viewModel.turns.last?.answer) {
                 withAnimation(.easeOut(duration: 0.15)) {
                     scroller.scrollTo(bottomAnchor, anchor: .bottom)
@@ -628,6 +640,9 @@ struct CompanionView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.primary)
+            // Reading is allowed — a second press cancels the in-flight grab via
+            // `captureTask` and starts over. Thinking/answering must not overlap.
+            .disabled(viewModel.phase == .thinking || viewModel.phase == .answering)
             .help(TrustAccessibility.extrasAreActive
                   ? "Box “\(target.text)” and move the pointer onto it (⌘P)"
                   : "Draw a box around “\(target.text)” on screen (⌘P)")
@@ -663,31 +678,63 @@ struct CompanionView: View {
     /// The steps themselves are not repeated here — they are already drawn as
     /// the numbered list of the answer, a few points above this row. What is
     /// missing without it is a way to go at your own pace, which is the whole
-    /// difference between being taught and being read to.
+    /// difference between being taught and being read to. Arrows on the bar
+    /// advance so Speak answers can stay off without bricking the mode
+    /// (USABILITY §2). No global ←/→ shortcuts — those steal the caret in the ask field.
     private var lessonBar: some View {
-        HStack(spacing: DS.Spacing.tight) {
-            Image(systemName: "graduationcap.fill")
-                .foregroundStyle(DS.Pointer.mark)
+        VStack(alignment: .leading, spacing: DS.Spacing.hair) {
+            HStack(spacing: DS.Spacing.tight) {
+                Image(systemName: "graduationcap.fill")
+                    .foregroundStyle(DS.Pointer.mark)
 
-            Text("Step \(viewModel.lessonStep + 1) of \(viewModel.lessonStepCount)")
-                .font(.caption.weight(.medium))
+                Text("Step \(viewModel.lessonStep + 1) of \(viewModel.lessonStepCount)")
+                    .font(.caption.weight(.medium))
 
-            Spacer(minLength: DS.Spacing.tight)
+                Spacer(minLength: DS.Spacing.tight)
 
-            Button { viewModel.stepLesson(by: -1) } label: {
-                Image(systemName: "chevron.left")
+                Toggle(isOn: Binding(
+                    get: { viewModel.guideCursorWhileTeaching },
+                    set: { viewModel.setGuideCursorWhileTeaching($0) }
+                )) {
+                    Label("Guide cursor",
+                          systemImage: viewModel.guideCursorWhileTeaching
+                            ? "cursorarrow.click.2" : "cursorarrow")
+                        .font(.caption)
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.plain)
+                .foregroundStyle(viewModel.guideCursorWhileTeaching ? DS.Pointer.mark : Color.secondary)
+                .help("Move the pointer onto each step’s box as you advance. Needs Accessibility extras.")
+
+                Button { viewModel.stepLesson(by: -1) } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(!viewModel.canRewindLesson)
+                .help("Previous step")
+
+                Button { viewModel.stepLesson(by: 1) } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(!viewModel.canAdvanceLesson)
+                .help("Next step — reads the screen again first, in case it moved")
+
+                Button("Done") { viewModel.endLesson() }
+                    .help("Take the boxes off the screen")
             }
-            .disabled(!viewModel.canRewindLesson)
-            .help("Previous step")
 
-            Button { viewModel.stepLesson(by: 1) } label: {
-                Image(systemName: "chevron.right")
+            if viewModel.guidedNeedsAccessibility {
+                Text("Cursor follow needs Accessibility extras in Settings.")
+                    .font(.caption2)
+                    .foregroundStyle(DS.Status.problem)
+            } else if viewModel.guidedMissingOnScreenMatch {
+                Text("No box this step — tip is on the screen; cursor stays put.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if !viewModel.lessonAdvancesByVoice {
+                Text("Speak answers is off — use the arrows to step.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
-            .disabled(!viewModel.canAdvanceLesson)
-            .help("Next step — reads the screen again first, in case it moved")
-
-            Button("Done") { viewModel.endLesson() }
-                .help("Take the boxes off the screen")
         }
         .font(.caption)
         .buttonStyle(.borderless)
@@ -695,6 +742,64 @@ struct CompanionView: View {
         .padding(.vertical, DS.Spacing.tight)
         .background(DS.Pointer.mark.opacity(DS.Alpha.hairline),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+    }
+
+    /// Manual frame advance when Explain drew a multi-frame board and speech is off.
+    private var boardFrameBar: some View {
+        HStack(spacing: DS.Spacing.tight) {
+            Image(systemName: "square.grid.2x2")
+                .foregroundStyle(DS.Pointer.mark)
+            Text("Board \(viewModel.boardFrameIndex + 1) of \(viewModel.boardFrameCount)")
+                .font(.caption.weight(.medium))
+            Spacer(minLength: DS.Spacing.tight)
+            Button { viewModel.stepBoardFrame(by: -1) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .disabled(!viewModel.canRewindBoardFrame)
+            Button { viewModel.stepBoardFrame(by: 1) } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(!viewModel.canAdvanceBoardFrame)
+            Button("Done") { viewModel.closeBoard() }
+        }
+        .font(.caption)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, DS.Spacing.normal)
+        .padding(.vertical, DS.Spacing.tight)
+        .background(DS.Pointer.mark.opacity(DS.Alpha.hairline),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+    }
+
+    private var keepThisRow: some View {
+        HStack(spacing: DS.Spacing.tight) {
+            Button {
+                viewModel.keepThis()
+            } label: {
+                Label("Keep this", systemImage: "bookmark.fill")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.Status.saved)
+            .help("Save this screen with your question as the reason (⌘S)")
+
+            if let nudge = viewModel.visionNudge {
+                Text(nudge)
+                    .font(.caption2)
+                    .foregroundStyle(DS.Status.problem)
+                    .lineLimit(2)
+                Button {
+                    viewModel.dismissVisionNudge()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, DS.Spacing.hair)
     }
 
     /// The change Max is proposing, shown before anything is written.

@@ -47,7 +47,21 @@ enum InboxImporter {
     ///
     /// Read-write, because importing removes what it has imported — see
     /// `importAll`.
+    @discardableResult
     static func link() -> Bool {
+        linkResult() == .linked
+    }
+
+    /// Distinguishes cancel from failure so Settings can say something useful
+    /// when the dialog never appears or the bookmark cannot be stored — both
+    /// used to look identical to tapping Cancel.
+    enum LinkResult: Equatable {
+        case linked
+        case cancelled
+        case failed(String)
+    }
+
+    static func linkResult() -> LinkResult {
         let chosen = FilePicker.choose { panel in
             panel.title = "Choose your capture inbox"
             panel.message = "Pick the folder your iPhone Shortcut saves into. Anything it drops there will be brought in."
@@ -56,17 +70,17 @@ enum InboxImporter {
             panel.canCreateDirectories = true
             panel.allowsMultipleSelection = false
         }
-        guard let url = chosen else { return false }
+        guard let url = chosen else { return .cancelled }
 
         do {
             let bookmark = try url.bookmarkData(options: .withSecurityScope,
                                                 includingResourceValuesForKeys: nil,
                                                 relativeTo: nil)
             UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
-            return true
+            return .linked
         } catch {
             NSLog("[InboxImporter] couldn't bookmark \(url.path): \(error)")
-            return false
+            return .failed("Couldn't link that folder: \(error.localizedDescription)")
         }
     }
 

@@ -28,6 +28,10 @@ final class CompanionViewModel {
     var onHighlightEnded: (() -> Void)?
     /// Starts or stops the click-outside monitor behind the pin.
     var onPinnedChanged: ((Bool) -> Void)?
+    /// Hides the panel for a capture so ScreenCaptureKit does not punch a black
+    /// hole where Max was sitting — that hole is exactly the editor Teach and
+    /// Guided need OCR to read.
+    var onPanelOcclusion: ((Bool) -> Void)?
 
     /// Whether clicking into another app leaves the panel where it is.
     ///
@@ -38,6 +42,9 @@ final class CompanionViewModel {
     var isPinned = false {
         didSet {
             guard isPinned != oldValue else { return }
+            // Manual pin/unpin takes ownership. Otherwise Done would unpin a pin
+            // the user re-asserted after auto-pin (or after unpinning mid-lesson).
+            pinnedForLesson = false
             onPinnedChanged?(isPinned)
         }
     }
@@ -102,6 +109,28 @@ final class CompanionViewModel {
     }
 
     var canSave: Bool { savableReason != nil && observation != nil }
+
+    /// Offer Keep this after a finished answer so ⌘S is not the only path.
+    var offersKeepThis: Bool {
+        canSave
+            && phase == .idle
+            && !(turns.last?.answer.isEmpty ?? true)
+            && lesson == nil
+    }
+
+    /// One-shot tip when a visual question is about to be answered without sight.
+    private(set) var visionNudge: String?
+
+    /// Cold-start readiness: nil until probed, then whether Ollama answered.
+    private(set) var ollamaReachable: Bool?
+
+    /// Auto-pinned for the active lesson so working underneath does not dismiss.
+    private var pinnedForLesson = false
+
+    /// User pressed Done (or otherwise ended the lesson) while this answer is
+    /// still streaming. Without this, the next chunk calls `beginLesson` again
+    /// and brings boxes, pin, and board back.
+    private var lessonSuppressedForAnswer = false
 
     /// What the app thinks the typed reason is asking for, if anything.
     private(set) var reminderSuggestion: ReminderSuggestion?
@@ -191,10 +220,10 @@ final class CompanionViewModel {
     /// evaluated on every redraw — and the panel redraws on every streamed
     /// token. Refreshed at each summon and whenever the provider changes, which
     /// covers every moment it could have become true.
-    private(set) var hasCloudKey = AppSettings.openAIKey != nil
+    private(set) var hasCloudKey = AppSettings.hasKeyForSelectedProvider
 
     func refreshCloudKey() {
-        hasCloudKey = AppSettings.openAIKey != nil
+        hasCloudKey = AppSettings.hasKeyForSelectedProvider
     }
 
     /// Who will answer, as the panel states it. Derived from the same two facts
@@ -203,7 +232,7 @@ final class CompanionViewModel {
     var destination: AppSettings.AnswerDestination {
         AppSettings.AnswerDestination.resolve(provider: AppSettings.provider,
                                               hasCloudKey: hasCloudKey,
-                                              cloudModel: AppSettings.openAIModel)
+                                              cloudModel: AppSettings.cloudModel)
     }
 
     var localModelName: String { AppSettings.model }
@@ -219,7 +248,11 @@ final class CompanionViewModel {
         speech.onSpeakingClause = { [weak self] clause in self?.followAlong(with: clause) }
     }
 
-    var isBusy: Bool { phase == .thinking || phase == .answering }
+    var isBusy: Bool {
+        // `.reading` counts: Show me / Look again / Teach re-grabs must not
+        // overlap a Return that starts a new answer on a half-written observation.
+        phase == .thinking || phase == .answering || phase == .reading
+    }
     var hasCapture: Bool { observation != nil }
 
     var statusText: String {
@@ -235,8 +268,12 @@ final class CompanionViewModel {
         // switched something on and nothing happened.
         if let voiceFailure = speech.failure, phase == .idle { return voiceFailure }
 
+        if let visionNudge, phase == .idle { return visionNudge }
+
         switch phase {
-        case .idle: return contextLabel
+        case .idle:
+            if let blocker = readinessBlocker { return blocker }
+            return contextLabel
         case .reading: return "Reading your screen…"
         case .startingDictation:
             // Loading Parakeet onto the Neural Engine takes tens of seconds the
@@ -253,69 +290,137 @@ final class CompanionViewModel {
         }
     }
 
+    /// Names the one thing stopping a first ask, when there is one.
+    private var readinessBlocker: String? {
+        if !ScreenCapture.hasPermission {
+            return "Screen Recording permission needed — open Settings from the panel"
+        }
+        if AppSettings.provider == .ollama, ollamaReachable == false {
+            return "Ollama isn’t running — start it, then ask again"
+        }
+        return nil
+    }
+
+    /// Probes Ollama so the status line can name a blocker before the first ask
+    /// (docs/USABILITY.md §4). Does not set `phase` — a false preflight flicker
+    /// must not yank the panel into the permission sheet while capture would
+    /// still succeed; `performCapture` owns that transition on a real denial.
+    func refreshReadiness() {
+        guard AppSettings.provider == .ollama else {
+            ollamaReachable = nil
+            return
+        }
+        let endpoint = AppSettings.endpoint
+        Task { [weak self] in
+            let ok = await OllamaBrain.isReachable(endpoint: endpoint)
+            guard let self else { return }
+            self.ollamaReachable = ok
+        }
+    }
+
+    /// Who to attribute a capture to, and whose app Guided / Show me activate.
+    ///
+    /// Set by the panel controller. Max is usually frontmost when a button is
+    /// pressed, so `NSWorkspace.frontmostApplication` alone would teach Max's
+    /// own windows and warp into the wrong process.
+    var resolveContextApp: (() -> NSRunningApplication?)?
+
     /// Snapshots the screen behind the companion. Called as the panel appears so
     /// an answer can start the moment the user hits return.
     func captureScreen(frontmostApp: NSRunningApplication?) {
+        // Never clobber an in-flight answer — swapping `observation` and forcing
+        // `.idle` while `answerTask` still streams leaves submits unlocked and
+        // pointer/lesson marks on the wrong screen.
+        guard phase != .thinking, phase != .answering else { return }
+        refreshReadiness()
         captureTask?.cancel()
+        captureTask = Task {
+            _ = await performCapture(frontmostApp: frontmostApp, preserveCropFrame: nil)
+        }
+    }
+
+    /// Re-reads every display, OCR and related strip.
+    ///
+    /// - Parameter preserveCropFrame: when the user had narrowed to a region,
+    ///   re-apply that rectangle after the fresh grab so Teach / Guided stay on
+    ///   the selection rather than silently widening to the whole display.
+    @discardableResult
+    private func performCapture(frontmostApp: NSRunningApplication?,
+                                preserveCropFrame: CGRect?,
+                                preserveTeaching: Bool = false) async -> Bool {
+        // Snapshot before flipping to `.reading` — Look again mid-answer must
+        // still suppress lesson restart on later stream chunks.
+        let answerWasInFlight = phase == .thinking || phase == .answering
         phase = .reading
-        // The boxes it was resolved against belong to the screen being replaced.
         pointerTarget = nil
-        // Remember who we captured so Show me / Guided Teach can activate that
-        // app rather than aiming at Max, which holds key focus when those run.
         if let frontmostApp,
            frontmostApp.bundleIdentifier != Bundle.main.bundleIdentifier {
             contextApp = frontmostApp
         }
-        // A summon is a new question about a new screen, which is where a
-        // lesson left up over the last one stops being a lesson and starts
-        // being litter.
-        endLesson()
+        if !preserveTeaching {
+            if answerWasInFlight {
+                lessonSuppressedForAnswer = true
+            }
+            endLesson()
+        }
         onCaptureBegan?()
-        // A key may have been added in Settings since the last summon.
         refreshCloudKey()
-        // Before retrieval reads the store, so something captured on the phone
-        // an hour ago can resurface on this summon rather than the next one.
         InboxImporter.importAll(into: modelContext)
 
-        captureTask = Task {
-            defer { onCaptureEnded?() }
-            do {
-                var fresh = try await ScreenCapture.captureAllDisplays(frontmostApp: frontmostApp)
-                let read = await Self.readText(in: fresh.primary.image)
-                fresh.primary.recognizedText = read.text
-                fresh.primary.textRegions = read.regions
-                for index in fresh.others.indices {
-                    // Boxes are kept for the focused display only: pointing at
-                    // a monitor the user is not looking at would move their
-                    // attention rather than direct it.
-                    fresh.others[index].recognizedText = await Self.readText(in: fresh.others[index].image).text
-                }
-                guard !Task.isCancelled else { return }
-                observation = fresh
-                contextLabel = fresh.contextLabel
-                // Re-read here rather than only at init: the library can add or
-                // remove projects while the panel object stays alive.
-                reloadProjects()
-                related = ContextRetriever.related(to: fresh,
-                                                   among: recentContexts(),
-                                                   inProject: currentProject)
-                linkedWork = TodoBridge.load()
-                if phase == .reading { phase = .idle }
-                mirrorTasksToAppleReminders()
+        defer { onCaptureEnded?() }
 
-                // Both run after the panel is already usable. Meaning matching
-                // needs a round trip to the local model, and making every
-                // summon wait on it would trade a visible delay for a signal
-                // the user has not asked for yet.
-                backfillEmbeddings()
-                await addMeaningMatches(for: fresh)
-            } catch ScreenCaptureError.permissionDenied {
-                guard !Task.isCancelled else { return }
-                phase = .needsPermission
-            } catch {
-                guard !Task.isCancelled else { return }
-                phase = .failed(error.localizedDescription)
+        do {
+            var fresh = try await ScreenCapture.captureAllDisplays(frontmostApp: frontmostApp)
+            let read = await Self.readText(in: fresh.primary.image)
+            fresh.primary.recognizedText = read.text
+            fresh.primary.textRegions = read.regions
+            for index in fresh.others.indices {
+                fresh.others[index].recognizedText = await Self.readText(in: fresh.others[index].image).text
             }
+            guard !Task.isCancelled else {
+                // A replacement capture sets `.reading` again; a bare cancel
+                // (dismiss, superseded teach) must not leave `isBusy` stuck.
+                if phase == .reading { phase = .idle }
+                return false
+            }
+
+            if let crop = preserveCropFrame,
+               let screen = NSScreen.screens.first(where: { NSMouseInRect(crop.origin, $0.frame, false) })
+                    ?? NSScreen.screens.first(where: { $0.frame.intersects(crop) })
+                    ?? NSScreen.main,
+               let narrowed = fresh.cropped(to: crop, on: screen) {
+                var cropped = narrowed
+                let cropRead = await Self.readText(in: cropped.primary.image)
+                cropped.primary.recognizedText = cropRead.text
+                cropped.primary.textRegions = cropRead.regions
+                fresh = cropped
+            }
+
+            guard !Task.isCancelled else {
+                if phase == .reading { phase = .idle }
+                return false
+            }
+            observation = fresh
+            contextLabel = fresh.contextLabel
+            reloadProjects()
+            related = ContextRetriever.related(to: fresh,
+                                               among: recentContexts(),
+                                               inProject: currentProject)
+            linkedWork = TodoBridge.load()
+            if phase == .reading { phase = .idle }
+            mirrorTasksToAppleReminders()
+
+            backfillEmbeddings()
+            await addMeaningMatches(for: fresh)
+            return true
+        } catch ScreenCaptureError.permissionDenied {
+            guard !Task.isCancelled else { return false }
+            phase = .needsPermission
+            return false
+        } catch {
+            guard !Task.isCancelled else { return false }
+            phase = .failed(error.localizedDescription)
+            return false
         }
     }
 
@@ -359,6 +464,10 @@ final class CompanionViewModel {
     func retryCapture(frontmostApp: NSRunningApplication?) {
         captureScreen(frontmostApp: frontmostApp)
     }
+
+    /// Presets shown on the action row. Guided is a Teach option (Guide cursor),
+    /// not a third button — same loop, one less mode to miss.
+    static var primaryPresets: [Preset] { [.explain, .nextStep, .teach] }
 
     /// Ready-made questions for the two things worth asking about a region.
     /// Typing "explain this" every time is friction on the most common action.
@@ -438,12 +547,46 @@ final class CompanionViewModel {
     func ask(_ preset: Preset) {
         let asked = Self.presetAsk(typed: question, preset: preset)
         question = asked.question
-        // Teaching follows the button, not the wording. Pressing "Teach me"
-        // with a question already typed means teach me *that*, so the user's
-        // own words are still what gets asked.
+
+        // Teach / Guided must read the screen *now*. The summon capture is often
+        // minutes old once the panel is pinned and the user has kept working —
+        // teaching that stale frame boxes the wrong lines and Guided warps to
+        // places that are no longer there.
+        if preset.isTeaching {
+            guard !isBusy else { return }
+            let context = resolveContextApp?() ?? contextApp
+            let crop = observation?.isCropped == true ? observation?.primaryScreenFrame : nil
+            // Guided is a Teach option (Settings / lesson-bar toggle), not a
+            // separate preset on the action row. The guidedTeach case remains
+            // for callers that still ask for it explicitly.
+            let guided = preset.isGuidedTeaching || AppSettings.guideCursorWhileTeaching
+            captureTask?.cancel()
+            captureTask = Task {
+                // Panel must not be on screen during this grab. Excluding our
+                // windows from ScreenCaptureKit leaves an opaque void where they
+                // were, so OCR of the editor under Max comes back empty and
+                // every lesson box / Guided warp then fails silently.
+                onPanelOcclusion?(true)
+                defer { onPanelOcclusion?(false) }
+                let ok = await performCapture(frontmostApp: context, preserveCropFrame: crop)
+                guard ok, !Task.isCancelled else {
+                    // Cancelled by dismiss / another grab — leave the typed
+                    // (or preset) question so the user can press Teach again.
+                    if phase == .reading { phase = .idle }
+                    return
+                }
+                submit(isFromPreset: asked.isFromPreset,
+                       isTeaching: true,
+                       isGuidedTeaching: guided,
+                       wantsBoard: true)
+            }
+            return
+        }
+
         submit(isFromPreset: asked.isFromPreset,
-               isTeaching: preset.isTeaching,
-               isGuidedTeaching: preset.isGuidedTeaching)
+               isTeaching: false,
+               isGuidedTeaching: false,
+               wantsBoard: preset == .explain)
     }
 
     /// Whether the preset buttons would ask the user's own words instead.
@@ -459,6 +602,7 @@ final class CompanionViewModel {
     /// need to hide for correctness — the screenshot was taken before the panel
     /// appeared and excludes this app's windows regardless.
     func selectRegion(hidingPanel: @escaping (Bool) -> Void) {
+        guard !isBusy else { return }
         guard let current = observation else {
             phase = .failed("Nothing captured yet.")
             return
@@ -493,6 +637,7 @@ final class CompanionViewModel {
 
     /// Returns to the whole screen after a region was selected.
     func clearRegion(frontmostApp: NSRunningApplication?) {
+        guard !isBusy else { return }
         captureScreen(frontmostApp: frontmostApp)
     }
 
@@ -620,9 +765,12 @@ final class CompanionViewModel {
         if let url { NSWorkspace.shared.open(url) }
     }
 
-    func submit() { submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false) }
+    func submit() { submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false, wantsBoard: false) }
 
-    private func submit(isFromPreset: Bool, isTeaching: Bool, isGuidedTeaching: Bool = false) {
+    private func submit(isFromPreset: Bool,
+                        isTeaching: Bool,
+                        isGuidedTeaching: Bool = false,
+                        wantsBoard: Bool = false) {
         let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
 
@@ -647,6 +795,8 @@ final class CompanionViewModel {
         speech.stop()
         proposedEdit = nil
         pointerTarget = nil
+        visionNudge = nil
+        lessonSuppressedForAnswer = false
         endLesson()
         phase = .thinking
 
@@ -658,28 +808,39 @@ final class CompanionViewModel {
         refreshReminderSuggestion()
 
         let brain = makeBrain()
+        let includeImage = AppSettings.sendsImage
         let context = AskContext(
             observation: observation,
             memories: ContextRetriever.promptLines(for: related),
             tasks: taskLines(),
-            includeImage: AppSettings.sendsImage,
+            includeImage: includeImage,
             // Everything before the turn just added, so the model is not shown
             // the question it is currently answering twice.
             history: turns.dropLast(),
             editableFile: editableFile.context,
             isTeaching: isTeaching,
-            isGuidedTeaching: isGuidedTeaching
+            isGuidedTeaching: isGuidedTeaching,
+            wantsBoard: wantsBoard || isTeaching
         )
 
-        // A lesson walks the screen with the voice. If Speak answers is off,
-        // teaching used to draw step 1 and never move — follow-along looked
-        // broken. Force speech (and ordinary follow-along if the reply is not
-        // a lesson) for this answer only; the Settings toggle stays as it was.
-        speech.speaksRegardlessOfSetting = isTeaching
+        // Teach advances by buttons / Space when Speak answers is off — forcing
+        // speech used to brick lessons that had no voice. Explain boards with no
+        // lesson still need a voice (or manual frame controls) to step frames.
+        speech.speaksRegardlessOfSetting = wantsBoard && !isTeaching
         followAlongThisAnswer = isTeaching
         // Guided Teach keeps this true for the lesson so each spoken step can
         // warp the cursor. Cleared with the lesson, not with ordinary teaching.
         guidedTeachThisAnswer = isGuidedTeaching
+        // Clear any prior board *before* arming this answer's flag — `endBoard`
+        // zeroes `wantsBoardThisAnswer`, so setting the flag first left every
+        // Explain/Teach stream unable to open a board.
+        endBoard()
+        wantsBoardThisAnswer = wantsBoard || isTeaching
+
+        if Self.looksLikeVisualQuestion(prompt),
+           !includeImage || !brain.leavesTheMachine {
+            visionNudge = "Diagrams need a cloud model with “Send the screenshot” on — switch from the badge"
+        }
 
         answerTask = Task {
             // Accumulated locally rather than in a property: the turn is the
@@ -702,6 +863,7 @@ final class CompanionViewModel {
                     // path, which requires the Settings toggle — so Teach me
                     // looked like follow-along being broken.
                     if isTeaching { beginLesson(from: streamed) }
+                    if wantsBoardThisAnswer { refreshBoard(from: streamed) }
                     speech.speakArriving(streamed)
                 }
                 guard !Task.isCancelled else {
@@ -710,6 +872,7 @@ final class CompanionViewModel {
                 }
 
                 if isTeaching { beginLesson(from: streamed) }
+                if wantsBoardThisAnswer { refreshBoard(from: streamed) }
                 speech.finish(streamed)
                 captureProposedEdit(from: streamed)
                 findPointerTarget(in: streamed)
@@ -733,10 +896,17 @@ final class CompanionViewModel {
     /// Session-only: Guided Teach warps the cursor to each step's box.
     private var guidedTeachThisAnswer = false
 
+    /// Session-only: parse and show a teaching-grid board for this answer.
+    private var wantsBoardThisAnswer = false
+
     private func clearTeachingSpeechOverride() {
         speech.speaksRegardlessOfSetting = false
         followAlongThisAnswer = false
-        guidedTeachThisAnswer = false
+        // Leave guidedTeachThisAnswer alone while a lesson is still on screen —
+        // ending speech mid-lesson must not kill cursor follow for later steps.
+        if lesson == nil {
+            guidedTeachThisAnswer = false
+        }
     }
 
     /// Stores what was said about the screen being saved.
@@ -781,17 +951,50 @@ final class CompanionViewModel {
     /// Draws a box around what the answer named, and warps the pointer onto it
     /// when Accessibility extras are on.
     ///
-    /// Deliberately a button press rather than something that happens on its
-    /// own: drawing over the user's screen after every answer would be the app
-    /// acting unasked, and most answers are not directions to a control. The
-    /// warp is folded into this same press so there is no orphan "Move pointer"
-    /// control — Show me is the whole gesture.
+    /// Always re-reads the screen. Locating on the summon capture first looked
+    /// faster, but after the editor reflows the same label still "matches" at
+    /// the old box — a confident mark on the wrong line (docs/USABILITY.md §7).
+    ///
+    /// Runs on `captureTask` like every other grab so summon / Look again / Teach
+    /// can cancel it — an orphan Task left the panel ordered out and could
+    /// re-front it after the user had dismissed.
     func showPointerTarget() {
-        guard let pointerTarget,
-              let frame = observation?.primaryScreenFrame
-        else { return }
+        let answer = turns.last?.answer ?? ""
+        guard !answer.isEmpty else { return }
 
-        let rect = ScreenTextLocator.screenRect(for: pointerTarget.boundingBox, in: frame)
+        captureTask?.cancel()
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+
+            let context = resolveContextApp?() ?? contextApp
+            let crop = observation?.isCropped == true ? observation?.primaryScreenFrame : nil
+            onPanelOcclusion?(true)
+            defer { onPanelOcclusion?(false) }
+
+            let ok = await performCapture(frontmostApp: context,
+                                          preserveCropFrame: crop,
+                                          preserveTeaching: true)
+            guard ok, !Task.isCancelled else { return }
+
+            guard let match = locatePointer(in: answer),
+                  let frame = observation?.primaryScreenFrame
+            else {
+                phase = .failed("That label isn’t on screen anymore — try Look again")
+                return
+            }
+
+            pointerTarget = match
+            highlightPointer(match, in: frame)
+        }
+    }
+
+    private func locatePointer(in answer: String) -> ScreenTextLocator.Match? {
+        guard let observation, observation.primaryScreenFrame != nil else { return nil }
+        return ScreenTextLocator.locate(named: answer, in: observation.primary.textRegions)
+    }
+
+    private func highlightPointer(_ match: ScreenTextLocator.Match, in frame: CGRect) {
+        let rect = ScreenTextLocator.screenRect(for: match.boundingBox, in: frame)
         onHighlight?(rect, false)
 
         guard TrustAccessibility.extrasAreActive else { return }
@@ -806,8 +1009,11 @@ final class CompanionViewModel {
     private func warpPointer(to point: CGPoint) {
         let app = contextApp
         Task { [weak self] in
-            app?.activate()
-            try? await Task.sleep(for: .milliseconds(80))
+            app?.activate(options: [.activateIgnoringOtherApps])
+            // Longer than a single frame: Guided warps while Max still holds
+            // key focus and a speaking synthesizer is starting, and 80ms was
+            // often not enough for the context app to finish coming forward.
+            try? await Task.sleep(for: .milliseconds(350))
             guard self != nil else { return }
             AXControlLocator.movePointer(to: point)
         }
@@ -833,6 +1039,8 @@ final class CompanionViewModel {
             advanceLesson(spokenIn: clause)
             return
         }
+
+        advanceExplainBoard(spokenIn: clause)
 
         guard AppSettings.followsAlongWhileSpeaking || followAlongThisAnswer else { return }
 
@@ -869,6 +1077,79 @@ final class CompanionViewModel {
     /// while they work underneath them.
     private var lessonMarks: [[CGRect]] = []
     private var lessonFrame: CGRect = .zero
+    /// Last step Guided already warped to. beginLesson runs on every streamed
+    /// chunk; without this the cursor thrashes to the same box dozens of times
+    /// and keeps yanking focus into the context app mid-answer.
+    private var lastGuidedWarpStep: Int?
+
+    // MARK: - Teaching board
+
+    /// Drawn on Max's grid panel — invented diagrams, not OCR marks.
+    var onBoardScene: ((BoardScene, Int) -> Void)?
+    var onBoardEnded: (() -> Void)?
+
+    private(set) var boardScene: BoardScene?
+    private(set) var boardFrameIndex = 0
+
+    /// User closed the board from its own chrome.
+    func closeBoard() {
+        endBoard()
+    }
+
+    /// Parses a closed `board` fence out of the answer and publishes the frame
+    /// that matches the current lesson step (or frame 0 for Explain).
+    private func refreshBoard(from answer: String) {
+        guard wantsBoardThisAnswer,
+              let scene = BoardScene.from(answer: answer)
+        else { return }
+
+        boardScene = scene
+        if lesson != nil {
+            boardFrameIndex = scene.frameIndex(forLessonStep: lessonStep)
+        } else {
+            boardFrameIndex = scene.clampedFrameIndex(boardFrameIndex)
+        }
+        publishBoard()
+    }
+
+    private func publishBoard() {
+        guard let boardScene else { return }
+        onBoardScene?(boardScene, boardFrameIndex)
+    }
+
+    private func syncBoardToLessonStep() {
+        guard let boardScene else { return }
+        let index = boardScene.frameIndex(forLessonStep: lessonStep)
+        guard index != boardFrameIndex else {
+            publishBoard()
+            return
+        }
+        boardFrameIndex = index
+        publishBoard()
+    }
+
+    /// Explain (no lesson): advance one board frame per spoken clause.
+    private func advanceExplainBoard(spokenIn clause: String?) {
+        guard wantsBoardThisAnswer,
+              lesson == nil,
+              let scene = boardScene,
+              scene.frames.count > 1,
+              clause != nil
+        else { return }
+
+        let next = boardFrameIndex + 1
+        guard next < scene.frames.count else { return }
+        boardFrameIndex = next
+        publishBoard()
+    }
+
+    private func endBoard() {
+        let hadBoard = boardScene != nil
+        boardScene = nil
+        boardFrameIndex = 0
+        wantsBoardThisAnswer = false
+        if hadBoard { onBoardEnded?() }
+    }
 
     /// Takes the marks down if the panel is dismissed and never comes back.
     ///
@@ -889,6 +1170,7 @@ final class CompanionViewModel {
     /// for has still answered the question, and putting an empty lesson bar
     /// over that answer would report a failure the user cannot act on.
     private func beginLesson(from answer: String) {
+        guard !lessonSuppressedForAnswer else { return }
         guard let parsed = Lesson.from(answer: answer),
               let observation,
               let frame = observation.primaryScreenFrame
@@ -900,6 +1182,14 @@ final class CompanionViewModel {
         lesson = parsed
         if starting {
             lessonStep = 0
+            // Lesson means working underneath the panel — auto-pin so a click
+            // into the editor does not tear the boxes down (USABILITY §3).
+            // Set the flag *after* toggling pin: `isPinned.didSet` clears it so
+            // a manual pin later is not stolen by Done.
+            if !isPinned {
+                isPinned = true
+                pinnedForLesson = true
+            }
         } else {
             lessonStep = min(lessonStep, parsed.steps.count - 1)
         }
@@ -910,14 +1200,40 @@ final class CompanionViewModel {
     func endLesson() {
         lessonExpiry?.cancel()
         lessonExpiry = nil
-        clearTeachingSpeechOverride()
-        guard lesson != nil else { return }
+        // While this answer is still arriving, refuse to start the lesson again
+        // from later chunks — otherwise Done is undone mid-stream. Look again
+        // mid-stream sets the flag in `performCapture` before phase becomes
+        // `.reading`, because by the time we get here phase alone is too late.
+        if phase == .thinking || phase == .answering {
+            lessonSuppressedForAnswer = true
+        }
+        guard lesson != nil else {
+            clearTeachingSpeechOverride()
+            return
+        }
 
+        let shouldUnpin = pinnedForLesson
         lesson = nil
         lessonStep = 0
         lessonMarks = []
+        lastGuidedWarpStep = nil
+        pinnedForLesson = false
+        clearTeachingSpeechOverride()
+        if shouldUnpin {
+            isPinned = false
+        }
         onLessonEnded?()
+        endBoard()
     }
+
+    /// Guide cursor for the rest of this lesson (and remember for the next Teach).
+    func setGuideCursorWhileTeaching(_ on: Bool) {
+        AppSettings.guideCursorWhileTeaching = on
+        guidedTeachThisAnswer = on
+        if on { showLessonStep() }
+    }
+
+    var guideCursorWhileTeaching: Bool { guidedTeachThisAnswer }
 
     /// Moves to a step because the user pressed a button.
     ///
@@ -943,6 +1259,59 @@ final class CompanionViewModel {
             guard self.lesson != nil else { return }
             showLessonStep()
         }
+    }
+
+    /// Explain board without a lesson: step frames by hand when speech is off.
+    func stepBoardFrame(by offset: Int) {
+        guard lesson == nil, let scene = boardScene, scene.frames.count > 1 else { return }
+        let target = max(0, min(scene.frames.count - 1, boardFrameIndex + offset))
+        guard target != boardFrameIndex else { return }
+        boardFrameIndex = target
+        publishBoard()
+    }
+
+    var canAdvanceBoardFrame: Bool {
+        lesson == nil && (boardScene.map { boardFrameIndex + 1 < $0.frames.count } ?? false)
+    }
+
+    var canRewindBoardFrame: Bool {
+        lesson == nil && boardScene != nil && boardFrameIndex > 0
+    }
+
+    var boardFrameCount: Int { boardScene?.frames.count ?? 0 }
+
+    /// Keep this after an answer — same save path as ⌘S, reason from the ask.
+    func keepThis() {
+        saveCurrentContext()
+    }
+
+    func dismissVisionNudge() {
+        visionNudge = nil
+    }
+
+    /// Questions that are about pixels more than about OCR text.
+    ///
+    /// Whole-word cues only — `"graph"` must not match inside `"paragraph"`.
+    nonisolated static func looksLikeVisualQuestion(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let phrases = ["what do you see", "what's on screen", "look like", "ui look"]
+        if phrases.contains(where: { lower.contains($0) }) { return true }
+
+        let words = ["diagram", "chart", "graph", "image", "screenshot", "picture",
+                     "icon", "drawing", "sketch", "visual"]
+        return words.contains { containsWholeWord($0, in: lower) }
+    }
+
+    nonisolated private static func containsWholeWord(_ word: String, in text: String) -> Bool {
+        let pattern = "\\b\(NSRegularExpression.escapedPattern(for: word))\\b"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, options: [], range: range) != nil
+    }
+
+    /// Whether Speak answers (or a session override) will actually read this lesson.
+    var lessonAdvancesByVoice: Bool {
+        AppSettings.speaksAnswers || speech.speaksRegardlessOfSetting
     }
 
     /// Moves to whichever step the clause now being read aloud belongs to.
@@ -1005,14 +1374,37 @@ final class CompanionViewModel {
             screen: lessonFrame
         ))
 
+        syncBoardToLessonStep()
+
         // Guided Teach: the user asked the cursor to follow. Warp to the first
         // box of this step when extras are on; without a grant, boxes alone
-        // still teach. Never clicks — the user does that.
-        if guidedTeachThisAnswer,
-           TrustAccessibility.extrasAreActive,
-           let rect = current.first {
-            warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
-        }
+        // still teach. Never clicks — the user does that. Only when the step
+        // *changes* — beginLesson is called per streamed chunk for the same
+        // step, and warping every time fights the user for the pointer.
+        guard guidedTeachThisAnswer else { return }
+        guard let rect = current.first else { return }
+        guard lastGuidedWarpStep != lessonStep else { return }
+        guard TrustAccessibility.extrasAreActive else { return }
+
+        lastGuidedWarpStep = lessonStep
+        warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
+    }
+
+    /// Whether Guided is active but cannot move the pointer yet.
+    var guidedNeedsAccessibility: Bool {
+        guidedTeachThisAnswer && lesson != nil && !TrustAccessibility.extrasAreActive
+    }
+
+    /// Guided is on and trusted, but this step's quotes are not on the capture.
+    /// Without a box there is nowhere to warp — the failure looks like the
+    /// cursor never tried.
+    var guidedMissingOnScreenMatch: Bool {
+        guard guidedTeachThisAnswer,
+              lesson != nil,
+              TrustAccessibility.extrasAreActive,
+              lessonMarks.indices.contains(lessonStep)
+        else { return false }
+        return lessonMarks[lessonStep].isEmpty
     }
 
     /// Reads the screen again and works out where the labels have moved to.
@@ -1027,7 +1419,8 @@ final class CompanionViewModel {
         // whole display without saying so.
         guard observation?.isCropped != true else { return }
 
-        guard let fresh = try? await ScreenCapture.captureAllDisplays(frontmostApp: nil),
+        let context = resolveContextApp?() ?? contextApp
+        guard let fresh = try? await ScreenCapture.captureAllDisplays(frontmostApp: context),
               let frame = fresh.primaryScreenFrame
         else { return }
 
@@ -1050,6 +1443,8 @@ final class CompanionViewModel {
         lastTurnAt = nil
         proposedEdit = nil
         pointerTarget = nil
+        endLesson()
+        endBoard()
         phase = .idle
     }
 
@@ -1058,8 +1453,14 @@ final class CompanionViewModel {
     /// The point of the whole feature: the user does what they were told, the
     /// screen changes, and they ask "now what?" without losing the thread.
     func lookAgain(frontmostApp: NSRunningApplication?) {
+        guard phase != .thinking, phase != .answering else { return }
         speech.stop()
-        captureScreen(frontmostApp: frontmostApp)
+        let context = frontmostApp ?? resolveContextApp?() ?? contextApp
+        let crop = observation?.isCropped == true ? observation?.primaryScreenFrame : nil
+        captureTask?.cancel()
+        captureTask = Task {
+            _ = await performCapture(frontmostApp: context, preserveCropFrame: crop)
+        }
     }
 
     /// Persists the current screen with whatever the user typed as the reason.
@@ -1112,7 +1513,7 @@ final class CompanionViewModel {
             // Handed to Apple now rather than on the next summon: this is
             // usually said just before walking away from the Mac, which is the
             // one case where there is no next summon.
-            mirrorTasksToAppleReminders()
+            mirrorTasksToAppleReminders(announceSuccess: true)
         }
     }
 
@@ -1124,7 +1525,10 @@ final class CompanionViewModel {
     /// better than a background poll in an app whose rule is that it acts when
     /// summoned. Anything already mirrored keeps its alarm regardless, since
     /// Apple owns delivery from that point and needs nothing further from here.
-    private func mirrorTasksToAppleReminders() {
+    ///
+    /// - Parameter announceSuccess: when true (a reminder was just set), append
+    ///   a phone hint to the saved status if the list syncs off this Mac.
+    private func mirrorTasksToAppleReminders(announceSuccess: Bool = false) {
         guard AppSettings.mirrorsToAppleReminders, AppleReminders.isAuthorized else { return }
 
         // Reminders set here stand in for themselves until the to-do app has
@@ -1140,6 +1544,13 @@ final class CompanionViewModel {
             do {
                 let armed = try await AppleReminders.sync(openTodos: todos, quietHours: quietHours)
                 standDown(forMirrored: armed)
+                if announceSuccess,
+                   let destination = AppleReminders.destination(),
+                   destination.reachesOtherDevices,
+                   case .saved(let message) = phase,
+                   !message.contains("Mirrored") {
+                    phase = .saved("\(message) · Mirrored — check Reminders on your iPhone")
+                }
             } catch {
                 // Deliberately silent. The panel was summoned to answer a
                 // question, and a failure to reach a Reminders database is not
@@ -1432,13 +1843,26 @@ final class CompanionViewModel {
         lastTurnAt = nil
     }
 
-    /// Falls back to the local model when OpenAI is selected without a key, so
-    /// a missing secret degrades to a worse answer rather than an error. The
-    /// badge says so — see `AnswerDestination.cloudWithoutKey` — because a
+    /// Falls back to the local model when a cloud provider is selected without a
+    /// key, so a missing secret degrades to a worse answer rather than an error.
+    /// The badge says so — see `AnswerDestination.cloudWithoutKey` — because a
     /// silent downgrade is indistinguishable from the switch not working.
     private func makeBrain() -> any Brain {
-        if AppSettings.provider == .openAI, let key = AppSettings.openAIKey {
-            return OpenAIBrain(apiKey: key, model: AppSettings.openAIModel)
+        switch AppSettings.provider {
+        case .openAI:
+            if let key = AppSettings.openAIKey {
+                return OpenAIBrain(apiKey: key, model: AppSettings.openAIModel)
+            }
+        case .anthropic:
+            if let key = AppSettings.anthropicKey {
+                return AnthropicBrain(apiKey: key, model: AppSettings.anthropicModel)
+            }
+        case .gemini:
+            if let key = AppSettings.geminiKey {
+                return GeminiBrain(apiKey: key, model: AppSettings.geminiModel)
+            }
+        case .ollama:
+            break
         }
         return localBrain()
     }

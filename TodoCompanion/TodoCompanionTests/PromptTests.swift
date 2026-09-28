@@ -381,11 +381,27 @@ struct PersonaPromptTests {
 
         let teaching = AskContext(isTeaching: true)
         #expect(Prompt.system(for: teaching).contains("numbered list of short steps"))
+        #expect(Prompt.system(for: teaching).contains("patient tutor"))
+        #expect(Prompt.system(for: teaching).contains("Do not put fenced code blocks inside the numbered"))
         #expect(!Prompt.system(for: teaching).contains("guided walk"))
 
         let guided = AskContext(isTeaching: true, isGuidedTeaching: true)
         #expect(Prompt.system(for: guided).contains("guided walk"))
-        #expect(Prompt.system(for: guided).contains("why that line or control exists"))
+        #expect(Prompt.system(for: guided).contains("written on the screen as a tip"))
+        #expect(Prompt.system(for: guided).contains("why that line, control, or rule exists"))
+    }
+
+    @Test("board instructions appear only when a board is wanted")
+    func boardRulesAreConditional() {
+        let plain = AskContext()
+        #expect(!Prompt.system(for: plain).contains("fenced block tagged board"))
+
+        let explain = AskContext(wantsBoard: true)
+        #expect(Prompt.system(for: explain).contains("fenced block tagged board"))
+        #expect(Prompt.system(for: explain).contains("concept tokens"))
+
+        let teaching = AskContext(isTeaching: true, wantsBoard: true)
+        #expect(Prompt.system(for: teaching).contains("fenced block tagged board"))
     }
 
     @Test("the file is given with line numbers and named")
@@ -449,9 +465,17 @@ struct AnswerDestinationTests {
     func missingKeyIsVisible() {
         let destination = resolve(.openAI, hasCloudKey: false)
 
-        #expect(destination == .cloudWithoutKey)
+        #expect(destination == .cloudWithoutKey("OpenAI"))
         #expect(destination != .local, "the whole bug was this collapsing into .local")
         #expect(destination.label != AppSettings.AnswerDestination.local.label)
+    }
+
+    @Test("Claude and Gemini missing keys name their vendor")
+    func eachVendorNamesItselfWithoutAKey() {
+        #expect(resolve(.anthropic, hasCloudKey: false) == .cloudWithoutKey("Claude"))
+        #expect(resolve(.gemini, hasCloudKey: false) == .cloudWithoutKey("Gemini"))
+        #expect(resolve(.anthropic, hasCloudKey: false).label.contains("Claude"))
+        #expect(resolve(.gemini, hasCloudKey: false).label.contains("Gemini"))
     }
 
     @Test("every choice produces a distinguishable label")
@@ -460,6 +484,8 @@ struct AnswerDestinationTests {
             resolve(.ollama, hasCloudKey: false).label,
             resolve(.openAI, hasCloudKey: true).label,
             resolve(.openAI, hasCloudKey: false).label,
+            resolve(.anthropic, hasCloudKey: false).label,
+            resolve(.gemini, hasCloudKey: false).label,
         ]
         #expect(Set(labels).count == labels.count)
     }
@@ -471,6 +497,9 @@ struct AnswerDestinationTests {
         #expect(resolve(.ollama, hasCloudKey: true).leavesTheMachine == false)
         #expect(resolve(.openAI, hasCloudKey: true).leavesTheMachine)
         #expect(resolve(.openAI, hasCloudKey: false).leavesTheMachine == false)
+        #expect(resolve(.anthropic, hasCloudKey: true).leavesTheMachine)
+        #expect(resolve(.gemini, hasCloudKey: true).leavesTheMachine)
+        #expect(resolve(.anthropic, hasCloudKey: false).leavesTheMachine == false)
     }
 
     /// Pins the badge to the brain it is describing. These are computed from the
@@ -478,8 +507,14 @@ struct AnswerDestinationTests {
     /// panel naming one model while another answers.
     @Test("the badge agrees with the brain it describes")
     func agreesWithTheBrain() {
-        let cloud = OpenAIBrain(apiKey: "sk-not-used", model: "gpt-4o-mini")
-        #expect(resolve(.openAI, hasCloudKey: true).leavesTheMachine == cloud.leavesTheMachine)
+        let openAI = OpenAIBrain(apiKey: "sk-not-used", model: "gpt-4o-mini")
+        #expect(resolve(.openAI, hasCloudKey: true).leavesTheMachine == openAI.leavesTheMachine)
+
+        let claude = AnthropicBrain(apiKey: "sk-not-used", model: "claude-sonnet-4-5")
+        #expect(resolve(.anthropic, hasCloudKey: true).leavesTheMachine == claude.leavesTheMachine)
+
+        let gemini = GeminiBrain(apiKey: "key-not-used", model: "gemini-2.5-flash")
+        #expect(resolve(.gemini, hasCloudKey: true).leavesTheMachine == gemini.leavesTheMachine)
 
         let local = OllamaBrain(endpoint: URL(string: "http://127.0.0.1:11434")!, model: "llama3.2")
         #expect(resolve(.ollama, hasCloudKey: false).leavesTheMachine == local.leavesTheMachine)
@@ -491,6 +526,7 @@ struct AnswerDestinationTests {
 
         #expect(explanation.contains("llama3.2"))
         #expect(explanation.contains("Settings"))
+        #expect(explanation.contains("OpenAI"))
     }
 
     @Test("each choice has its own glyph")
@@ -501,5 +537,29 @@ struct AnswerDestinationTests {
             resolve(.openAI, hasCloudKey: false).glyph,
         ]
         #expect(Set(glyphs).count == glyphs.count)
+    }
+}
+
+@Suite("Visual question nudge")
+struct VisualQuestionTests {
+    @Test("diagram-like questions are recognised")
+    func recognisesDiagrams() {
+        #expect(CompanionViewModel.looksLikeVisualQuestion("What does this diagram show?"))
+        #expect(CompanionViewModel.looksLikeVisualQuestion("Explain this chart"))
+        #expect(CompanionViewModel.looksLikeVisualQuestion("what do you see here") == true)
+    }
+
+    @Test("ordinary text questions are not nudged")
+    func ignoresProse() {
+        #expect(CompanionViewModel.looksLikeVisualQuestion("What does this function return?") == false)
+        #expect(CompanionViewModel.looksLikeVisualQuestion("Remind me in 10 minutes") == false)
+        #expect(CompanionViewModel.looksLikeVisualQuestion("Explain this paragraph") == false)
+        #expect(CompanionViewModel.looksLikeVisualQuestion("What is a photographic plate?") == false)
+    }
+
+    @Test("the action row omits Guided as its own preset")
+    func primaryPresetsOmitGuided() {
+        #expect(CompanionViewModel.primaryPresets == [.explain, .nextStep, .teach])
+        #expect(CompanionViewModel.Preset.allCases.contains(.guidedTeach))
     }
 }

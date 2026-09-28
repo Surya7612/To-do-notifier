@@ -1,11 +1,12 @@
 import Foundation
 import Security
 
-/// Storage for the one secret this app has.
+/// Storage for API keys this app holds.
 ///
 /// An API key in `UserDefaults` is a plaintext string in a plist that any
 /// process running as the user can read, and it would end up in backups. The
 /// plan lists "API keys in Keychain" as a privacy principle; this is that.
+/// One Keychain account per cloud provider.
 enum Keychain {
     private static let service = Bundle.main.bundleIdentifier ?? "surya.TodoCompanion"
 

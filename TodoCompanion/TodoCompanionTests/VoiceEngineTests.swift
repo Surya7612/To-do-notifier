@@ -106,6 +106,20 @@ struct SpeechChunkingTests {
         #expect(spoken == "First item\n")
     }
 
+    @Test("a list index period is not a sentence end")
+    func listIndexesAreNotBoundaries() throws {
+        // Without this, "1. Sort the input" was cut after "1." and the voice
+        // said "one" alone before the rest of the step. The cut lands on the
+        // real sentence end (or the line end), not on the index.
+        let rewritten = try #require(chunk("Step 1. Sort the input first.\n", allowingShort: true))
+        #expect(rewritten.hasPrefix("Step 1. Sort the input first."))
+        #expect(!rewritten.hasPrefix("Step 1.\n") && rewritten != "Step 1.")
+
+        let raw = try #require(chunk("1. Sort the input first.\n", allowingShort: true))
+        #expect(raw.hasPrefix("1. Sort the input first."))
+        #expect(raw != "1." && raw != "1.\n")
+    }
+
     @Test("a colon is not a boundary, since it introduces what follows")
     func colonsAreNotBoundaries() {
         #expect(chunk("The problem is this: ", allowingShort: true) == nil)
@@ -221,13 +235,11 @@ struct VoiceEngineSettingTests {
 /// on and listened to a whole answer.
 @Suite("Deciding what an answer sounds like")
 struct SpeakableTextTests {
-    /// The bug this suite exists for. Markup used to be stripped from each
-    /// chunk on its way to the voice, and a fence opens on one chunk and closes
-    /// on another — so a chunk beginning inside a code block was not known to
-    /// be inside one, and the voice read the code aloud a bracket at a time.
-    /// Stripping the whole document is the only way the state can be right.
-    @Test("a code block is announced, never read out")
-    func codeIsAnnouncedRatherThanSpoken() {
+    /// Fences stay on screen for reading; the voice skips them entirely.
+    /// Announcing "code block" used to break mid-lesson as if a station ID
+    /// cut into a tutor, and reading the fence aloud is worse.
+    @Test("a code block is skipped by the voice, never announced or read")
+    func codeIsSkippedRatherThanSpoken() {
         let answer = """
         Change that line to:
 
@@ -240,7 +252,7 @@ struct SpeakableTextTests {
 
         let spoken = SpeechPlayback.speakable(from: answer)
 
-        #expect(spoken.contains("Code block."))
+        #expect(!spoken.localizedCaseInsensitiveContains("code block"))
         #expect(!spoken.contains("backtrack"))
         #expect(!spoken.contains("["))
         #expect(spoken.contains("Then run it again."))
@@ -252,7 +264,7 @@ struct SpeakableTextTests {
     func unclosedFenceIsNotSpoken() {
         let spoken = SpeechPlayback.speakable(from: "Try this:\n\n```python\nbacktrack(0, [")
 
-        #expect(spoken.contains("Code block."))
+        #expect(!spoken.localizedCaseInsensitiveContains("code block"))
         #expect(!spoken.contains("backtrack"))
     }
 
@@ -291,11 +303,21 @@ struct SpeakableTextTests {
         #expect(!spoken.contains("_"))
     }
 
-    @Test("a list marker is not read as a word")
-    func listMarkersAreDropped() {
-        let spoken = SpeechPlayback.speakable(from: "- sort the list\n- walk it once")
+    @Test("bullet markers are dropped; numbered steps keep their index")
+    func listMarkersAreSpokenAsSteps() {
+        #expect(SpeechPlayback.speakable(from: "- sort the list\n- walk it once")
+            == "sort the list\nwalk it once")
+        #expect(SpeechPlayback.speakable(from: "1. Sort the input first.\n2. Recurse once.")
+            == "Step 1. Sort the input first.\nStep 2. Recurse once.")
+    }
 
-        #expect(spoken == "sort the list\nwalk it once")
+    /// A streamed `1.` with no body yet must not become the word "one" before
+    /// the rest of the step arrives — that was the only number anyone heard.
+    @Test("an incomplete list marker is held until the step has words")
+    func incompleteListMarkerIsNotSpoken() {
+        #expect(SpeechPlayback.speakable(from: "1.") == "")
+        #expect(SpeechPlayback.speakable(from: "1. ") == "")
+        #expect(SpeechPlayback.speakable(from: "1. Sort now.") == "Step 1. Sort now.")
     }
 
     /// Lines are joined with newlines rather than spaces because `nextChunk`

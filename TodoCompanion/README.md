@@ -34,9 +34,10 @@ memory rather than capturing again. The region stays selected across follow-ups,
 asking about the same rectangle.
 
 **Explain** and **Next step** are the two questions worth a button, and they are shortcuts for when
-you have nothing specific to ask. If you have already typed or dictated something, that is what gets
-asked — a preset never overwrites your own words, so with text in the field both buttons do the same
-thing as pressing Return.
+you have nothing specific to ask. **Explain** may open the teaching **grid board** when Max includes a
+diagram for a concept that is not on screen. If you have already typed or dictated something, that is
+what gets asked — a preset never overwrites your own words, so with text in the field both buttons do
+the same thing as pressing Return.
 
 **⌘D** dictates instead of typing, on-device, with a ring at the cursor driven by your actual input
 level — so a microphone that is producing silence looks like silence rather than like a hang.
@@ -199,6 +200,12 @@ appearing in the same step is not a claim that one becomes the other — "look a
 two places to look — and an arrow asserts much more than a box does, so it is drawn when the reply
 joins the two quoted labels with `→` and not otherwise.
 
+When a concept needs a diagram that is **not** on your screen (a molecule, a recursion sketch, a
+data-flow tip), **Explain**, **Teach me**, and **Guided** may open a separate **grid board**. Max emits
+a structured scene; the app draws shapes, concept colours, and short tip text on graph paper beside
+your work — never invented geometry over your editor. OCR lesson boxes still annotate what Vision
+actually found.
+
 If answers are being read aloud, the lesson follows the voice: the step advances as Max reaches the
 labels it quoted. Stepping by hand reads the screen again first, because a few keystrokes reflow an
 editor and every box below the caret would otherwise be a line out — pointing confidently at the wrong
@@ -238,26 +245,28 @@ it never becomes your stated reason for a save, and it never draws anything.
 ### Who answers
 
 The badge in the panel header names the model that will answer, and is a menu you can change it
-from. Two choices:
+from. Four choices:
 
 | | |
 |---|---|
 | **On this Mac** | Ollama, on `127.0.0.1`. The default. Nothing leaves the device. |
-| **OpenAI** | Opt-in, for questions only. The key lives in the login Keychain, never in preferences. |
+| **OpenAI** | Opt-in, for questions only. Key in the login Keychain. |
+| **Claude** | Opt-in Anthropic, same rules — questions only, Keychain key. |
+| **Gemini** | Opt-in Google, same rules — questions only, Keychain key. |
 
 The choice is per-question in practice: the local model reads text back perfectly well, and is worth
 leaving for a diagram or an interface it has never seen.
 
 The same menu carries **Send the screenshot**, which decides whether a visual question can be
-answered at all — without it OpenAI receives only the recognized text and guesses at anything that is
-not words. Locally it needs a vision model (`qwen3-vl`) to be worth turning on.
+answered at all — without it a cloud model receives only the recognized text and guesses at anything
+that is not words. Locally it needs a vision model (`qwen3-vl`) to be worth turning on.
 
-Selecting OpenAI without saving a key falls back to the local model, and the badge says so rather
-than quietly reading "Local".
+Selecting a cloud provider without saving its key falls back to the local model, and the badge says
+so (for example "Claude — no key") rather than quietly reading "Local".
 
-Which OpenAI model answers is chosen in Settings, from a short list with a note on what each is good
-for. The list is fixed rather than read from your account, so it is useful before a key is saved;
-pick **Custom…** to name a model released after this build.
+Which model answers is chosen in Settings per provider, from a short list with a note on what each is
+good for. The lists are fixed rather than read from your account, so they are useful before a key is
+saved; pick **Custom…** to name a model released after this build.
 
 ## Remembering
 
@@ -333,17 +342,21 @@ the app read wrong, or add one to something you kept before you knew you would n
 A local notification needs this Mac awake when it fires. If you are out and a task comes due, nothing
 happens — which is the honest limit of doing this without a server.
 
-Turn on **Copy dated tasks into Apple Reminders** in Settings and Apple delivers them instead. Tasks
+Turn on **Mirror dated tasks to Apple Reminders** in Settings and Apple delivers them instead. Tasks
 with a due time are written into a "To-Do Notifier" list in your iCloud account, so your iPhone and
 Watch alert you at the right moment whether this Mac is asleep, shut, or somewhere else. There is no
-server involved, nothing to pay for, and no account beyond the iCloud one you already have.
+custom push server, nothing to pay for, and no account beyond the iCloud one you already have.
 
 Worth knowing:
 
 - **Only tasks still ahead of them are copied.** An alarm set to a time already gone is delivered the
   moment it syncs, so copying a backlog would set off every overdue task at once on every device.
-- **Reminders has to be on iCloud.** If it is using a local account, Settings says so rather than
-  leaving you to discover that nothing reached your phone.
+- **Reminders has to be on iCloud.** If it is using a local account, Settings says so and offers a
+  link to System Settings rather than leaving you to discover that nothing reached your phone.
+- **Access denied is stated with a deep link.** If Reminders (or Calendars) was refused, Settings
+  shows why and can open Privacy & Security for you.
+- **First successful sync says so.** Settings shows “Mirrored — check Reminders on your iPhone”, and
+  saving a reminder while the mirror is on appends the same hint to the panel status.
 - **Ticking one off on your phone silences that alert and leaves the task open here.** Reminders is a
   way of delivering the alert, not a second copy of your list.
 - **A reminder is handed over the moment you set it**, and the list is swept again each time Max
@@ -391,7 +404,7 @@ guessing. So a vector distance is only allowed to *contribute* to a score it can
 only ever add, and in library search a save that literally contains your words is never pushed below
 a mere resemblance.
 
-Embedding runs on this Mac and is never sent anywhere, even when OpenAI is answering your questions.
+Embedding runs on this Mac and is never sent anywhere, even when a cloud model is answering your questions.
 That is enforced the same way summaries are: `embed` is absent from the `Brain` protocol and exists
 only on `OllamaBrain`, so no cloud provider can be attached to it. Embedding is in fact the worst
 thing to export, because it runs once per *save* rather than once per question — the volume is your
@@ -579,7 +592,7 @@ you can tick off, and if the Apple Reminders mirror is on it reaches your phone.
 | `App/` | `NSApplicationDelegate`, activation policy, hotkey wiring, Settings UI |
 | `Companion/` | The `NSPanel`, its placement logic, view model, and SwiftUI panel |
 | `Capture/` | ScreenCaptureKit capture, Vision OCR, region selector, cursor indicator, on-screen highlight, and the layer a lesson draws its marks on |
-| `Brain/` | The `Brain` protocol, shared prompt text, Ollama and OpenAI clients |
+| `Brain/` | The `Brain` protocol, shared prompt text, Ollama / OpenAI / Claude / Gemini clients |
 | `Voice/` | The shared microphone, the Apple and Parakeet recognizers, input level metering, and the system and Kokoro voices |
 | `Store/` | SwiftData models, retrieval scoring, embeddings, reminder parsing and the Apple Reminders mirror, the to-do bridge, phone import, diffing and the editable file |
 | `Library/` | Browse, search, graph, and manage what you've kept |
@@ -599,11 +612,11 @@ app draws its own ring at the cursor.
 By default nothing leaves the machine. Vision extracts text on-device and only that text goes to
 Ollama on `127.0.0.1`. Dictation is on-device where the system supports it.
 
-Choosing OpenAI sends the question, and the screenshot if you enabled that, for **that question
-only**. Background work is never routed to a cloud model, and this is enforced structurally rather
-than by convention: `summarize` is absent from the `Brain` protocol and exists only on `OllamaBrain`,
-so no cloud provider can be attached to it. That is why summaries of everything you keep stay local
-even when OpenAI is answering your questions.
+Choosing OpenAI, Claude, or Gemini sends the question, and the screenshot if you enabled that, for
+**that question only**. Background work is never routed to a cloud model, and this is enforced
+structurally rather than by convention: `summarize` and `embed` are absent from the `Brain` protocol
+and exist only on `OllamaBrain`, so no cloud provider can be attached to them. That is why summaries
+and embeddings of everything you keep stay local even when a cloud model is answering your questions.
 
 Both voices that can read an answer aloud run on this Mac — the macOS system voices and Kokoro-82M on
 the Neural Engine — so enabling that sends nothing anywhere. There is no wake word and no

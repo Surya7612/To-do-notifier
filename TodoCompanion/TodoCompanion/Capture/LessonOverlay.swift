@@ -9,6 +9,11 @@ import SwiftUI
 /// faint outlines so the walk through is visible as a whole rather than one
 /// frame at a time.
 ///
+/// A step with nothing Vision can box still draws: its caption and number are
+/// written on the screen as a tip. Skipping the update left the previous step's
+/// boxes stranded while the panel said a different step — Guided looked like it
+/// was pointing at the wrong thing.
+///
 /// A full-screen window rather than one sized to each box, because several
 /// marks are on screen at once and their numbers sit outside them. It is
 /// click-through and belongs to this app, so it neither takes the click the
@@ -26,7 +31,8 @@ final class LessonOverlay {
     ///   - current: Boxes for the step showing now, in the order Max named them.
     ///   - covered: Boxes from earlier steps, drawn faintly.
     ///   - number: The step's position in the lesson, shown on its first box.
-    ///   - caption: The few words printed beside the first box.
+    ///   - caption: The few words printed beside the first box — or alone when
+    ///     there is no box, so a conceptual step still writes on the screen.
     ///   - isConnected: Whether to run an arrow from each box to the next.
     ///   - screen: The area the marks are measured against.
     func show(current: [CGRect],
@@ -35,7 +41,7 @@ final class LessonOverlay {
               caption: String,
               isConnected: Bool,
               on screen: CGRect) {
-        guard !current.isEmpty || !covered.isEmpty else {
+        if current.isEmpty && covered.isEmpty && caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             hide()
             return
         }
@@ -123,9 +129,13 @@ private struct LessonMarksView: View {
                 mark(rect, isFirst: index == 0)
             }
 
-            if let anchor = current.first, !caption.isEmpty {
-                captionChip.offset(x: captionOrigin(under: anchor).x,
-                                   y: captionOrigin(under: anchor).y)
+            if !caption.isEmpty {
+                captionChip.offset(x: captionPlacement.x, y: captionPlacement.y)
+            } else if current.isEmpty {
+                // Number alone when the model wrote no opening words worth
+                // printing — still better than leaving the previous step's
+                // badge stranded on screen.
+                badge.offset(x: floatingOrigin.x, y: floatingOrigin.y)
             }
         }
         .ignoresSafeArea()
@@ -164,33 +174,61 @@ private struct LessonMarksView: View {
     /// have on screen, and text that takes its contrast from the wallpaper is
     /// text nobody can read.
     private var captionChip: some View {
-        Text(caption)
-            .font(.callout.weight(.medium))
-            .foregroundStyle(.white)
-            .lineLimit(2)
-            .frame(maxWidth: 320, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
-                    .fill(Color.black.opacity(0.86))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
-                            .strokeBorder(DS.Pointer.mark.opacity(0.55))
-                    )
-            )
-            .shadow(radius: 6, y: 2)
+        HStack(alignment: .top, spacing: 8) {
+            // Badge lives on the box when there is one; only join it here for
+            // conceptual steps that have nothing else to hang a number on.
+            if current.isEmpty { badge }
+            Text(caption)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.white)
+                .lineLimit(3)
+                .frame(maxWidth: 340, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
+                .fill(Color.black.opacity(0.86))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
+                        .strokeBorder(DS.Pointer.mark.opacity(0.55))
+                )
+        )
+        .shadow(radius: 6, y: 2)
+    }
+
+    /// Beside the first box when there is one; otherwise a tip floating near
+    /// the last covered mark, or over the working area of the capture.
+    private var captionPlacement: CGPoint {
+        if let anchor = current.first {
+            return captionOrigin(under: anchor)
+        }
+        return floatingOrigin
+    }
+
+    /// A conceptual step with no OCR hit still has to land somewhere readable.
+    /// Prefer the last covered box so the tip follows the walk; otherwise sit
+    /// over the middle-right of the capture — where an editor usually is —
+    /// rather than dead centre on top of the problem statement.
+    private var floatingOrigin: CGPoint {
+        if let last = covered.last {
+            return captionOrigin(under: last)
+        }
+        let estimatedHeight: CGFloat = 72
+        let x = min(max(bounds.width * 0.52, 16), max(16, bounds.width - 360))
+        let y = min(max(bounds.height * 0.28, 16), max(16, bounds.height - estimatedHeight - 16))
+        return CGPoint(x: x, y: y)
     }
 
     /// Below the box, or above it when the box is near the bottom of the
     /// screen. A caption clipped off the edge is the one place this can fail
     /// silently, since the user cannot tell it was ever drawn.
     private func captionOrigin(under rect: CGRect) -> CGPoint {
-        let estimatedHeight: CGFloat = 56
+        let estimatedHeight: CGFloat = 72
         let below = rect.maxY + Self.captionDrop
         let fits = below + estimatedHeight < bounds.height
 
-        return CGPoint(x: min(rect.minX, max(0, bounds.width - 340)),
+        return CGPoint(x: min(rect.minX, max(0, bounds.width - 360)),
                        y: fits ? below : max(0, rect.minY - estimatedHeight - Self.captionDrop))
     }
 

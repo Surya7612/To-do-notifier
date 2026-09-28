@@ -62,12 +62,25 @@ nonisolated enum AnswerContent {
 
             if trimmed.hasPrefix(fence) {
                 flush()
-                blocks.append(.code(consumeFence(opener: trimmed, from: &lines)))
+                let code = consumeFence(opener: trimmed, from: &lines)
+                // Board scenes are drawn on the grid panel, not as a code well
+                // in the answer — dumping the JSON mid-lesson is noise.
+                let language = code.language?.lowercased() ?? ""
+                if language == "board" || language.hasPrefix("board") {
+                    continue
+                }
+                blocks.append(.code(code))
                 continue
             }
 
             if trimmed.isEmpty {
-                flush()
+                // Blank lines end a paragraph, but not a list. Markdown allows
+                // space between items; flushing here restarted every item as
+                // "1." whenever the model (or a stream) put a blank between them.
+                if !paragraph.isEmpty {
+                    blocks.append(.paragraph(paragraph.joined(separator: " ")))
+                    paragraph = []
+                }
                 continue
             }
 

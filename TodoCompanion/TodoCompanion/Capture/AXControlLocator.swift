@@ -76,10 +76,21 @@ enum AXControlLocator {
     }
 
     /// Moves the system pointer to `point` in Cocoa screen coordinates.
+    ///
+    /// Warps and posts a mouse-moved event. Warp alone is enough on some
+    /// systems and silently ignored on others when Accessibility is granted
+    /// but the event stream never hears about the move — Guided then looks
+    /// like it never tried.
     static func movePointer(to point: CGPoint) {
         let flipped = cgPoint(fromCocoa: point)
         CGWarpMouseCursorPosition(flipped)
         CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+        if let move = CGEvent(mouseEventSource: nil,
+                              mouseType: .mouseMoved,
+                              mouseCursorPosition: flipped,
+                              mouseButton: .left) {
+            move.post(tap: .cghidEventTap)
+        }
     }
 
     /// Left-clicks at `point` in Cocoa screen coordinates.

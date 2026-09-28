@@ -136,6 +136,23 @@ struct OllamaBrain: Brain {
         return vector
     }
 
+    /// Cheap readiness probe for the status line — never used to answer.
+    ///
+    /// A silent panel with Ollama down reads as Max being broken. One short
+    /// `/api/tags` hit on summon is enough to say so before the first ask.
+    static func isReachable(endpoint: URL) async -> Bool {
+        var request = URLRequest(url: endpoint.appending(path: "api/tags"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 1.5
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            return (200..<300).contains(http.statusCode)
+        } catch {
+            return false
+        }
+    }
+
     /// Accepts both shapes Ollama has used: `/api/embed` returns `embeddings`
     /// as an array of vectors, while older builds' `/api/embeddings` returned a
     /// single `embedding`.

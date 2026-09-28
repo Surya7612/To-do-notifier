@@ -36,6 +36,8 @@ struct AskContext: Sendable {
     var isTeaching = false
     /// Whether that teach press was Guided — cursor follows each step's box.
     var isGuidedTeaching = false
+    /// Whether Max may emit a teaching-grid board for this answer (Explain / Teach / Guided).
+    var wantsBoard = false
 }
 
 /// One exchange. Kept as a pair rather than a flat list of messages because
@@ -97,7 +99,7 @@ enum BrainError: LocalizedError {
         case .unreachable:
             "Can't reach Ollama. Start it with `ollama serve`, then try again."
         case .missingKey:
-            "Add an OpenAI API key in Settings, or switch back to the local model."
+            "Add an API key in Settings, or switch back to the local model."
         case let .http(code, detail):
             "Request failed (\(code)): \(detail)"
         }
@@ -196,38 +198,76 @@ enum Prompt {
     /// nothing is a step with nothing to point at.
     static let teachingSystem = """
 
-    The user has asked to be taught what is on their screen rather than to have it explained in a \
-    paragraph. Reply with a numbered list of short steps, in the order someone should look at them, \
-    and nothing before it but a single sentence of introduction if one is genuinely needed.
+    The user asked to be taught what is on their screen — sit beside them like a patient tutor, \
+    not like a documentation page. Reply with a numbered list of short steps in the order they \
+    should look, and at most one short sentence of introduction before the list if it is needed.
 
-    Every step must quote, in double quotes and character for character, the text on screen it is \
-    about — a variable name, a line, a label, an error. Those quotes are what the app draws a box \
-    around while it reads the step aloud, so a step that quotes nothing points at nothing. Quote \
-    what is actually printed on the screen, never a paraphrase of it, and never quote something \
-    you cannot see there.
+    Write each step so it sounds like something you would say out loud: one clear beat of the \
+    lesson, in plain spoken English. Lead with the point of the step in the opening words — those \
+    words are printed on the screen beside what you are teaching, where the user is looking. Teach \
+    the idea, not just the fix, so they could spot it themselves next time.
+
+    Every step that can point at something printable must quote it in double quotes, character for \
+    character as it appears — a variable, a line, a label, an example input. Those quotes are what \
+    the app boxes while it reads the step. Prefer quoting what is actually on screen over inventing \
+    a label. Never paraphrase inside the quotes, and never quote something you cannot see.
+
+    Some steps are about a rule or a reason that is not printed as one label. Still write them: put \
+    the tip in the opening words so it can stand alone on the screen even when there is nothing to \
+    box, and do not invent fake quotes to fill the gap.
 
     When a step is about one thing becoming, feeding, or being confused with another, write the two \
     quoted labels with an arrow between them — "res" → "return res" — and the app will draw that \
-    arrow on the screen. Use it only for a real relation between two things you can see, never as \
-    punctuation between two labels you happen to mention in the same step.
+    arrow. Use it only for a real relation between two visible things, never as punctuation.
 
-    Keep each step to one or two sentences, and put the point of the step in the opening words: the \
-    first line is printed on the screen beside what it is about, where the user is looking. Teach the \
-    idea, not just the fix — say why the thing you are pointing at matters, so the user could spot it \
-    themselves next time.
+    Keep each step to one or two spoken sentences. Do not put fenced code blocks inside the numbered \
+    steps — the user can already see the screen, and a fence is skipped by the voice so the lesson \
+    would go silent. If a short snippet helps after the list, one fence is enough; never wrap the \
+    whole lesson in a fence.
     """
 
     /// Appended on top of `teachingSystem` when the user pressed Guided.
     ///
     /// Asks for the *why* of each line up front so the caption beside the box
-    /// carries the logic, not only a label. Still no coordinates and still no
-    /// instruction to type or click — the app moves the pointer; the user acts.
+    /// (or the floating tip when there is no box) carries the logic. Still no
+    /// coordinates and still no instruction to type or click — the app moves
+    /// the pointer; the user acts.
     static let guidedTeachingSystem = """
 
-    This is a guided walk: the pointer will move to each quoted label as you speak the step. Lead \
-    every step with why that line or control exists — the logic behind it — in the opening words, \
-    then the quote. Do not tell the user to run the program, click buttons, or type code; they will \
-    do that themselves after understanding the step.
+    This is a guided walk: the pointer moves to each quoted label as you speak the step, and when \
+    a step has nothing to box its opening words are written on the screen as a tip. Lead every step \
+    with why that line, control, or rule exists — the logic behind it — in the opening words, then \
+    the quote when there is one. Talk like a tutor mid-walkthrough, not like a slide deck. Do not \
+    tell the user to run the program, click buttons, or type code; they will do that themselves \
+    after understanding the step.
+    """
+
+    /// Appended when Explain, Teach me, or Guided may draw on the grid board.
+    ///
+    /// The board is this app's surface for invented diagrams — never coordinates
+    /// over the user's screen. Spoken answer stays in prose / the numbered list;
+    /// the fence carries shapes and short on-board tip text only.
+    static let boardSystem = """
+
+    When a concept is clearer as a diagram than as words alone, add one fenced block tagged board \
+    after the spoken answer (after the numbered list when teaching). The app draws it on a separate \
+    grid page — not on the user's screen. If a diagram would not help, omit the fence entirely.
+
+    The fence body is JSON only:
+    { "title": "short title", "frames": [ { "step": 1, "shapes": [ ... ] } ] }
+
+    When teaching, set step to the 1-based lesson step each frame belongs to. For a plain Explain, \
+    omit step and use one frame, or several frames in the order you want them revealed.
+
+    Shape types: circle (x, y, r, optional id, label, color), ellipse / rect (x, y, w, h, optional id, \
+    label, color), text (x, y, text, color) for explanation copy on the board, label (x, y, text, color) \
+    for a short chip, arrow / line (from and to as shape ids, or fromX/fromY/toX/toY, color).
+
+    Coordinates are 0–1 on the board (origin top-left). Colors are concept tokens only: oxygen, \
+    hydrogen, carbon, nitrogen, accent, emphasis, muted, success, problem, primary — pick by meaning \
+    so related parts share a colour. Put short tip sentences on the board as text shapes; do not dump \
+    the whole spoken answer there. Never invent OCR quotes for the board, and never wrap the spoken \
+    steps inside the board fence.
     """
 
     /// Asked of every model, because the panel now draws structure rather than
@@ -266,6 +306,7 @@ enum Prompt {
             prompt += teachingSystem
             if context.isGuidedTeaching { prompt += guidedTeachingSystem }
         }
+        if context.wantsBoard { prompt += boardSystem }
         return prompt
     }
 

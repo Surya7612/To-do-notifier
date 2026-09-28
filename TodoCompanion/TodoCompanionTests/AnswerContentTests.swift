@@ -25,6 +25,19 @@ struct AnswerContentTests {
         #expect(blocks == [.paragraph("First thought."), .paragraph("Second thought.")])
     }
 
+    @Test("a closed board fence is drawn on the grid, not shown as a code well")
+    func boardFenceIsNotACodeBlock() {
+        let answer = """
+        Water is simple.
+
+        ```board
+        { "title": "H2O", "frames": [ { "shapes": [ { "type": "text", "x": 0.5, "y": 0.5, "text": "tip" } ] } ] }
+        ```
+        """
+        let blocks = AnswerContent.blocks(in: answer)
+        #expect(blocks == [.paragraph("Water is simple.")])
+    }
+
     @Test("a fenced block keeps its language and its own indentation")
     func fenceCarriesLanguageAndWhitespace() throws {
         let answer = """
@@ -88,6 +101,41 @@ struct AnswerContentTests {
 
         let numbered = AnswerContent.blocks(in: "1. first\n2) second")
         #expect(numbered == [.numbered(["first", "second"])])
+    }
+
+    /// Models often put a blank line between steps, and every item still opens
+    /// with "1." — the panel must renumber them as one list, not restart at 1
+    /// for each island.
+    @Test("blank lines between numbered items keep one list")
+    func blankLinesDoNotRestartNumbering() {
+        let blocks = AnswerContent.blocks(in: """
+            1. first step
+
+            1. second step
+
+            1. third step
+            """)
+
+        #expect(blocks == [.numbered(["first step", "second step", "third step"])])
+    }
+
+    @Test("a paragraph between numbered runs starts a fresh list")
+    func paragraphSplitsNumberedLists() {
+        let blocks = AnswerContent.blocks(in: """
+            1. alpha
+            1. beta
+
+            next topic
+
+            1. gamma
+            1. delta
+            """)
+
+        #expect(blocks == [
+            .numbered(["alpha", "beta"]),
+            .paragraph("next topic"),
+            .numbered(["gamma", "delta"]),
+        ])
     }
 
     /// A list arriving straight after a sentence with no blank line between

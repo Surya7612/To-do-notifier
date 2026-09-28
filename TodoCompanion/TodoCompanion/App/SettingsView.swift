@@ -10,10 +10,13 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.talkHotkeyID) private var talkHotkeyID = HotkeyChoice.offIdentifier
     @AppStorage(AppSettings.Key.provider) private var provider = AppSettings.Provider.ollama.rawValue
     @AppStorage(AppSettings.Key.openAIModel) private var openAIModel = OpenAIBrain.defaultModel
+    @AppStorage(AppSettings.Key.anthropicModel) private var anthropicModel = AnthropicBrain.defaultModel
+    @AppStorage(AppSettings.Key.geminiModel) private var geminiModel = GeminiBrain.defaultModel
     @AppStorage(AppSettings.Key.semanticEnabled) private var semanticEnabled = false
     @AppStorage(AppSettings.Key.embeddingModel) private var embeddingModel = AppSettings.defaultEmbeddingModel
     @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
     @AppStorage(AppSettings.Key.followsAlongWhileSpeaking) private var followsAlongWhileSpeaking = false
+    @AppStorage(AppSettings.Key.guideCursorWhileTeaching) private var guideCursorWhileTeaching = false
     @AppStorage(AppSettings.Key.voiceIdentifier) private var voiceIdentifier = ""
     @AppStorage(AppSettings.Key.voiceEngine) private var voiceEngine = AppSettings.VoiceEngine.system.rawValue
     @AppStorage(AppSettings.Key.dictationEngine) private var dictationEngine =
@@ -23,20 +26,41 @@ struct SettingsView: View {
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
-    @State private var apiKey = ""
-    @State private var keyIsStored = false
+    @State private var openAIKeyDraft = ""
+    @State private var openAIKeyStored = false
+    @State private var anthropicKeyDraft = ""
+    @State private var anthropicKeyStored = false
+    @State private var geminiKeyDraft = ""
+    @State private var geminiKeyStored = false
     @State private var isLinked = TodoBridge.isLinked
     @State private var linkedSummary = ""
     @State private var canImportKey = false
     @State private var inboxFolder: String?
     @State private var inboxWaiting = 0
+    @State private var inboxProblem: String?
     @State private var mirrorDestination: AppleReminders.Destination?
     @State private var mirrorProblem: String?
+    @State private var mirrorSuccess: String?
     @State private var accessibilityTrusted = false
 
     /// Derived from the stored name on appear rather than persisted, since
     /// "custom" is a state of this window and not a preference.
-    @State private var modelSelection = OpenAIModelChoice.Selection.custom
+    @State private var openAIModelSelection = OpenAIModelChoice.Selection.custom
+    @State private var anthropicModelSelection = AnthropicModelChoice.Selection.custom
+    @State private var geminiModelSelection = GeminiModelChoice.Selection.custom
+
+    private var selectedProvider: AppSettings.Provider {
+        AppSettings.Provider(rawValue: provider) ?? .ollama
+    }
+
+    private var selectedCloudKeyStored: Bool {
+        switch selectedProvider {
+        case .openAI: openAIKeyStored
+        case .anthropic: anthropicKeyStored
+        case .gemini: geminiKeyStored
+        case .ollama: false
+        }
+    }
 
     private var accessibilityStatusText: String {
         if !accessibilityExtrasEnabled {
@@ -118,40 +142,86 @@ struct SettingsView: View {
 
                 Text("Off by default. When enabled and granted, Tab+Q opens \(Prompt.assistantName) "
                      + "listening, and Show me also moves the pointer onto the named control. "
-                     + "Guided Teach warps the cursor from step to step as it speaks. Carbon "
+                     + "Teach me with Guide cursor warps the pointer from step to step. Carbon "
                      + "shortcuts keep working either way. Nothing listens until you press a key.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Section("Who answers") {
-                Picker("Answer questions with", selection: $provider) {
+                // Menu rather than a segmented control: four providers do not
+                // fit on a segment strip, and a strip that only shows Local /
+                // OpenAI makes Claude and Gemini look missing.
+                Picker("Provider", selection: $provider) {
                     ForEach(AppSettings.Provider.allCases) { option in
                         Text(option.displayName).tag(option.rawValue)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
 
-                Text(provider == AppSettings.Provider.openAI.rawValue
-                     ? "Your question and the captured screen are sent to OpenAI. Saved summaries are always generated on this Mac and never sent anywhere."
-                     : "Nothing leaves this Mac. Local vision models are weaker at reading interfaces, so answers about what is on screen are rougher.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(whoAnswersCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                // Model and key sit *under* the provider choice, not in
+                // separate always-visible sections — otherwise picking "what
+                // answers" and picking "which model" feel like two unrelated
+                // controls fighting each other.
+                switch selectedProvider {
+                case .ollama:
+                    TextField("Ollama endpoint", text: $endpoint)
+                    TextField("Model", text: $model)
+
+                case .openAI:
+                    openAIModelControls
+                    cloudKeyRow(
+                        draft: $openAIKeyDraft,
+                        isStored: $openAIKeyStored,
+                        account: OpenAIBrain.keychainAccount,
+                        placeholder: "sk-…"
+                    ) {
+                        canImportKey = !openAIKeyStored && TodoBridge.importableOpenAIKey() != nil
+                    }
+                    if !openAIKeyStored, canImportKey {
+                        Button("Import the key from To-Do Notifier") {
+                            guard let found = TodoBridge.importableOpenAIKey() else { return }
+                            Keychain.set(found, for: OpenAIBrain.keychainAccount)
+                            openAIKeyStored = AppSettings.openAIKey != nil
+                            canImportKey = false
+                        }
+                        Text("Your to-do app already has one saved. This copies it into the Keychain; the original stays where it is.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                case .anthropic:
+                    anthropicModelControls
+                    cloudKeyRow(
+                        draft: $anthropicKeyDraft,
+                        isStored: $anthropicKeyStored,
+                        account: AnthropicBrain.keychainAccount,
+                        placeholder: "sk-ant-…"
+                    )
+
+                case .gemini:
+                    geminiModelControls
+                    cloudKeyRow(
+                        draft: $geminiKeyDraft,
+                        isStored: $geminiKeyStored,
+                        account: GeminiBrain.keychainAccount,
+                        placeholder: "AIza…"
+                    )
+                }
 
                 // Selecting a provider is not the same as being able to use it,
                 // and the difference is otherwise only discoverable by noticing
                 // that the answers did not improve.
-                if provider == AppSettings.Provider.openAI.rawValue, !keyIsStored {
-                    Label("No API key saved yet, so questions are still answered on this Mac.",
+                if selectedProvider.isCloud, !selectedCloudKeyStored {
+                    Label("No API key saved for \(selectedProvider.displayName) yet, so questions are still answered on this Mac.",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-            }
-
-            Section("On this Mac") {
-                TextField("Ollama endpoint", text: $endpoint)
-                TextField("Model", text: $model)
             }
 
             Section("Dictation") {
@@ -206,6 +276,12 @@ struct SettingsView: View {
                     Text("Only labels \(Prompt.assistantName) quotes exactly are boxed, so nothing is drawn on a guess. The box follows the sentence being read and disappears when the voice stops. Leave this off and the panel still offers a button to box the one control an answer named.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Toggle("Guide cursor during Teach me", isOn: $guideCursorWhileTeaching)
+
+                    Text("Moves the pointer onto each step’s box while teaching. Needs Accessibility extras. Same option lives on the lesson bar so you can flip it mid-lesson.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Text("Both voices run on this Mac, so nothing is sent anywhere. Speaking stops as soon as you dictate, ask something else, or close the panel.")
@@ -228,67 +304,7 @@ struct SettingsView: View {
                     // Runs across everything kept, unprompted, which is exactly
                     // the work that must never reach a hosted provider — so it
                     // is worth stating rather than leaving to be assumed.
-                    Text("Needs a second Ollama model: run `ollama pull \(embeddingModel)`. It runs on this Mac and is never sent anywhere, even when OpenAI is answering your questions.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("OpenAI") {
-                Picker("Model", selection: $modelSelection) {
-                    ForEach(OpenAIModelChoice.all) { choice in
-                        Text(choice.displayName)
-                            .tag(OpenAIModelChoice.Selection.known(choice.id))
-                    }
-                    Divider()
-                    Text("Custom…").tag(OpenAIModelChoice.Selection.custom)
-                }
-                .onChange(of: modelSelection) { _, newSelection in
-                    // Custom deliberately leaves the stored name alone, so
-                    // switching to it and back does not discard a typed one.
-                    if case .known(let chosenModel) = newSelection { openAIModel = chosenModel }
-                }
-
-                if modelSelection == .custom {
-                    TextField("Model name", text: $openAIModel, prompt: Text("gpt-5.6-…"))
-                }
-
-                if let choice = OpenAIModelChoice.named(openAIModel) {
-                    Text("\(choice.id) — \(choice.detail)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    SecureField(keyIsStored ? "Stored in Keychain" : "sk-…", text: $apiKey)
-                    Button(keyIsStored && apiKey.isEmpty ? "Remove" : "Save") {
-                        if keyIsStored, apiKey.isEmpty {
-                            Keychain.remove(OpenAIBrain.keychainAccount)
-                            keyIsStored = false
-                        } else {
-                            Keychain.set(apiKey, for: OpenAIBrain.keychainAccount)
-                            apiKey = ""
-                            keyIsStored = AppSettings.openAIKey != nil
-                        }
-                    }
-                    .disabled(apiKey.isEmpty && !keyIsStored)
-                }
-
-                Text("Kept in the login Keychain, not in preferences.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                // Offered rather than taken. The key was given to the other app
-                // for transcription, and it sits in plaintext there; importing
-                // copies it somewhere safer and makes the reuse deliberate.
-                if !keyIsStored, canImportKey {
-                    Button("Import the key from To-Do Notifier") {
-                        guard let found = TodoBridge.importableOpenAIKey() else { return }
-                        Keychain.set(found, for: OpenAIBrain.keychainAccount)
-                        keyIsStored = AppSettings.openAIKey != nil
-                        canImportKey = false
-                    }
-                    Text("Your to-do app already has one saved. This copies it into the Keychain; the original stays where it is.")
+                    Text("Needs a second Ollama model: run `ollama pull \(embeddingModel)`. It runs on this Mac and is never sent anywhere, even when a cloud model is answering your questions.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -308,7 +324,7 @@ struct SettingsView: View {
                             isLinked = true
                             refreshLinkedSummary()
                         }
-                        canImportKey = !keyIsStored && TodoBridge.importableOpenAIKey() != nil
+                        canImportKey = !openAIKeyStored && TodoBridge.importableOpenAIKey() != nil
                     }
                 }
 
@@ -317,8 +333,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Reminders away from this Mac") {
-                Toggle("Copy dated tasks into Apple Reminders", isOn: $mirrorsToAppleReminders)
+            Section("Reminders on your iPhone") {
+                Toggle("Mirror dated tasks to Apple Reminders", isOn: $mirrorsToAppleReminders)
                     .disabled(!isLinked)
                     .onChange(of: mirrorsToAppleReminders) { _, isOn in
                         Task { await applyMirrorSetting(isOn) }
@@ -329,20 +345,37 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if let problem = mirrorProblem {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        if AppleReminders.isDenied || problem.contains("System Settings") {
+                            Button("Open System Settings…") {
+                                ReminderMirrorMessaging.openSystemSettingsForReminders()
+                            }
+                            .font(.caption)
+                        }
+                    }
                 } else if mirrorsToAppleReminders, let destination = mirrorDestination {
                     // Says which account, because a *local* Reminders account
                     // syncs nowhere and every other part of this would still
                     // look like it was working.
-                    Text(destination.reachesOtherDevices
-                         ? "Tasks due in the future are copied into a \u{201C}\(ReminderMirror.listTitle)\u{201D} list in \(destination.account), so your iPhone and Watch alert you even when this Mac is asleep. \(Prompt.assistantName) stops announcing anything Reminders has taken on, so one thing pings once."
-                         : "Reminders is using the \u{201C}\(destination.account)\u{201D} account on this Mac, which does not sync, so the list will not reach your phone. Turn on iCloud for Reminders in System Settings.")
-                    .font(.caption)
-                    .foregroundStyle(destination.reachesOtherDevices ? Color.secondary : Color.orange)
+                    Text(ReminderMirrorMessaging.detail(for: destination,
+                                                         assistantName: Prompt.assistantName))
+                        .font(.caption)
+                        .foregroundStyle(destination.reachesOtherDevices ? Color.secondary : Color.orange)
+                    if !destination.reachesOtherDevices {
+                        Button("Open System Settings…") {
+                            ReminderMirrorMessaging.openSystemSettingsForReminders()
+                        }
+                        .font(.caption)
+                    } else if let mirrorSuccess {
+                        Label(mirrorSuccess, systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(DS.Status.saved)
+                    }
                 } else {
-                    Text("Local notifications need this Mac awake at the due time. Copying a task into an iCloud Reminders list lets Apple deliver it to your other devices instead. Only tasks still ahead of them are copied, and completing one there leaves the task open in the to-do app.")
+                    Text(ReminderMirrorMessaging.offStateDetail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -354,13 +387,27 @@ struct SettingsView: View {
                         .foregroundStyle(inboxFolder == nil ? .secondary : .primary)
                     Spacer()
                     Button(inboxFolder == nil ? "Choose folder…" : "Unlink") {
+                        inboxProblem = nil
                         if inboxFolder == nil {
-                            if InboxImporter.link() { refreshInbox() }
+                            switch InboxImporter.linkResult() {
+                            case .linked:
+                                refreshInbox()
+                            case .cancelled:
+                                break
+                            case let .failed(message):
+                                inboxProblem = message
+                            }
                         } else {
                             InboxImporter.unlink()
                             refreshInbox()
                         }
                     }
+                }
+
+                if let inboxProblem {
+                    Label(inboxProblem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
 
                 if inboxFolder != nil {
@@ -381,7 +428,7 @@ struct SettingsView: View {
             Section("Screen context") {
                 Toggle("Send the screenshot instead of on-device text", isOn: $sendsImage)
                 Text(sendsImage
-                     ? "Needed for OpenAI to see the screen, and for a local vision model such as qwen3-vl."
+                     ? "Needed for a cloud model to see the screen, and for a local vision model such as qwen3-vl."
                      : "Screenshots stay on this Mac; only recognized text reaches the model.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -396,12 +443,16 @@ struct SettingsView: View {
             // swallows typing. The library window activates for the same reason.
             NSApp.activate(ignoringOtherApps: true)
 
-            modelSelection = OpenAIModelChoice.selection(for: openAIModel)
-            keyIsStored = AppSettings.openAIKey != nil
+            openAIModelSelection = OpenAIModelChoice.selection(for: openAIModel)
+            anthropicModelSelection = AnthropicModelChoice.selection(for: anthropicModel)
+            geminiModelSelection = GeminiModelChoice.selection(for: geminiModel)
+            openAIKeyStored = AppSettings.openAIKey != nil
+            anthropicKeyStored = AppSettings.anthropicKey != nil
+            geminiKeyStored = AppSettings.geminiKey != nil
             refreshLinkedSummary()
             refreshInbox()
             refreshAccessibilityStatus()
-            canImportKey = !keyIsStored && TodoBridge.importableOpenAIKey() != nil
+            canImportKey = !openAIKeyStored && TodoBridge.importableOpenAIKey() != nil
             if mirrorsToAppleReminders, AppleReminders.isAuthorized {
                 mirrorDestination = AppleReminders.destination()
             }
@@ -414,8 +465,130 @@ struct SettingsView: View {
         }
     }
 
+    private var whoAnswersCaption: String {
+        switch selectedProvider {
+        case .ollama:
+            "Nothing leaves this Mac. Local vision models are weaker at reading interfaces, so answers about what is on screen are rougher."
+        case .openAI, .anthropic, .gemini:
+            "Your question and the captured screen are sent to \(selectedProvider.displayName). Saved summaries and embeddings stay on this Mac and are never sent anywhere."
+        }
+    }
+
+    @ViewBuilder
+    private var openAIModelControls: some View {
+        Picker("Model", selection: $openAIModelSelection) {
+            ForEach(OpenAIModelChoice.all) { choice in
+                Text(choice.displayName)
+                    .tag(OpenAIModelChoice.Selection.known(choice.id))
+            }
+            Divider()
+            Text("Custom…").tag(OpenAIModelChoice.Selection.custom)
+        }
+        .onChange(of: openAIModelSelection) { _, newSelection in
+            if case .known(let chosenModel) = newSelection { openAIModel = chosenModel }
+        }
+
+        if openAIModelSelection == .custom {
+            TextField("Model name", text: $openAIModel, prompt: Text("gpt-5.6-…"))
+        }
+
+        if let choice = OpenAIModelChoice.named(openAIModel) {
+            Text("\(choice.id) — \(choice.detail)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var anthropicModelControls: some View {
+        Picker("Model", selection: $anthropicModelSelection) {
+            ForEach(AnthropicModelChoice.all) { choice in
+                Text(choice.displayName)
+                    .tag(AnthropicModelChoice.Selection.known(choice.id))
+            }
+            Divider()
+            Text("Custom…").tag(AnthropicModelChoice.Selection.custom)
+        }
+        .onChange(of: anthropicModelSelection) { _, newSelection in
+            if case .known(let chosenModel) = newSelection { anthropicModel = chosenModel }
+        }
+
+        if anthropicModelSelection == .custom {
+            TextField("Model name", text: $anthropicModel, prompt: Text("claude-…"))
+        }
+
+        if let choice = AnthropicModelChoice.named(anthropicModel) {
+            Text("\(choice.id) — \(choice.detail)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var geminiModelControls: some View {
+        Picker("Model", selection: $geminiModelSelection) {
+            ForEach(GeminiModelChoice.all) { choice in
+                Text(choice.displayName)
+                    .tag(GeminiModelChoice.Selection.known(choice.id))
+            }
+            Divider()
+            Text("Custom…").tag(GeminiModelChoice.Selection.custom)
+        }
+        .onChange(of: geminiModelSelection) { _, newSelection in
+            if case .known(let chosenModel) = newSelection { geminiModel = chosenModel }
+        }
+
+        if geminiModelSelection == .custom {
+            TextField("Model name", text: $geminiModel, prompt: Text("gemini-…"))
+        }
+
+        if let choice = GeminiModelChoice.named(geminiModel) {
+            Text("\(choice.id) — \(choice.detail)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private func refreshAccessibilityStatus() {
         accessibilityTrusted = TrustAccessibility.isTrusted
+    }
+
+    @ViewBuilder
+    private func cloudKeyRow(
+        draft: Binding<String>,
+        isStored: Binding<Bool>,
+        account: String,
+        placeholder: String,
+        onChange: (() -> Void)? = nil
+    ) -> some View {
+        // Plain TextField, not SecureField: SecureField tells macOS this is a
+        // login password, so Passwords autofill floats over unrelated rows in
+        // Settings (including Who answers) and the key field looks possessed.
+        // An API key is a secret, but it is not a password.
+        HStack {
+            TextField(isStored.wrappedValue && draft.wrappedValue.isEmpty
+                      ? "Stored in Keychain — paste a new key to replace"
+                      : placeholder,
+                      text: draft)
+                .autocorrectionDisabled()
+                .font(.body.monospaced())
+            Button(isStored.wrappedValue && draft.wrappedValue.isEmpty ? "Remove" : "Save") {
+                if isStored.wrappedValue, draft.wrappedValue.isEmpty {
+                    Keychain.remove(account)
+                    isStored.wrappedValue = false
+                } else {
+                    Keychain.set(draft.wrappedValue, for: account)
+                    draft.wrappedValue = ""
+                    isStored.wrappedValue = Keychain.get(account) != nil
+                }
+                onChange?()
+            }
+            .disabled(draft.wrappedValue.isEmpty && !isStored.wrappedValue)
+        }
+
+        Text("Kept in the login Keychain, not in preferences.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 
     private func refreshInbox() {
@@ -431,6 +604,7 @@ struct SettingsView: View {
     /// would say it should.
     private func applyMirrorSetting(_ isOn: Bool) async {
         mirrorProblem = nil
+        mirrorSuccess = nil
 
         guard isOn else {
             // Takes back exactly what it added. Leaving a stale list behind
@@ -454,9 +628,7 @@ struct SettingsView: View {
 
         guard granted else {
             mirrorsToAppleReminders = false
-            mirrorProblem = AppleReminders.isDenied
-                ? "Reminders access is off for \(Prompt.assistantName) in System Settings → Privacy & Security → Reminders."
-                : "Reminders access was not granted, so nothing will be copied."
+            mirrorProblem = ReminderMirrorMessaging.deniedDetail(assistantName: Prompt.assistantName)
             return
         }
 
@@ -470,6 +642,9 @@ struct SettingsView: View {
         let work = TodoBridge.load()
         do {
             try await AppleReminders.sync(openTodos: work.todos, quietHours: work.quietHours)
+            if let destination = mirrorDestination, destination.reachesOtherDevices {
+                mirrorSuccess = "Mirrored — check Reminders on your iPhone"
+            }
         } catch {
             mirrorProblem = error.localizedDescription
         }

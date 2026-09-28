@@ -124,6 +124,19 @@ final class SavedContext {
         return remindAt > Date()
     }
 
+    /// A reminder whose time has gone by — still on the record so the library
+    /// can show overdue loops, even though the local notification will not fire.
+    var hasOverdueReminder: Bool {
+        guard let remindAt else { return false }
+        return remindAt <= Date()
+    }
+
+    /// Due within the next two days and still ahead of us.
+    func hasReminderDue(within interval: TimeInterval, now: Date = Date()) -> Bool {
+        guard let remindAt, remindAt > now else { return false }
+        return remindAt.timeIntervalSince(now) <= interval
+    }
+
     /// Vector for meaning-based matching, generated locally. Nil until it has
     /// been computed, which it may never be — semantic matching is opt-in and
     /// needs a model the user has to pull, so everything downstream treats its

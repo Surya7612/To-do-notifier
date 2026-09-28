@@ -46,10 +46,12 @@ nonisolated enum DS {
 
     enum Size {
         /// Wide enough for the region controls and the preset row to sit in one
-        /// line at their natural size (Explain / Next step / Teach me / Guided).
+        /// line at their natural size (Explain / Next step / Teach me).
         static let panelWidth: CGFloat = 500
         /// Past this the answer scrolls rather than growing the window forever.
-        static let maxAnswerHeight: CGFloat = 320
+        /// Kept as a band rather than a tall sheet so the panel stays beside the
+        /// work instead of covering it (docs/USABILITY.md §3).
+        static let maxAnswerHeight: CGFloat = 420
         /// A diff sits inside the answer area, so it gets a smaller share of it.
         static let maxDiffHeight: CGFloat = 200
         static let indicator: CGFloat = 110
