@@ -1180,7 +1180,7 @@ Current-version usability upgrades (and the same non-goals restated as product i
 
 `scripts/release-suite.sh` builds **both** apps into one family DMG (`To-Do Notifier.app` +
 `TodoCompanion.app`), Developer ID signs them, notarizes the DMG, staples it, and publishes a GitHub
-Release (for example `v1.5.0`). That is the recommended download for new users.
+Release (for example `v1.6.0`). That is the recommended download for new users.
 
 `scripts/release-companion.sh` remains for Max-only hotfix releases (`companion-v*`). Suite releases
 are additive and do not delete companion tags.

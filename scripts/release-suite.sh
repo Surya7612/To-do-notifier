@@ -228,7 +228,15 @@ One installer for both apps in this open-source family:
 - **To-Do Notifier** — tasks, focus timer, study tools, voice
 - **TodoCompanion (Max)** — ask about what is on your screen and keep it with your own reason
 
-\`companion-v0.1\` stays available for Max-only downloads; this suite release is the
+### What’s new in Max
+
+- Teaching **grid board** for invented diagrams (Explain / Teach)
+- Unified **Teach me** loop with optional **Guide cursor**
+- Keep this, Due soon / Overdue library scopes, clearer cold-start status
+- Claude and Gemini as answer providers alongside OpenAI and local Ollama
+- Capture / lesson race fixes so Show me, Teach, and dismiss stay reliable
+
+\`companion-v*\` Max-only hotfixes stay available; this suite release is the
 recommended install for new users.
 
 ## Install
