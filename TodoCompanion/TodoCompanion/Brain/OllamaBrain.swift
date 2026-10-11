@@ -12,7 +12,9 @@ struct OllamaBrain: Brain {
 
     func answerStream(question: String, context: AskContext) -> AsyncThrowingStream<String, Error> {
         generate(system: Prompt.system(for: context),
-                 prompt: Prompt.user(question: question, context: context),
+                 prompt: Prompt.user(question: question,
+                                     context: context,
+                                     screenTextLimit: Self.screenTextLimit),
                  image: context.includeImage ? context.observation?.image : nil)
     }
 
@@ -30,6 +32,8 @@ struct OllamaBrain: Brain {
                         "system": system,
                         "prompt": prompt,
                         "stream": true,
+                        "keep_alive": Self.keepAlive,
+                        "options": Self.options,
                     ]
                     if let image, let encoded = ImageCodec.base64PNG(from: image) {
                         body["images"] = [encoded]
@@ -43,7 +47,9 @@ struct OllamaBrain: Brain {
 
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                        throw BrainError.http(http.statusCode, "check the model name in Settings")
+                        throw http.statusCode == 404
+                            ? BrainError.modelNotPulled(model)
+                            : BrainError.http(http.statusCode, "check the model name in Settings")
                     }
 
                     for try await line in bytes.lines {
@@ -58,6 +64,10 @@ struct OllamaBrain: Brain {
                     continuation.finish()
                 } catch let error as URLError where error.code == .cannotConnectToHost {
                     continuation.finish(throwing: BrainError.unreachable)
+                } catch let error as URLError where error.code == .timedOut {
+                    continuation.finish(throwing: BrainError.timedOut)
+                } catch let error as URLError where error.code == .networkConnectionLost {
+                    continuation.finish(throwing: BrainError.connectionLost)
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -134,6 +144,54 @@ struct OllamaBrain: Brain {
             throw EmbeddingError.unusableResponse
         }
         return vector
+    }
+
+    /// Ollama's default is five minutes, which is shorter than the gap between
+    /// two questions in ordinary use, so most first questions paid a full
+    /// model load. Half an hour keeps it resident across a working session
+    /// without holding memory overnight.
+    static let keepAlive = "30m"
+
+    /// Ollama's default window is 4,096 tokens, and a Teach prompt alone is
+    /// about 3,300 of them before any screen text — measured with `llama3.2`,
+    /// a Teach ask over 6,000 characters of code had 4,556 tokens of prompt and
+    /// was cut to 2,050, dropping the instructions that make it a lesson.
+    ///
+    /// One value for every request, warm-up included, because Ollama reloads
+    /// the model whenever the window changes — twenty seconds on an 8 GB Mac.
+    static let contextWindow = 8_192
+
+    /// Leaves room in `contextWindow` for the Teach prompt and a full lesson
+    /// with its board: recognized text runs about one token per five
+    /// characters, so this is roughly 1,600 tokens.
+    static let screenTextLimit = 8_000
+
+    static var options: [String: Any] { ["num_ctx": contextWindow] }
+
+    enum WarmResult: Equatable { case loaded, modelMissing, failed }
+
+    /// Loads the chat model without generating anything.
+    ///
+    /// Ollama treats a request with no prompt as "load and return", so this
+    /// sends nothing from the screen — only the model name.
+    static func warm(endpoint: URL, model: String) async -> WarmResult {
+        var request = URLRequest(url: endpoint.appending(path: "api/generate"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "model": model,
+            "keep_alive": keepAlive,
+            "options": options,
+        ])
+        request.timeoutInterval = 120
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return .failed }
+            if http.statusCode == 404 { return .modelMissing }
+            return (200..<300).contains(http.statusCode) ? .loaded : .failed
+        } catch {
+            return .failed
+        }
     }
 
     /// Cheap readiness probe for the status line — never used to answer.

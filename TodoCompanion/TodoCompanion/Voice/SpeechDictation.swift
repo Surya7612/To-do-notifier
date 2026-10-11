@@ -57,6 +57,9 @@ final class SpeechDictation {
     /// MainActor existential in the tap closure — see `DictationAudioTap`.
     private let tap = DictationAudioTap()
     private var silenceWatchdog: Task<Void, Never>?
+    /// Bumped by every start and stop, so a start still awaiting a model load
+    /// can tell it has been called off.
+    private var startGeneration = 0
 
     /// Speech occupies a narrow band of the available amplitude range, so the
     /// raw peak barely moves the needle. Boosted and clamped, it reads as voice.
@@ -71,6 +74,8 @@ final class SpeechDictation {
                onTranscript: @escaping (String) -> Void,
                onSilence: @escaping (String) -> Void) async throws {
         guard !isListening else { return }
+        startGeneration &+= 1
+        let generation = startGeneration
 
         let chosenEngine = AppSettings.dictationEngine
         if chosenEngine != recognizerEngine || recognizer == nil {
@@ -83,8 +88,12 @@ final class SpeechDictation {
         // permission prompt or a first-run model download happens and neither
         // should run with the input device held open.
         try await recognizer.prepare()
+        // A stop or dismiss during a model load must not be followed by the
+        // microphone opening anyway, seconds later, with nobody asking.
+        guard generation == startGeneration else { return }
 
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw Failure.micDenied }
+        guard generation == startGeneration else { return }
 
         let engine = AVAudioEngine()
         self.engine = engine
@@ -111,6 +120,11 @@ final class SpeechDictation {
         // closure written here inherits MainActor isolation from `start`, and
         // AVAudioEngine then calls it on the render thread — which is exactly
         // the Tab+Q crash, even after the captured types were made Sendable.
+        // Begin recognition before the engine starts so the first buffers are
+        // not dropped — Apple's holder is nil until begin(), and Parakeet used
+        // to reset its queue in begin() after the tap was already feeding.
+        recognizer.begin(expecting: expecting, onTranscript: onTranscript)
+
         DictationAudioTap.install(on: input, format: format, feed: tap, meter: level)
 
         engine.prepare()
@@ -118,6 +132,7 @@ final class SpeechDictation {
             try engine.start()
         } catch {
             NSLog("[Dictation] engine start failed: \(error.localizedDescription)")
+            recognizer.end()
             cleanUp()
             throw Failure.engineFailed(error.localizedDescription)
         }
@@ -131,11 +146,10 @@ final class SpeechDictation {
             NSLog("[Dictation] no audio from \(device) after 3s")
             onSilence(device)
         }
-
-        recognizer.begin(expecting: expecting, onTranscript: onTranscript)
     }
 
     func stop() {
+        startGeneration &+= 1
         guard isListening else { return }
         // Cleared first so a recognition callback already in flight does not
         // start another segment on the way out.

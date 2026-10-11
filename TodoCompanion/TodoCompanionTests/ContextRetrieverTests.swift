@@ -102,6 +102,22 @@ struct ContextRetrieverTests {
         #expect(ContextRetriever.related(to: screen, among: [saved]).count == 1)
     }
 
+    @Test("a prior fix in the same window is labelled past fix here")
+    func pastFixInSameWindow() throws {
+        let fixed = Fixture.saved(intent: "fixed the nil crash here",
+                                  app: "Xcode",
+                                  window: "Brain.swift")
+        fixed.recognizedText = "fatal error Unexpectedly found nil"
+        let screen = Fixture.observation(text: "Unexpectedly found nil while unwrapping",
+                                         app: "Xcode",
+                                         window: "Brain.swift")
+
+        let matches = ContextRetriever.related(to: screen, among: [fixed])
+        let hit = try #require(matches.first)
+        #expect(hit.reason.contains("past fix here"))
+        #expect(hit.reason.contains("same window"))
+    }
+
     @Test("every match explains itself")
     func everyMatchHasAReason() {
         let saves = [

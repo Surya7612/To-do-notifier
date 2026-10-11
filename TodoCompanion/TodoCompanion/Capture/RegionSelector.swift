@@ -17,10 +17,19 @@ final class RegionSelector {
 
     /// Returns the selection in global screen coordinates, or nil if cancelled.
     func selectRegion(on screen: NSScreen) async -> CGRect? {
-        await withCheckedContinuation { continuation in
+        // A previous overlay still up (dismiss mid-drag) would otherwise leave
+        // a screen-saver panel with no companion behind it.
+        cancel()
+        return await withCheckedContinuation { continuation in
             self.continuation = continuation
             present(on: screen)
         }
+    }
+
+    /// Tears down an in-flight overlay without a selection — dismiss / re-summon.
+    func cancel() {
+        guard continuation != nil || panel != nil else { return }
+        finish(with: nil)
     }
 
     private func present(on screen: NSScreen) {

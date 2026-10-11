@@ -11,6 +11,11 @@ talks → something moves → you act → next. One progress strip (“step 2 of
 one stop, one Look again. Guided is an option on Teach (cursor follow), not a
 third preset that people miss.
 
+Teach like a tutor: one beat per step (point → say → brief pause). The panel
+highlights the same step the voice is on; the box/cursor move with that beat.
+No sentence bubbles over the user's code — the box *is* the cue. Overlays clear
+on Done and on Quit.
+
 ## 2. Speech that never lies about the screen
 
 No numbering theatre, no fence narration, no clause running a sentence ahead of
@@ -66,6 +71,16 @@ private screen:
 - Proactive resurfacing (anything beyond related items on summon)
 - Multi-file autonomous agents
 - Cloud transcription or cloud speech synthesis
+- Browser automation / “open LeetCode and click” computer-use agents — tutor +
+  optional local MCP tools yes; driving the browser no
+
+## Continuity (modes, tutor, MCP)
+
+Ask / Teach / Debug / Prep reshape tone without changing grounding. Problem
+screens get a tutor stance. Accessibility extras may add page-structure text
+beside OCR. Related keeps surface in Teach prompts. Opt-in MCP may enrich an
+answer from a local stdio server; results are labelled as tools. Empty Return
+in Prep drafts standup; in Teach starts Teach me.
 
 ## Implementation map
 

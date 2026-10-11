@@ -30,6 +30,20 @@ enum Reminders {
         }
     }
 
+    /// Ids Apple Reminders has confirmed it will announce, this launch.
+    ///
+    /// Remembered rather than only cancelled because the cancel and the
+    /// schedule run as separate tasks from several places — a save, the phone
+    /// import, launch and wake — and a cancel that arrives before the request
+    /// exists removes nothing. Then the Mac alerted twice for one reminder.
+    private static var handedToApple: Set<String> = []
+
+    /// Apple has taken this reminder on, so Max stops announcing it.
+    static func standDown(id: String) {
+        handedToApple.insert(id)
+        cancel(id: id)
+    }
+
     static var isDenied: Bool {
         get async {
             await UNUserNotificationCenter.current().notificationSettings()
@@ -39,11 +53,18 @@ enum Reminders {
 
     /// - Returns: whether the reminder was actually scheduled, so the caller can
     ///   tell the user when it was not instead of silently dropping it.
+    /// - Parameter reclaimingFromApple: set when the user deliberately picks a
+    ///   new time. Apple still holds the old one until the next mirror sweep,
+    ///   and leaving the new time unannounced until then would be worse.
     static func schedule(id: String,
                          at date: Date,
                          intent: String,
-                         sourceApp: String) async -> Bool {
+                         sourceApp: String,
+                         reclaimingFromApple: Bool = false) async -> Bool {
+        if reclaimingFromApple { handedToApple.remove(id) }
         guard date > Date(), await requestAuthorization() else { return false }
+        // Apple will deliver it, which is what the caller is asking about.
+        guard !handedToApple.contains(id) else { return true }
 
         let content = UNMutableNotificationContent()
         // The user's own words are the notification. A model's summary here
@@ -73,6 +94,8 @@ enum Reminders {
 
         do {
             try await UNUserNotificationCenter.current().add(request)
+            // The stand-down may have landed while this add was in flight.
+            if handedToApple.contains(id) { cancel(id: id) }
             return true
         } catch {
             NSLog("[Reminders] couldn't schedule \(id): \(error)")

@@ -14,9 +14,12 @@ export PATH="/opt/homebrew/bin:$PATH"
 #   ./scripts/release-suite.sh           # uses version from package.json
 #   ./scripts/release-suite.sh 1.5.0     # explicit tag version (without v)
 #   CONFIRM=yes ./scripts/release-suite.sh
+#   SKIP_PUBLISH=yes CONFIRM=yes ./scripts/release-suite.sh  # build+notarize only
 #
 # Prerequisites: same as release-companion.sh (create-dmg, gh, Developer ID,
 # TodoCompanion-notary keychain profile, Local.xcconfig with DEVELOPMENT_TEAM).
+# Sparkle (Max updates): ~/.todo-companion-sparkle/ed25519-priv.key from
+# scripts/sparkle-generate-keys.sh, and SPARKLE_PUBLIC_ED_KEY in Local.xcconfig.
 # =============================================================================
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -91,14 +94,18 @@ else
 fi
 TAG="v${VERSION}"
 
-if gh release view "${TAG}" --repo "${GITHUB_REPO}" >/dev/null 2>&1; then
+if [ "${SKIP_PUBLISH:-}" != "yes" ] \
+    && gh release view "${TAG}" --repo "${GITHUB_REPO}" >/dev/null 2>&1; then
     echo "Release ${TAG} already exists: https://github.com/${GITHUB_REPO}/releases/tag/${TAG}"
-    echo "Bump package.json or pass a new version."
+    echo "Bump package.json or pass a new version (or SKIP_PUBLISH=yes to build only)."
     exit 1
 fi
 
 echo "Releasing suite ${TAG} (To-Do Notifier + Max) to ${GITHUB_REPO}"
 echo "Team: ${TEAM_ID}  Notary: ${NOTARY_PROFILE}"
+if [ "${SKIP_PUBLISH:-}" = "yes" ]; then
+    echo "SKIP_PUBLISH=yes — will notarize locally and not create a GitHub release."
+fi
 if [ "${CONFIRM:-}" != "yes" ]; then
     read -r -p "Proceed? (y/N) " REPLY
     [[ "$REPLY" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
@@ -217,6 +224,63 @@ echo "Assessing both apps…"
 spctl --assess --type execute --verbose=4 "${PAYLOAD_DIR}/${ELECTRON_APP_NAME}.app" 2>&1
 spctl --assess --type execute --verbose=4 "${PAYLOAD_DIR}/${COMPANION_APP_NAME}.app" 2>&1
 
+# ── Sparkle appcast (Max only — suite DMG stays the new-user installer) ──────
+
+COMPANION_ZIP="${BUILD_DIR}/${COMPANION_APP_NAME}-${VERSION}.zip"
+APPCAST_PATH="${BUILD_DIR}/appcast.xml"
+SPARKLE_PRIV="${HOME}/.todo-companion-sparkle/ed25519-priv.key"
+
+echo "Zipping TodoCompanion for Sparkle…"
+ditto -c -k --sequesterRsrc --keepParent \
+    "${PAYLOAD_DIR}/${COMPANION_APP_NAME}.app" "${COMPANION_ZIP}"
+
+find_sparkle_tool() {
+    local name="$1"
+    find "${HOME}/Library/Developer/Xcode/DerivedData" \
+        -path "*/SourcePackages/artifacts/sparkle/*/bin/${name}" \
+        2>/dev/null | head -1
+}
+
+SIGN_UPDATE="$(find_sparkle_tool sign_update)"
+if [ -f "${SPARKLE_PRIV}" ] && [ -n "${SIGN_UPDATE}" ] && [ -x "${SIGN_UPDATE}" ]; then
+    echo "Signing update and writing appcast.xml…"
+    # Prefer sign_update over generate_appcast: the latter often waits on
+    # Keychain UI and can omit edSignature when driven only by a key file.
+    SIGN_OUT="$("${SIGN_UPDATE}" "${COMPANION_ZIP}" --ed-key-file "${SPARKLE_PRIV}")"
+    ED_SIG="$(echo "${SIGN_OUT}" | sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p')"
+    ZIP_LEN="$(echo "${SIGN_OUT}" | sed -nE 's/.*length="([^"]+)".*/\1/p')"
+    if [ -z "${ED_SIG}" ] || [ -z "${ZIP_LEN}" ]; then
+        echo "Warning: sign_update did not return an edSignature: ${SIGN_OUT}"
+        APPCAST_PATH=""
+    else
+        COMPANION_BUILD_NUM="$(git -C "${PROJECT_DIR}" rev-list --count HEAD)"
+        DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/$(basename "${COMPANION_ZIP}")"
+        PUB_DATE="$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+        cat > "${APPCAST_PATH}" <<APPCAST
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>TodoCompanion</title>
+        <item>
+            <title>${VERSION}</title>
+            <pubDate>${PUB_DATE}</pubDate>
+            <sparkle:version>${COMPANION_BUILD_NUM}</sparkle:version>
+            <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.5</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="${DOWNLOAD_URL}" length="${ZIP_LEN}" type="application/octet-stream" sparkle:edSignature="${ED_SIG}"/>
+        </item>
+    </channel>
+</rss>
+APPCAST
+        echo "Appcast ready: ${APPCAST_PATH}"
+    fi
+else
+    echo "Sparkle sign_update or private key missing — skipping appcast."
+    echo "Run scripts/sparkle-generate-keys.sh after resolving the Sparkle package."
+    APPCAST_PATH=""
+fi
+
 # ── Publish ──────────────────────────────────────────────────────────────────
 
 NOTES_FILE="${BUILD_DIR}/notes.md"
@@ -235,6 +299,7 @@ One installer for both apps in this open-source family:
 - Keep this, Due soon / Overdue library scopes, clearer cold-start status
 - Claude and Gemini as answer providers alongside OpenAI and local Ollama
 - Capture / lesson race fixes so Show me, Teach, and dismiss stay reliable
+- Sparkle auto-updates for Max on the Developer ID channel
 
 \`companion-v*\` Max-only hotfixes stay available; this suite release is the
 recommended install for new users.
@@ -252,8 +317,22 @@ recommended install for new users.
 - Apple Silicon Mac, macOS 14 or later
 NOTES
 
+if [ "${SKIP_PUBLISH:-}" = "yes" ]; then
+    echo
+    echo "SKIP_PUBLISH=yes — not creating a GitHub release."
+    echo "DMG: ${DMG_PATH}"
+    echo "Companion zip: ${COMPANION_ZIP}"
+    [ -n "${APPCAST_PATH}" ] && echo "Appcast: ${APPCAST_PATH}"
+    exit 0
+fi
+
+RELEASE_ASSETS=("${DMG_PATH}" "${COMPANION_ZIP}")
+if [ -n "${APPCAST_PATH}" ] && [ -f "${APPCAST_PATH}" ]; then
+    RELEASE_ASSETS+=("${APPCAST_PATH}")
+fi
+
 echo "Publishing ${TAG}…"
-gh release create "${TAG}" "${DMG_PATH}" \
+gh release create "${TAG}" "${RELEASE_ASSETS[@]}" \
     --repo "${GITHUB_REPO}" \
     --title "To-Do Notifier + Max v${VERSION}" \
     --notes-file "${NOTES_FILE}"

@@ -377,31 +377,68 @@ struct PersonaPromptTests {
     @Test("teaching instructions appear only when teaching")
     func teachingRulesAreConditional() {
         let plain = AskContext()
-        #expect(!Prompt.system(for: plain).contains("numbered list of short steps"))
+        #expect(!Prompt.system(for: plain).contains("15–30 second"))
 
         let teaching = AskContext(isTeaching: true)
-        #expect(Prompt.system(for: teaching).contains("numbered list of short steps"))
+        #expect(Prompt.system(for: teaching).contains("15–30 second") || Prompt.system(for: teaching).contains("15-30 second"))
         #expect(Prompt.system(for: teaching).contains("patient tutor"))
-        #expect(Prompt.system(for: teaching).contains("Do not put fenced code blocks inside the numbered"))
+        #expect(Prompt.system(for: teaching).contains("Story order only") || Prompt.system(for: teaching).contains("camera cut"))
+        #expect(Prompt.system(for: teaching).contains("Do not put fenced code inside the numbered"))
+        #expect(Prompt.system(for: teaching).contains("solution fence")
+                || Prompt.system(for: teaching).contains("explicitly asked for code"))
         #expect(!Prompt.system(for: teaching).contains("guided walk"))
 
         let guided = AskContext(isTeaching: true, isGuidedTeaching: true)
         #expect(Prompt.system(for: guided).contains("guided walk"))
-        #expect(Prompt.system(for: guided).contains("written on the screen as a tip"))
-        #expect(Prompt.system(for: guided).contains("why that line, control, or rule exists"))
+        #expect(Prompt.system(for: guided).contains("point, say why, pause"))
+        #expect(Prompt.system(for: guided).contains("Quoting on-screen text is mandatory"))
+    }
+
+    @Test("a board must explain a relationship, not decorate")
+    func boardRequiresArrowsAndTips() {
+        let board = AskContext(wantsBoard: true)
+        let prompt = Prompt.system(for: board)
+        #expect(prompt.contains("storyboard") || prompt.contains("15–30"))
+        #expect(prompt.contains("board fence is required") || prompt.contains("multi-frame"))
+        #expect(prompt.contains("Never put success and failure") || prompt.contains("side by side"))
+        #expect(prompt.contains("Parking system"))
+        #expect(prompt.contains("bubble") || prompt.contains("speech"))
+    }
+
+    @Test("board repair ask is board-only")
+    func boardRepairIsBoardOnly() {
+        let ask = Prompt.boardRepairQuestion(steps: ["Setup the bays", "Try a big car"])
+        #expect(ask.contains("Emit ONLY one closed"))
+        #expect(ask.contains("Setup the bays"))
+        #expect(ask.contains("no solution code"))
+    }
+
+    @Test("a typed teaching focus is named so the lesson does not tour the screen")
+    func teachingFocusNarrowsTheWalk() {
+        let bare = AskContext(isTeaching: true)
+        #expect(!Prompt.system(for: bare).contains("already said what they want taught"))
+
+        let focused = AskContext(isTeaching: true, teachingFocus: "why is res shadowed?")
+        let prompt = Prompt.system(for: focused)
+        #expect(prompt.contains("already said what they want taught"))
+        #expect(prompt.contains("why is res shadowed?"))
+        #expect(prompt.contains("Do not walk unrelated"))
     }
 
     @Test("board instructions appear only when a board is wanted")
     func boardRulesAreConditional() {
         let plain = AskContext()
-        #expect(!Prompt.system(for: plain).contains("fenced block tagged board"))
+        #expect(!Prompt.system(for: plain).contains("board fence is required"))
 
         let explain = AskContext(wantsBoard: true)
-        #expect(Prompt.system(for: explain).contains("fenced block tagged board"))
-        #expect(Prompt.system(for: explain).contains("concept tokens"))
+        #expect(Prompt.system(for: explain).contains("board fence is required"))
+        #expect(Prompt.system(for: explain).contains("sketch"))
+        #expect(Prompt.system(for: explain).contains("never replaces those quotes"))
+        #expect(Prompt.system(for: explain).contains("storyboard") || Prompt.system(for: explain).contains("frame"))
+        #expect(Prompt.system(for: explain).contains("bubble"))
 
         let teaching = AskContext(isTeaching: true, wantsBoard: true)
-        #expect(Prompt.system(for: teaching).contains("fenced block tagged board"))
+        #expect(Prompt.system(for: teaching).contains("board fence is required"))
     }
 
     @Test("the file is given with line numbers and named")
@@ -559,7 +596,24 @@ struct VisualQuestionTests {
 
     @Test("the action row omits Guided as its own preset")
     func primaryPresetsOmitGuided() {
-        #expect(CompanionViewModel.primaryPresets == [.explain, .nextStep, .teach])
+        #expect(CompanionViewModel.primaryPresets == [.explain, .teach])
         #expect(CompanionViewModel.Preset.allCases.contains(.guidedTeach))
+        #expect(CompanionViewModel.Preset.allCases.contains(.nextStep))
+    }
+
+    @Test("diagram asks are detected so Teach can open a board without touring")
+    func detectsDiagramAsks() {
+        #expect(CompanionViewModel.asksForDiagram("draw a data flow of this"))
+        #expect(CompanionViewModel.asksForDiagram("sketch how this works"))
+        #expect(!CompanionViewModel.asksForDiagram("why is res shadowed?"))
+    }
+
+    @Test("draw-and-explain typed asks take the Teach path, not Ask")
+    func detectsSketchLessonAsks() {
+        #expect(CompanionViewModel.asksForSketchLesson(
+            "draw and explain me how to solve this question and give me the code"))
+        #expect(CompanionViewModel.asksForSketchLesson("teach me this step by step"))
+        #expect(CompanionViewModel.asksForSketchLesson("walk me through the approach"))
+        #expect(!CompanionViewModel.asksForSketchLesson("what does addCar return?"))
     }
 }

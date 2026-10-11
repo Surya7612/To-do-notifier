@@ -44,6 +44,20 @@ struct ReminderMirrorMessagingTests {
         #expect(text.contains("Reminders"))
         #expect(text.contains("Max"))
     }
+
+    @Test("this-Mac-only post-sync copy says the phone will not alert")
+    func thisMacOnlySyncedWarnsPhone() {
+        let text = ReminderMirrorMessaging.thisMacOnlySynced
+        #expect(text.localizedCaseInsensitiveContains("this Mac"))
+        #expect(text.localizedCaseInsensitiveContains("phone"))
+    }
+
+    @Test("one-way note says Reminders does not complete the to-do")
+    func oneWayNoteIsClear() {
+        let text = ReminderMirrorMessaging.oneWaySyncNote
+        #expect(text.localizedCaseInsensitiveContains("one-way")
+                || text.localizedCaseInsensitiveContains("does not tick"))
+    }
 }
 
 @Suite("Cloud model choices")

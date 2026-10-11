@@ -25,6 +25,7 @@ final class CompanionPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
+        isMovable = true
         isMovableByWindowBackground = true
         hidesOnDeactivate = false
         animationBehavior = .utilityWindow

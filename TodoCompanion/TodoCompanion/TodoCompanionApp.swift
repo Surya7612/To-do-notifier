@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 
@@ -15,6 +16,12 @@ struct TodoCompanionApp: App {
             LibraryMenuButton()
 
             Divider()
+
+            if AppUpdate.isAvailable {
+                Button("Check for Updates…") {
+                    AppUpdate.checkForUpdates()
+                }
+            }
 
             SettingsLink { Text("Settings…") }
                 .keyboardShortcut(",", modifiers: .command)
@@ -59,11 +66,20 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: "bubble.left.and.text.bubble.right")
-            .accessibilityLabel("Todo Companion")
-            .onAppear {
-                LibraryWindow.opener = { openWindow(id: AppWindow.library) }
+        // Doberman template with an SF Symbol fallback so a missing asset cannot
+        // leave the status item blank (which reads as "the app never opened").
+        Group {
+            if NSImage(named: "MenuBarIcon") != nil {
+                Image("MenuBarIcon")
+                    .renderingMode(.template)
+            } else {
+                Image(systemName: "dog.fill")
             }
+        }
+        .accessibilityLabel("Todo Companion")
+        .onAppear {
+            LibraryWindow.opener = { openWindow(id: AppWindow.library) }
+        }
     }
 }
 

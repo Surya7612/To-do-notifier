@@ -775,7 +775,8 @@ private struct ContextDetailView: View {
             let scheduled = await Reminders.schedule(id: context.reminderIdentifier,
                                                      at: date,
                                                      intent: context.intent,
-                                                     sourceApp: context.sourceApp)
+                                                     sourceApp: context.sourceApp,
+                                                     reclaimingFromApple: true)
             guard scheduled else {
                 reminderProblem = "Notifications are off for \(Prompt.assistantName) in System Settings."
                 return

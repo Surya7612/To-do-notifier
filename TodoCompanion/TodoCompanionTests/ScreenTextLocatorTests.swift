@@ -242,6 +242,26 @@ struct FollowAlongMatchingTests {
 
         #expect(match.text == "Fairlight")
     }
+
+    @Test("a lesson quote with trailing punctuation still finds the on-screen label")
+    func punctuationStrippedLabelMatches() throws {
+        let match = try #require(
+            ScreenTextLocator.locate(label: "Fairlight:", in: menuBar())
+        )
+        #expect(match.text == "Fairlight")
+    }
+
+    @Test("a spaced quote matches a collapsed on-screen identifier")
+    func collapsedIdentifierMatches() throws {
+        let regions = [
+            TextRegion(string: "fooBar",
+                       boundingBox: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.05),
+                       line: 0,
+                       position: 0),
+        ]
+        let match = try #require(ScreenTextLocator.locate(label: "foo Bar", in: regions))
+        #expect(match.text == "fooBar")
+    }
 }
 
 /// Vision normalizes from the bottom left and so does AppKit's screen space, so

@@ -34,10 +34,38 @@ enum TextRecognizer {
     /// the ability to point at something beyond the cutoff.
     nonisolated static let regionLimit = 1200
 
-    nonisolated static func recognize(in image: CGImage, limit: Int = 6000) -> RecognizedScreen {
+    /// How careful Vision should be. Summon uses `.fast` so the panel is ready
+    /// to ask; Teach / region use `.accurate` so quoted labels still resolve.
+    nonisolated enum Quality: Sendable {
+        case fast
+        case accurate
+    }
+
+    /// - Parameter customWords: project names and on-screen identifiers Vision
+    ///   should prefer — the same vocabulary `DictationHints` feeds speech.
+    ///   Empty by default so callers that do not have a vocabulary stay cheap.
+    /// - Parameter quality: `.fast` for the first grab on summon; `.accurate`
+    ///   when boxes and Guided warps depend on the read.
+    nonisolated static func recognize(in image: CGImage,
+                                      limit: Int = 6000,
+                                      customWords: [String] = [],
+                                      quality: Quality = .accurate) -> RecognizedScreen {
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
+        request.recognitionLevel = quality == .fast ? .fast : .accurate
+        // Language correction is expensive and only matters when we need to
+        // point; skip it on the summon path.
+        request.usesLanguageCorrection = quality == .accurate
+        // Small UI chrome (menu items, badges) is exactly what Teach points at;
+        // the default floor drops too many of those words.
+        request.minimumTextHeight = quality == .fast ? 1.0 / 50.0 : 1.0 / 80.0
+        // Latest revision picks up more of the dense UI typefaces Teach quotes;
+        // language detection keeps a mixed EN/symbol screen from collapsing
+        // identifiers into the wrong script.
+        request.revision = VNRecognizeTextRequest.currentRevision
+        request.automaticallyDetectsLanguage = quality == .accurate
+        if quality == .accurate, !customWords.isEmpty {
+            request.customWords = Array(customWords.prefix(100))
+        }
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {

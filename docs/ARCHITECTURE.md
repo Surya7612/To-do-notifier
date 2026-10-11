@@ -2,6 +2,11 @@
 
 Companion notes for the high-level diagram in the [README](../README.md). Aimed at portfolio / code review — not a full design doc.
 
+**Two apps share this repository.** This file describes the Electron to-do app.
+The native menu-bar companion (**Max** / `TodoCompanion/`) is documented in
+[`AGENTS.md`](../AGENTS.md) — that is the architecture source of truth for capture,
+OCR, retrieval, Brain providers, Teach, and App Store vs Developer ID channels.
+
 ## Processes & windows
 
 | Surface | Role |

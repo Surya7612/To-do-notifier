@@ -44,9 +44,12 @@ final class CompanionPanelController {
                                    isConnected: marks.isConnected,
                                    on: marks.screen)
         }
-        viewModel.onLessonEnded = { [weak self] in self?.lessonMarks.hide() }
-        viewModel.onBoardScene = { [weak self] scene, frameIndex in
-            self?.boardPanel.update(scene: scene, frameIndex: frameIndex)
+        viewModel.onLessonEnded = { [weak self] in
+            self?.lessonMarks.hide()
+            self?.highlight.hide()
+        }
+        viewModel.onBoardScene = { [weak self] scene, frameIndex, narration in
+            self?.boardPanel.update(scene: scene, frameIndex: frameIndex, narration: narration)
         }
         viewModel.onBoardEnded = { [weak self] in self?.boardPanel.hide() }
         boardPanel.onClose = { [weak self] in self?.viewModel.closeBoard() }
@@ -174,16 +177,62 @@ final class CompanionPanelController {
         previousApp = nil
     }
 
+    /// Explicit Close (X): tear lesson, board, and panel down together.
+    ///
+    /// Click-away keeps a lesson up so you can work underneath it. The X is the
+    /// opposite request — leave nothing drawn — and used to look broken when a
+    /// pinned lesson left boxes after the chrome vanished.
+    func closeFully() {
+        viewModel.endLesson()
+        viewModel.closeBoard()
+        highlight.hide()
+        lessonMarks.hide()
+        boardPanel.hide()
+        indicator.hide()
+        // A pin is for working beside the panel, not a setting. Surviving a
+        // close meant the next summon would not dismiss on click-away, with
+        // nothing on screen saying why.
+        viewModel.isPinned = false
+        hide()
+    }
+
+    /// Hide the chrome; keep the conversation and any lesson marks.
+    ///
+    /// For "I want the panel out of the way while I do the step" without ending
+    /// Teach. Summon brings the panel back.
+    func minimizePanel() {
+        isPresented = false
+        stopWatchingForOutsideClick()
+        panel?.orderOut(nil)
+        // Keep pin / lesson / turns — only the window goes away.
+        previousApp?.activate()
+        previousApp = nil
+    }
+
+    /// Tears every overlay down — for Quit, where lingering lesson boxes would
+    /// otherwise outlive the process's chrome and look stuck on the desktop.
+    func tearDownOverlays() {
+        viewModel.endLesson()
+        viewModel.closeBoard()
+        highlight.hide()
+        lessonMarks.hide()
+        boardPanel.hide()
+        indicator.hide()
+    }
+
     private func existingPanel() -> CompanionPanel {
         if let panel { return panel }
 
         let panel = CompanionPanel(contentRect: NSRect(origin: .zero, size: Self.initialSize))
-        panel.onDismiss = { [weak self] in self?.hide() }
+        // Esc matches the X — leave nothing drawn — rather than the soft hide
+        // that keeps a lesson up after click-away.
+        panel.onDismiss = { [weak self] in self?.closeFully() }
 
         let hosting = NSHostingController(
             rootView: CompanionView(
                 viewModel: viewModel,
-                onClose: { [weak self] in self?.hide() },
+                onClose: { [weak self] in self?.closeFully() },
+                onMinimize: { [weak self] in self?.minimizePanel() },
                 onRetry: { [weak self] in
                     self?.viewModel.retryCapture(frontmostApp: self?.previousApp)
                 },

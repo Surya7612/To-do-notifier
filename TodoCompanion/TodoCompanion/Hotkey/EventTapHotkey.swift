@@ -115,18 +115,13 @@ private nonisolated func eventTapHotkeyCallback(
     let code = event.getIntegerValueField(.keyboardEventKeycode)
     let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
 
-    var swallow = false
-    let apply: () -> Void = {
-        MainActor.assumeIsolated {
-            swallow = eventTapInstance?.noteKey(type: type, code: code, isRepeat: isRepeat) ?? false
-        }
+    // The run-loop source is installed on the main run loop, so this always
+    // arrives on main. Should that ever change, the key passes through rather
+    // than blocking on main: a synchronous hop from a tap is how every
+    // keystroke on the system ends up waiting on this app.
+    guard Thread.isMainThread else { return Unmanaged.passUnretained(event) }
+    let swallow = MainActor.assumeIsolated {
+        eventTapInstance?.noteKey(type: type, code: code, isRepeat: isRepeat) ?? false
     }
-
-    if Thread.isMainThread {
-        apply()
-    } else {
-        DispatchQueue.main.sync(execute: apply)
-    }
-
     return swallow ? nil : Unmanaged.passUnretained(event)
 }

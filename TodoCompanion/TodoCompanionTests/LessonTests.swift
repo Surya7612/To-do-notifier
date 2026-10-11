@@ -129,33 +129,42 @@ struct LessonMarkTests {
         #expect(!lesson.steps[1].isConnected)
     }
 
-    @Test("a caption is the step's opening, cut at a word")
-    func captionIsCutAtAWord() throws {
+    @Test("a cue with a quote is the label itself, not the spoken sentence")
+    func cuePrefersQuotedLabel() throws {
         let lesson = try #require(Lesson.from(answer: """
-        1. This step is deliberately much longer than a caption should ever be, so that the cut has \
-        somewhere to happen and we can watch it land on a space rather than mid-word.
-        2. A short one about "res".
-        3. Another short one about "nums".
+        1. This long explanation about why "res" matters should never be pasted over the editor.
+        2. Then look at "nums".
+        3. Finally "start".
         """))
 
-        let caption = lesson.steps[0].caption
-        #expect(caption.count <= Lesson.captionLength + 1)
-        #expect(caption.hasSuffix("…"))
-        #expect(!caption.contains(" …"))
-
-        // Short enough to print in full, so nothing is taken off it.
-        #expect(lesson.steps[1].caption == #"A short one about "res"."#)
+        #expect(lesson.steps[0].cue == "res")
+        #expect(lesson.steps[1].cue == "nums")
     }
 
-    @Test("curly quotes in a caption are printed as plain ones")
-    func captionNormalizesQuotes() throws {
+    @Test("a conceptual cue is a short tip, cut at a word")
+    func conceptualCueIsClipped() throws {
+        let lesson = try #require(Lesson.from(answer: """
+        1. Look at "nums" first so the list has something to box.
+        2. This conceptual beat is deliberately much longer than a tip should ever be so the cut lands on a space.
+        3. Then back to "res".
+        """))
+
+        let cue = lesson.steps[1].cue
+        #expect(cue.count <= Lesson.cueLength + 1)
+        #expect(cue.hasSuffix("…"))
+        #expect(!cue.contains(" …"))
+        #expect(!cue.contains("lands on a space"))
+    }
+
+    @Test("curly quotes in a cue become plain ones")
+    func cueNormalizesQuotes() throws {
         let lesson = try #require(Lesson.from(answer: """
         1. Look at \u{201C}res\u{201D} first.
         2. Then at "nums".
         3. Then at "start".
         """))
 
-        #expect(lesson.steps[0].caption == #"Look at "res" first."#)
+        #expect(lesson.steps[0].cue == "res")
     }
 }
 

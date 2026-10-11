@@ -92,32 +92,68 @@ nonisolated enum ScreenTextLocator {
         labels.compactMap { locate(label: $0, in: regions) }
     }
 
-    /// The longest run of words on screen that reads exactly as this label.
+    /// The longest run of words on screen that reads as this label.
     ///
     /// Longest because Vision splits a label across as many `TextRegion`s as it
     /// has words, and a box around "Run" inside "Run All Tests" is a box around
-    /// a third of the control.
+    /// a third of the control. Falls back to a punctuation-stripped form when
+    /// the exact quote misses — OCR often drops backticks or trailing colons
+    /// Max copied from the answer, which left Teach pointing at nothing.
     static func locate(label: String, in regions: [TextRegion]) -> Match? {
-        let needle = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let hit = locateExact(needle: trimmed, in: regions) { return hit }
+
+        let stripped = trimmed.filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if stripped != trimmed, let hit = locateExact(needle: stripped, in: regions) {
+            return hit
+        }
+
+        // Identifiers OCR splits: "fooBar" on screen vs "foo Bar" in the quote.
+        let collapsed = stripped.replacingOccurrences(of: " ", with: "")
+        if collapsed.count >= minimumLength, collapsed != stripped {
+            return locateCollapsed(needle: collapsed, in: regions)
+        }
+        return nil
+    }
+
+    private static func locateExact(needle raw: String, in regions: [TextRegion]) -> Match? {
+        let needle = raw.lowercased()
         guard needle.count >= minimumLength, needle.contains(where: \.isLetter) else { return nil }
 
         var best: Match?
-
         for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
             let words = unordered.sorted { $0.position < $1.position }
-
             for start in words.indices {
                 for length in 1...maximumWords where start + length <= words.count {
                     let run = Array(words[start..<(start + length)])
                     let phrase = run.map(\.string).joined(separator: " ")
                     guard phrase.lowercased() == needle else { continue }
                     guard phrase.count > (best?.text.count ?? 0) else { continue }
-
                     best = Match(boundingBox: union(of: run), text: phrase)
                 }
             }
         }
+        return best
+    }
 
+    /// Matches a quote with spaces removed against on-screen words joined.
+    private static func locateCollapsed(needle: String, in regions: [TextRegion]) -> Match? {
+        let target = needle.lowercased()
+        var best: Match?
+        for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
+            let words = unordered.sorted { $0.position < $1.position }
+            for start in words.indices {
+                for length in 1...maximumWords where start + length <= words.count {
+                    let run = Array(words[start..<(start + length)])
+                    let collapsed = run.map(\.string).joined().lowercased()
+                    guard collapsed == target else { continue }
+                    let phrase = run.map(\.string).joined(separator: " ")
+                    guard phrase.count > (best?.text.count ?? 0) else { continue }
+                    best = Match(boundingBox: union(of: run), text: phrase)
+                }
+            }
+        }
         return best
     }
 

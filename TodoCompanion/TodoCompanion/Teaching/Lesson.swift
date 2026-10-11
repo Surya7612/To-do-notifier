@@ -28,27 +28,38 @@ nonisolated struct Lesson: Equatable {
         /// separate. True when Max wrote an arrow between the quoted labels.
         let isConnected: Bool
 
-        /// The few words drawn beside the mark, for the reader who is looking
-        /// at their code rather than at the panel.
+        /// What sits beside a mark when there is no OCR box — never the spoken
+        /// sentence again.
         ///
-        /// The step's own opening, cut at a word: the sentence is already in
-        /// the panel in full, and the caption exists to say which step this box
-        /// belongs to, not to reproduce the lesson on top of the user's work.
-        var caption: String {
+        /// Teachers point and say the name; they do not paste the lecture onto
+        /// the board. When Vision boxed the quote, the overlay draws nothing
+        /// here (the box is the cue). When it could not, this returns the quoted
+        /// label itself, or a very short tip for a conceptual beat.
+        var cue: String {
+            if let first = anchors.first {
+                return first.replacingOccurrences(of: "\u{201C}", with: "\"")
+                    .replacingOccurrences(of: "\u{201D}", with: "\"")
+            }
+
             let stripped = text.replacingOccurrences(of: "\u{201C}", with: "\"")
                 .replacingOccurrences(of: "\u{201D}", with: "\"")
-            guard stripped.count > Lesson.captionLength else { return stripped }
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard stripped.count > Lesson.cueLength else { return stripped }
 
-            let cut = stripped.prefix(Lesson.captionLength)
+            let cut = stripped.prefix(Lesson.cueLength)
             guard let lastGap = cut.lastIndex(of: " ") else { return String(cut) + "…" }
             return cut[..<lastGap] + "…"
         }
+
+        /// Kept as a synonym so older call sites and tests that still say
+        /// "caption" mean the same short on-screen cue.
+        var caption: String { cue }
     }
 
-    /// Long enough to carry a spoken tip, short enough not to become a second
-    /// panel floating over the user's editor. Conceptual steps (no OCR box)
-    /// rely on this alone, so it has to hold a real sentence.
-    static let captionLength = 96
+    /// Conceptual tips only — long enough for a phrase, short enough that it
+    /// cannot hide a line of the user's code the way a full sentence did.
+    static let cueLength = 36
+    static let captionLength = cueLength
 
     /// Max writing one label into another. The only mark this app draws that
     /// is not a box, and it is drawn because Max *stated* a relation between
@@ -120,5 +131,18 @@ nonisolated struct Lesson: Equatable {
             .first { index in
                 steps[index].anchors.contains { quoted.contains($0.lowercased()) }
             }
+    }
+
+    /// Markdown a user can paste into notes — the durable form of a Teach walk.
+    ///
+    /// Quotes stay in the step text so the same anchors that drove the boxes
+    /// are what gets filed.
+    func markdown(title: String = "Lesson") -> String {
+        var lines = ["# \(title)", ""]
+        for (index, step) in steps.enumerated() {
+            lines.append("\(index + 1). \(step.text)")
+        }
+        lines.append("")
+        return lines.joined(separator: "\n")
     }
 }

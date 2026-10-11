@@ -108,11 +108,9 @@ final class EditableFile {
     private func write(_ text: String) -> Bool {
         guard let bookmark else { return false }
 
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: bookmark,
-                                 options: .withSecurityScope,
-                                 relativeTo: nil,
-                                 bookmarkDataIsStale: &stale),
+        guard let url = SecurityScopedBookmark.resolve(bookmark, persist: { fresh in
+            self.bookmark = fresh
+        }),
               url.startAccessingSecurityScopedResource()
         else { return false }
         defer { url.stopAccessingSecurityScopedResource() }

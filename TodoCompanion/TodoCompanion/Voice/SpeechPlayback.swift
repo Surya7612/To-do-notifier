@@ -37,6 +37,11 @@ final class SpeechPlayback {
     /// The one in-flight model load, so clauses do not each start their own.
     private var preparation: Task<Void, Never>?
 
+    /// Completes an in-flight `speakAndAwait` when the beat ends or is stopped.
+    /// Kokoro's `stop` does not fire `onFinishedSpeaking`, so Teach cancellation
+    /// would otherwise hang the playback task forever.
+    private var beatFinished: (@MainActor () -> Void)?
+
     /// Kept between answers so a model is loaded once rather than per question.
     private func voice() -> any VoiceSynthesizer {
         let engine = AppSettings.voiceEngine
@@ -100,6 +105,96 @@ final class SpeechPlayback {
     func finish(_ text: String) {
         guard AppSettings.speaksAnswers || speaksRegardlessOfSetting else { return }
         consume(Self.speakable(from: text), toTheEnd: true)
+    }
+
+    /// Speaks one teaching beat and waits until it has been heard.
+    ///
+    /// Teach walks one step at a time — point, say the beat, pause — so the
+    /// box, the panel highlight, and the voice stay on the same step. Streaming
+    /// the whole answer as one continuous monologue is what made the cursor
+    /// jump while the panel was still on an earlier line.
+    ///
+    /// Chunked with the same `maximumChunk` limit as ordinary speech: handing
+    /// Kokoro a long beat in one enqueue hit its 510-phoneme cap and it
+    /// truncated mid-word — heard as mumbling or dropped words between clauses.
+    func speakAndAwait(_ text: String) async {
+        guard AppSettings.speaksAnswers || speaksRegardlessOfSetting else { return }
+        let pieces = Self.chunksForBeat(text)
+        guard !pieces.isEmpty else { return }
+
+        for piece in pieces {
+            guard !Task.isCancelled else { return }
+            await speakOneChunkAndAwait(piece)
+        }
+    }
+
+    /// Breaks a teaching beat into synthesis-sized pieces. Pure / testable.
+    static func chunksForBeat(_ text: String) -> [String] {
+        var pending = speakable(from: text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pending.isEmpty else { return [] }
+
+        var pieces: [String] = []
+        while let chunk = nextChunk(in: pending, allowingShort: true), !chunk.isEmpty {
+            pieces.append(chunk)
+            pending = String(pending.dropFirst(chunk.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if !pending.isEmpty { pieces.append(pending) }
+        return pieces
+    }
+
+    private func speakOneChunkAndAwait(_ chunk: String) async {
+        let trimmed = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        spokenPrefixLength = 0
+        heldClauses = []
+        beatFinished?()
+        beatFinished = nil
+        synthesizer?.stop()
+        isSpeaking = false
+
+        let voice = voice()
+        if !voice.isPrepared {
+            do {
+                try await voice.prepare()
+                failure = nil
+            } catch {
+                failure = error.localizedDescription
+                return
+            }
+        }
+
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                var resumed = false
+                let finish: @MainActor () -> Void = { [weak self] in
+                    guard !resumed else { return }
+                    resumed = true
+                    self?.beatFinished = nil
+                    continuation.resume()
+                }
+                beatFinished = finish
+
+                let previous = voice.onFinishedSpeaking
+                voice.onFinishedSpeaking = { [weak self] in
+                    self?.isSpeaking = false
+                    self?.onSpeakingClause?(nil)
+                    previous?()
+                    finish()
+                    voice.onFinishedSpeaking = previous
+                }
+
+                voice.enqueue(trimmed)
+                isSpeaking = true
+                onSpeakingClause?(trimmed)
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in
+                self?.stop()
+            }
+        }
     }
 
     /// Sends on whatever of the speakable text has not been sent yet.
@@ -227,6 +322,10 @@ final class SpeechPlayback {
         // through a download buys nothing.
         heldClauses = []
         synthesizer?.stop()
+        // Always complete a waiting Teach beat — Kokoro's stop is silent.
+        let finish = beatFinished
+        beatFinished = nil
+        finish?()
     }
 
     private func enqueue(_ text: String) {

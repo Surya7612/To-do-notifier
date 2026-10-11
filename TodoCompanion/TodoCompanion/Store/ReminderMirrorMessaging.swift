@@ -41,6 +41,14 @@ nonisolated enum ReminderMirrorMessaging {
         "Reminders access is off for \(assistantName). Open System Settings → Privacy & Security → Reminders (and Calendars if prompted) and allow access, then try again."
     }
 
+    /// Shown after a successful sync into a non-iCloud account so the orange
+    /// warning is not the only feedback — the toggle can look "on" while the
+    /// phone stays silent.
+    static let thisMacOnlySynced = "Saved on this Mac only — your phone will not alert"
+
+    /// One-line reminder that Reminders is not a second source of truth.
+    static let oneWaySyncNote = "One-way: finishing a reminder in Apple Reminders does not tick off the to-do here."
+
     /// Opens the Privacy & Security pane for Reminders when possible.
     @MainActor
     static func openSystemSettingsForReminders() {

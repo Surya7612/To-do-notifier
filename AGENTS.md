@@ -74,8 +74,12 @@ exists only on `OllamaBrain`, so a cloud provider cannot be wired to it. Keep it
 - **Hotkey**: Carbon `RegisterEventHotKey` by default (no Accessibility). Opt-in Accessibility
   extras add a `CGEvent` tap for Tab+Q and AX pointer move/click
 - **Capture**: ScreenCaptureKit, excluding this app's own windows so the panel never appears in its
-  own screenshot
-- **OCR**: Vision `VNRecognizeTextRequest`, on device
+  own screenshot. Shadows are ignored and the pixel grid stays 1:1 so small UI chrome stays
+  readable for Teach / Show me. Every display keeps its AppKit frame so a box on a second
+  monitor maps there rather than onto the focused one
+- **OCR**: Vision `VNRecognizeTextRequest`, on device — accurate level, current revision,
+  language detection, a low `minimumTextHeight` for chrome, and optional `customWords` from
+  project names / prior OCR so identifiers Teach quotes are recognised on the next grab
 - **AI**: local Ollama by default; OpenAI, Claude, or Gemini as an opt-in for questions only. Each
   provider's key lives in the Keychain, never in `UserDefaults`. The panel always states which one
   will answer
@@ -359,6 +363,14 @@ turned out not to be mirrored loses the reminder altogether. That is not the loc
 rejected: this one swaps a Mac-only notification for delivery to every device, where that one swapped
 one Mac notifier for another.
 
+The stand-down is **remembered, not only performed**. `Reminders.standDown` records the id before
+cancelling, and `schedule` refuses an id Apple has taken on — and cancels again if the stand-down
+landed while its own add was in flight. A bare cancel depended on ordering that nothing guaranteed:
+a save, the phone import, launch and wake each start scheduling and mirroring as separate tasks,
+and a cancel that arrives before the request exists removes nothing, so the Mac alerted alongside
+Apple. The one exception is a time the user picks in the library, which passes
+`reclaimingFromApple`, since Apple holds the old time until the next sweep.
+
 The permission needs a **hand-written entitlements file**, which is why `TodoCompanion.entitlements`
 exists at all. Xcode has no build setting that emits a Reminders entitlement, and without
 `com.apple.security.personal-information.reminders` macOS refuses even to *show* the prompt. Because
@@ -439,6 +451,30 @@ fell to the tomorrow-morning fallback, and because a fallback states no time it 
 fires every reminder up to 59 seconds early, and for anything less than a minute out it rounds the
 target into the *past*, where a non-repeating `UNCalendarNotificationTrigger` has no next matching
 date and so never fires at all — silently, since scheduling itself succeeds.
+
+**The local model is loaded at the summon, not at the question.** Ollama unloads a model five
+minutes after its last request, which is shorter than the gap between two questions in ordinary use,
+so most first questions paid a full load — ten seconds and more on an 8 GB machine, behind a progress
+bar sitting at its floor. `refreshReadiness` therefore follows a successful probe with
+`OllamaBrain.warm`, a generate request carrying only the model name, and every request sends
+`keep_alive` of half an hour. The warm-up sends nothing from the screen, so it is not background work
+in the sense the rule above forbids. Its 404 is also the earliest point a model that was never pulled
+can be named, so the status line says so before anyone asks.
+
+**The window is fixed at 8,192 tokens, and the screen text is cut to fit it.** Ollama's default is
+4,096, and measured with `llama3.2` a Teach prompt is about 3,300 tokens *before* any screen text;
+over 6,000 characters of code it was 4,556 tokens and Ollama kept 2,050 of them, dropping the very
+instructions that make the reply a lesson. `OllamaBrain.options` is shared by the warm-up and every
+generate request because Ollama reloads the model whenever `num_ctx` changes — twenty seconds on an
+8 GB Mac, so alternating sizes between Ask and Teach would reload on every question. For the same
+budget, `Prompt.user` takes a `screenTextLimit` that only the local provider passes, cuts at a line
+and says it did, and replayed history drops `board` fences, which are drawing data and the bulk of
+a Teach answer.
+
+None of this makes a 3B model a good teacher. Measured on an 8 GB M1 Air with the whole prompt
+intact, that same Teach ask took 95 seconds (57 of them reading the prompt) and came back as prose
+with no numbered steps and no board, so no lesson starts. Teach is a cloud-model feature on that
+class of machine; the local model is the default for questions, not a promise about lessons.
 
 **Who answers is switchable from the panel, not only from Settings.** The badge in the panel header is a
 menu, because the choice is per-question in practice: the local model reads text back fine and is worth
@@ -566,6 +602,16 @@ that nothing here is stored as the user's words or drawn on their screen. Termin
 code because a shell displays code, and "contains the word error" is deliberately *not* a terminal
 signal: an editor showing a diagnostic, a browser on Stack Overflow and a form with a failed validation
 all contain it.
+
+**Session mode is a stance, not a second product.** Ask / Teach / Debug / Prep live in
+`AppSettings.sessionMode` and append guidance the same way `ScreenKind` does — they never suppress an
+answer and never become the user's stated reason. Teach mode makes Return start a lesson walk (and
+empty Return is Teach me); Prep mode's empty Return drafts standup from keeps and tasks. A
+coding-problem screen (`ProblemTutor`) further reshapes Teach into a tutor that will not dump an
+editorial. Related keeps are named in the teach system prompt when retrieval found any, so memory
+rides along without being invented. Accessibility extras also feed `AXPageReader` text into the
+prompt, labelled separately from OCR. Opt-in MCP (`MCPClient`) may call a local stdio server before
+answering; tool output is labelled as tools, never as the user's words, and a dead launch fails soft.
 
 **Max is a name and a tone, never a licence.** The persona lives in `Prompt.system` and in UI copy. It
 is emphatically *not* the bundle name: renaming the bundle would invalidate the Screen Recording grant,
@@ -920,27 +966,34 @@ the edge is the only part of this that fails invisibly.
 | File | Lines | Purpose |
 |---|---|---|
 | `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
-| `App/AppDelegate.swift` | ~87 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~560 | Both hotkeys, provider choice, Ollama and OpenAI/Claude/Gemini settings, voice and follow-along, the to-do app link, and the Apple Reminders mirror. |
-| `Companion/CompanionPanelController.swift` | ~230 | Panel lifecycle, cursor-relative placement, pinning, summoning straight into dictation, and wiring the view model to the capture indicator, the lesson overlay, and the teaching grid board. Remembers the previously frontmost app so context is not attributed to us. |
+| `App/AppDelegate.swift` | ~217 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
+| `App/SettingsView.swift` | ~690 | Both hotkeys, provider choice, Ollama and OpenAI/Claude/Gemini settings, voice and follow-along, Accessibility extras, MCP tools, the to-do app link, and the Apple Reminders mirror. |
+| `Companion/CompanionPanelController.swift` | ~318 | Panel lifecycle, cursor-relative placement, pinning, summoning straight into dictation, and wiring the view model to the capture indicator, the lesson overlay, and the teaching grid board. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~915 | Panel UI: status header with the who-answers and open-file menus and the pin, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~1600 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, the lesson being walked, and the teaching-grid board. |
+| `Companion/CompanionView.swift` | ~1190 | Panel UI: status header with the who-answers, session-mode, and open-file menus and the pin, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
+| `Companion/CompanionViewModel.swift` | ~2690 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, session modes, MCP enrichment, AX page text, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, the lesson being walked, and the teaching-grid board. |
 | `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
 | `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
-| `Capture/ScreenCapture.swift` | ~240 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
+| `Capture/ScreenCapture.swift` | ~340 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
+| `Capture/AXPageReader.swift` | ~70 | Read-only accessibility-tree text from the focused app when extras are trusted. Complements OCR in browsers. |
 | `Capture/TextRecognizer.swift` | ~100 | Vision OCR, keeping a per-word box alongside the text. |
 | `Capture/ScreenTextLocator.swift` | ~283 | Finds the control an answer named among those boxes, and maps one onto the screen. `requiringQuoted` narrows it to labels Max quoted; `locate(labels:)` resolves every label a lesson step names. Pure. |
 | `Capture/AXControlLocator.swift` | ~200 | Pointer warp (and unused click primitive) for Show me / Guided Teach. Ranking helpers remain pure and tested. |
 | `Capture/ScreenHighlight.swift` | ~101 | The box drawn around it, briefly on a button press or until hidden while Max is talking. |
 | `Capture/LessonOverlay.swift` | ~230 | The click-through layer a lesson draws on: the current step's boxes numbered and captioned, arrows between them where Max stated one, the steps already covered left faint. |
 | `Teaching/Lesson.swift` | ~115 | Reads a lesson out of a numbered answer — its steps, their quoted anchors, each one's caption and whether Max joined two labels with an arrow — and says which step a spoken clause belongs to. Pure. |
-| `Teaching/BoardScene.swift` | ~280 | Parses a closed `board` JSON fence into frames of shapes with concept-colour tokens. Pure. |
-| `Teaching/BoardView.swift` | ~260 | Graph-paper grid and Canvas renderer for one board frame, including on-board tip text. |
-| `Teaching/BoardPanelController.swift` | ~90 | Floating non-activating panel that hosts the board beside the user's work. |
+| `Teaching/BoardScene.swift` | ~870 | Parses a closed `board` JSON fence (leniently, per field) into frames of shapes — boxes, icons, bubbles, arrays with pointers, marks, curves, labelled arrows — and tidies or re-lays them for display. Pure. |
+| `Teaching/BoardView.swift` | ~810 | Graph-paper Canvas renderer: strokes traced along their path with a pen tip, deterministic hand-drawn wobble, concept-colour washes, text written left to right. |
+| `Teaching/BoardPanelController.swift` | ~205 | Floating non-activating panel that hosts the board beside the user's work. Remembers the cut on screen so the next one carries it over. |
+| `Teaching/SketchTimeline.swift` | ~245 | Which stroke draws when: ordered by where the narration names each thing, paced to the narration's length, carrying over what the previous cut drew. Pure. |
+| `Teaching/SketchRevealTiming.swift` | ~35 | Baseline frame pacing and the voice lead. Pure. |
+| `Teaching/BoardPictogram.swift` | ~470 | The fixed vocabulary of sketch objects (car, server, gear, …) and their stroke paths. |
+| `Support/WindowDragArea.swift` | ~27 | AppKit strip that starts a window drag where SwiftUI hosting swallows it. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~380 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, the file-editing rules, teaching, and the grid-board scene format. |
+| `Brain/Brain.swift` | ~460 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, the file-editing rules, teaching, session modes, problem-tutor, MCP tool notes, and the grid-board scene format. |
+| `Brain/SessionMode.swift` | ~70 | Ask / Teach / Debug / Prep stances and their system-prompt guidance. Pure. |
+| `Brain/ProblemTutor.swift` | ~60 | Whether the screen looks like a coding problem, and the tutor paragraph it earns. Pure. |
 | `Brain/ScreenKind.swift` | ~148 | What sort of material is on screen, and the paragraph of prompt guidance it earns. Pure. |
 | `Brain/OllamaBrain.swift` | ~182 | Streaming Ollama client. Also the only place summaries and embeddings are generated. |
 | `Brain/OpenAIBrain.swift` | ~95 | Streaming OpenAI client with vision. Opt-in; key from the Keychain. |
@@ -948,7 +1001,7 @@ the edge is the only part of this that fails invisibly.
 | `Brain/GeminiBrain.swift` | ~100 | Streaming Gemini client with vision. Opt-in; key from the Keychain. |
 | `Brain/OpenAIModelChoice.swift` | ~51 | The vetted list of OpenAI models Settings offers, and whether a stored name is one of them. Pure. |
 | `Brain/CloudModelChoice.swift` | ~70 | Vetted Claude and Gemini model lists (same pattern as OpenAI). Pure. |
-| `Voice/SpeechPlayback.swift` | ~357 | Decides what of a streaming answer gets read aloud, and when. Strips markup from the whole answer, sizes clauses, and reports which clause is being heard. |
+| `Voice/SpeechPlayback.swift` | ~519 | Decides what of a streaming answer gets read aloud, and when. Strips markup from the whole answer, sizes clauses, and reports which clause is being heard. |
 | `Voice/VoiceSynthesizer.swift` | ~152 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
 | `Voice/KokoroVoiceSynthesizer.swift` | ~234 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
 | `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
@@ -963,16 +1016,23 @@ the edge is the only part of this that fails invisibly.
 | `Store/ReminderMirrorMessaging.swift` | ~55 | Settings copy and System Settings deep-link for the mirror destination. Pure. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
 | `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
-| `Store/ContextRetriever.swift` | ~181 | Explainable relevance scoring against the current screen, including the optional meaning signal. |
+| `Store/ContextRetriever.swift` | ~210 | Explainable relevance scoring against the current screen, including past-fix and the optional meaning signal. |
+| `Store/ScreenChange.swift` | ~75 | OCR-token diff since the last keep of the same window — change-aware re-save copy. Pure. |
+| `Store/ProjectBrief.swift` | ~50 | Assembles a project-brief ask from the user's own intents and open tasks. Pure. |
+| `Store/StandupPrep.swift` | ~45 | Assembles a standup / meeting-prep ask from tasks, due reminders, and recent keeps. Pure. |
+| `Store/AnswerGrounding.swift` | ~30 | Whether the next answer sees the screenshot or only OCR — badge copy for the panel. Pure. |
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~320 | Brings in captures from a phone through a user-chosen folder, arming a reminder when the capture asked for one. Posts when something arrives so an open library can remount. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
 | `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
-| `Support/AppSettings.swift` | ~380 | `UserDefaults` keys, defaults, both hotkeys, Accessibility extras flag, the provider choice (Ollama / OpenAI / Claude / Gemini), and `AnswerDestination`. |
+| `Support/AppSettings.swift` | ~430 | `UserDefaults` keys, defaults, both hotkeys, Accessibility extras flag, session mode, MCP launch, the provider choice (Ollama / OpenAI / Claude / Gemini), and `AnswerDestination`. |
+| `Store/MCPClient.swift` | ~260 | Opt-in local MCP stdio client: list tools, call a few that overlap the question, label results for the prompt. Soft-fails. |
 | `Support/TrustAccessibility.swift` | ~70 | Opt-in Accessibility trust check, prompt, and System Settings deep link. |
 | `Support/DesignSystem.swift` | ~134 | Spacing, radius, alpha, status colours, the amber the app points with, and the opaque code well with its per-appearance token palette. `nonisolated`, so pure layout code can read it. |
+| `Support/AppUpdate.swift` | ~45 | Sparkle updater for the Developer ID channel; compiled out under `APP_STORE`. |
+| `Support/SecurityScopedBookmark.swift` | ~35 | Resolves security-scoped bookmarks and refreshes stale blobs. |
 | `Support/FilePicker.swift` | ~43 | Open panels that actually appear from a menu-bar-only app. |
 | `Support/Keychain.swift` | ~60 | Generic-password storage for each cloud provider's API key. |
 | `Support/ImageCodec.swift` | ~46 | PNG encoding and downscaling for storage and vision prompts. |
@@ -1058,6 +1118,10 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |
+| `ContinuityFeaturesTests` | Screen-change summary, project brief / standup prompts, grounding badge, lesson Markdown export, multi-display pointing | Product continuity surfaces that fail silently when wrong: a re-save that does not say what changed, a brief that invents work, a badge that claims vision when only OCR went out, a Teach export with no anchors, or Show me boxing the wrong monitor. |
+| `SessionModeAndToolsTests` | Session modes, problem-tutor heuristics, teach memory / AX page / MCP prompt labelling, MCP tool selection | Stance prompts must never withhold an answer; a coding-problem false positive only reshapes teaching; tool notes must stay labelled as tools; dead MCP launches must fail soft. |
+| `FailureMessageTests` | What a failed answer says | Pins that transport errors and a model that was never pulled reach the panel as something actionable rather than `NSURLErrorDomain` or a bare 404, since those are what a cold start on stage shows first. |
+| `PromptBudgetTests` | What fits in a local model's window | A prompt over the window is cut by Ollama without an error, and what it drops is the instructions at the front, so the failure looks like a model ignoring its format. Pins that screen text is cut at a line and labelled as cut, only for the local provider, and that replayed history loses its board JSON but keeps the lesson and any other code. |
 | `DictationHintsTests` | Which on-screen words are offered to the recognizer | Both failure modes are invisible: too few and the feature does nothing, too many and the budget is spent biasing towards words that were never going to be misheard. Pins that ordinary capitalised UI text is dropped and that an identifier survives truncation. Asserts nothing about recognition accuracy, which is Apple's model rather than this logic. |
 | `TabChordDetector` / `AXControlLocator ranking` | Tab+Q chord state, and AX label ranking | The event tap and live AX tree are not tested; these pin the pure halves so a repeat cannot re-fire Tab+Q and a short needle cannot match inside an unrelated word. |
 | `InboxImporterTests` | Parsing the phone's JSON manifest, and the reminder an import may arm | Written by a Shortcut, over a syncing folder, with nothing here compiling against it. A bad import is persisted and then resurfaces, so every malformed shape must yield "not an item". Also pins that an image with no reason is refused. The second suite pins the reminder bar, where two failures would be invisible rather than wrong-looking: a duration resolved against the import clock is off by however long the Mac was asleep, and arming from a date merely mentioned would fire for something nobody asked about. |
@@ -1175,15 +1239,21 @@ Current-version usability upgrades (and the same non-goals restated as product i
 - Do not add features beyond what was asked
 - Do not add multi-file autonomous agents — one user-picked file and a confirmed diff is the ceiling
   (see `docs/USABILITY.md` §10)
+- Do not drive the browser or click UI for the user. Opt-in local MCP may *read* tools; it is not a
+  computer-use agent. Session modes and ProblemTutor reshape teaching only.
 
 ## Distribution
 
 `scripts/release-suite.sh` builds **both** apps into one family DMG (`To-Do Notifier.app` +
-`TodoCompanion.app`), Developer ID signs them, notarizes the DMG, staples it, and publishes a GitHub
-Release (for example `v1.6.0`). That is the recommended download for new users.
+`TodoCompanion.app`), Developer ID signs them, notarizes the DMG, staples it, attaches a Sparkle
+`appcast.xml` + Max zip when keys exist, and publishes a GitHub Release (for example `v1.6.0`).
+That is the recommended download for new users. `SKIP_PUBLISH=yes` builds and notarizes without
+creating a release. One-time Sparkle keys: `scripts/sparkle-generate-keys.sh`.
 
 `scripts/release-companion.sh` remains for Max-only hotfix releases (`companion-v*`). Suite releases
-are additive and do not delete companion tags.
+are additive and do not delete companion tags. Mac App Store builds use
+`scripts/release-mas.sh` (`APP_STORE` flag, App Store entitlements, Sparkle stripped) — see
+`docs/APP_STORE.md`. Interview / demo notes: `docs/DEMO.md`, `docs/INTERVIEW.md`.
 
 One-time setup on a machine that ships builds:
 

@@ -4,4 +4,7 @@
 // Local builds need only the team. Shipping a Gatekeeper-clean DMG also needs:
 //   1. Developer ID Application certificate (Xcode → Accounts → Manage Certificates…)
 //   2. notarytool keychain profile "TodoCompanion-notary" — see scripts/release-companion.sh
+//   3. Sparkle EdDSA keys — run scripts/sparkle-generate-keys.sh once, then set:
 DEVELOPMENT_TEAM = YOURTEAMID
+SPARKLE_PUBLIC_ED_KEY = PASTE_PUBLIC_KEY_HERE
+// Keep the private key only in ~/.todo-companion-sparkle/ed25519-priv.key (gitignored path).

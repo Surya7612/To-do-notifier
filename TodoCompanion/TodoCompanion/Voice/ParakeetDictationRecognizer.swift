@@ -49,7 +49,9 @@ final class ParakeetDictationRecognizer: DictationRecognizer {
     ///   vocabulary hints, so there is nowhere to put them. Silently accepting
     ///   them keeps the caller from having to know which backend it has.
     func begin(expecting: [String], onTranscript: @escaping (String) -> Void) {
-        queue.reset()
+        // Do not reset here — `SpeechDictation` may start the audio engine
+        // after begin(), and wiping the queue dropped the opening words.
+        // Reset happens in `end()` / when a new session prepares.
 
         // Boxed so the actor's Sendable partial callback can reach the
         // MainActor-only UI update without capturing a non-Sendable closure.

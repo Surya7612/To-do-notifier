@@ -143,21 +143,51 @@ enum TodoBridge {
         UserDefaults.standard.removeObject(forKey: bookmarkKey)
     }
 
-    static func load() -> LinkedWork {
-        guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else { return LinkedWork() }
+    /// The last parse, keyed on the bookmark and the file's modification date
+    /// and size. `load` runs on every capture, on the main actor, before
+    /// "Reading your screen…" clears — re-reading and re-parsing a file the
+    /// other app had not touched was pure delay on every summon.
+    private static var cached: (bookmark: Data, stamp: FileStamp, work: LinkedWork)?
+    private static var resolvedURL: (bookmark: Data, url: URL)?
 
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: bookmark,
-                                 options: .withSecurityScope,
-                                 relativeTo: nil,
-                                 bookmarkDataIsStale: &stale)
-        else { return LinkedWork() }
+    private struct FileStamp: Equatable {
+        var modified: Date?
+        var size: Int?
+    }
+
+    static func load() -> LinkedWork {
+        guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else {
+            cached = nil
+            resolvedURL = nil
+            return LinkedWork()
+        }
+
+        let url: URL
+        if let resolvedURL, resolvedURL.bookmark == bookmark {
+            url = resolvedURL.url
+        } else {
+            guard let fresh = SecurityScopedBookmark.resolve(bookmark, persist: { fresh in
+                UserDefaults.standard.set(fresh, forKey: bookmarkKey)
+            }) else { return LinkedWork() }
+            url = fresh
+            // Keyed on the blob as read, so a stale-refresh rewrite resolves
+            // once more and is then cached under the new blob.
+            resolvedURL = (bookmark, fresh)
+        }
 
         guard url.startAccessingSecurityScopedResource() else { return LinkedWork() }
         defer { url.stopAccessingSecurityScopedResource() }
 
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let stamp = FileStamp(modified: values?.contentModificationDate, size: values?.fileSize)
+        if let cached, cached.bookmark == bookmark, cached.stamp == stamp, stamp.modified != nil {
+            return cached.work
+        }
+
         guard let data = try? Data(contentsOf: url) else { return LinkedWork() }
-        return parse(data)
+        let work = parse(data)
+        cached = (bookmark, stamp, work)
+        return work
     }
 
     /// Reads the OpenAI key the Electron app stores in the same file.
@@ -170,11 +200,9 @@ enum TodoBridge {
     static func importableOpenAIKey() -> String? {
         guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
 
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: bookmark,
-                                 options: .withSecurityScope,
-                                 relativeTo: nil,
-                                 bookmarkDataIsStale: &stale),
+        guard let url = SecurityScopedBookmark.resolve(bookmark, persist: { fresh in
+            UserDefaults.standard.set(fresh, forKey: bookmarkKey)
+        }),
               url.startAccessingSecurityScopedResource()
         else { return nil }
         defer { url.stopAccessingSecurityScopedResource() }

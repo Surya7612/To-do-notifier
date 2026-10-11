@@ -656,6 +656,6 @@ your calendar; nothing does.
   for a tool like this it is the better one.
 - **An iPhone app.** Phone capture is a Shortcut writing to a folder, deliberately, and that is
   expected to stay true for a long time.
-- **Sparkle auto-updates.** Suite and companion releases are Developer ID signed and notarized
-  (`scripts/release-suite.sh` / `scripts/release-companion.sh`), but neither app checks for updates
-  on its own yet.
+- **Mac App Store packaging** as a second channel (no Sparkle inside MAS builds). See
+  [docs/APP_STORE.md](../docs/APP_STORE.md). Direct download already uses Sparkle for Max
+  (`Check for Updates…` in the menu bar; `appcast.xml` on GitHub Releases).

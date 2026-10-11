@@ -24,6 +24,10 @@ enum AppSettings {
         static let accessibilityExtrasEnabled = "accessibilityExtrasEnabled"
         /// Teach me also warps the cursor to each step (Accessibility extras).
         static let guideCursorWhileTeaching = "guideCursorWhileTeaching"
+        static let sessionMode = "sessionMode"
+        static let mcpEnabled = "mcpEnabled"
+        /// Shell-style launch, e.g. `npx -y @modelcontextprotocol/server-memory`
+        static let mcpLaunch = "mcpLaunch"
     }
 
     static let defaultEndpoint = "http://127.0.0.1:11434"
@@ -226,14 +230,70 @@ enum AppSettings {
             // summoned is intrusive in a way a panel of text is not, and the
             // panel is often summoned in a meeting.
             Key.speaksAnswers: false,
-            // Off by default: Accessibility is a high-trust grant, and the app
-            // works fully without it. Tab+Q and pointer move/click unlock only
-            // when the user flips this and macOS trusts the process.
+            // Off by default for Tab+Q / general extras — but Teach me will
+            // turn this on itself when the user asks to be taught, and then
+            // macOS still has to grant trust in System Settings.
             Key.accessibilityExtrasEnabled: false,
-            // Off until asked: warping the pointer mid-lesson is Guided's whole
-            // point, and Teach me must stay the calm default (boxes only).
-            Key.guideCursorWhileTeaching: false,
+            // On by default: Teach me is meant to feel like a person teaching —
+            // boxes on screen *and* the cursor on each step. Opt out from the
+            // lesson bar if you only want boxes.
+            Key.guideCursorWhileTeaching: true,
+            Key.sessionMode: SessionMode.ask.rawValue,
+            Key.mcpEnabled: false,
+            Key.mcpLaunch: "",
         ])
+    }
+
+    /// Ask / Teach / Debug / Prep — persists across summons.
+    static var sessionMode: SessionMode {
+        get {
+            let raw = UserDefaults.standard.string(forKey: Key.sessionMode) ?? SessionMode.ask.rawValue
+            return SessionMode(rawValue: raw) ?? .ask
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Key.sessionMode) }
+    }
+
+    /// Whether Max may call a local MCP server before answering.
+    ///
+    /// Always off in Mac App Store builds — arbitrary process spawn is a
+    /// review/sandbox liability, and the Settings UI is compiled out there.
+    static var mcpEnabled: Bool {
+        get {
+#if APP_STORE
+            false
+#else
+            UserDefaults.standard.bool(forKey: Key.mcpEnabled)
+#endif
+        }
+        set {
+#if !APP_STORE
+            UserDefaults.standard.set(newValue, forKey: Key.mcpEnabled)
+#endif
+        }
+    }
+
+    /// Launch tokens for the MCP stdio server (split on whitespace).
+    static var mcpLaunch: String {
+        get { UserDefaults.standard.string(forKey: Key.mcpLaunch) ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: Key.mcpLaunch) }
+    }
+
+    static var mcpLaunchTokens: [String] {
+        mcpLaunch
+            .split(whereSeparator: \.isWhitespace)
+            .map { token in
+                var value = String(token)
+                // Strip matching quotes so a Settings paste like
+                // `/opt/homebrew/bin/npx -y "@scope/pkg"` still tokenises.
+                if value.count >= 2,
+                   (value.hasPrefix("\"") && value.hasSuffix("\""))
+                    || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                    value.removeFirst()
+                    value.removeLast()
+                }
+                return value
+            }
+            .filter { !$0.isEmpty }
     }
 
     /// Whether the user asked for Accessibility extras (Tab+Q, Show me warping

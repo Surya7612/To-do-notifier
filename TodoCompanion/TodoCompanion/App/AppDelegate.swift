@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.registerDefaults()
         NSApp.setActivationPolicy(.accessory)
 
+        // Developer ID channel only — feed URL is empty in local Debug until
+        // a release sets INFOPLIST_KEY_SUFeedURL (see docs/APP_STORE.md).
+        AppUpdate.start()
+
         // Set before any reminder can fire, or a notification arriving while the
         // app is running is swallowed instead of shown.
         UNUserNotificationCenter.current().delegate = self
@@ -135,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Apple announces what it has taken on, so this app must not
                 // also announce it — the same rule the panel applies on summon.
                 for identifier in ProjectExport.reminderIdentifiers(inTaskIDs: armed) {
-                    Reminders.cancel(id: identifier)
+                    Reminders.standDown(id: identifier)
                 }
             } catch {
                 // Nothing is on screen at launch to tell, and Settings is where
@@ -146,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        companion.tearDownOverlays()
         GlobalHotkey.shared.unregister()
         EventTapHotkey.shared.tearDown()
         wakeSweepTask?.cancel()

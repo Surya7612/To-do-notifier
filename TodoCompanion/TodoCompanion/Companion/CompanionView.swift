@@ -4,6 +4,7 @@ import SwiftUI
 struct CompanionView: View {
     @Bindable var viewModel: CompanionViewModel
     let onClose: () -> Void
+    let onMinimize: () -> Void
     let onRetry: () -> Void
     let onSelectRegion: () -> Void
     let onClearRegion: () -> Void
@@ -24,6 +25,7 @@ struct CompanionView: View {
     /// answer.
     @AppStorage(AppSettings.Key.speaksAnswers) private var speaksAnswers = false
     @AppStorage(AppSettings.Key.followsAlongWhileSpeaking) private var followsAlongWhileSpeaking = false
+    @AppStorage(AppSettings.Key.sessionMode) private var sessionModeRaw = SessionMode.ask.rawValue
 
     /// Observed but never read, purely so that changing a model in Settings
     /// while the panel is open invalidates this view. The badge keeps taking its
@@ -46,7 +48,7 @@ struct CompanionView: View {
                 if viewModel.canSave {
                     saveOptionsRow
                 }
-                if !viewModel.related.isEmpty {
+                if !viewModel.related.isEmpty || viewModel.clipboardOffer != nil {
                     relatedStrip
                 }
             }
@@ -62,16 +64,35 @@ struct CompanionView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .strokeBorder(.white.opacity(DS.Alpha.hairline), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(DS.Alpha.hairline), lineWidth: 1)
         )
         .onAppear {
             questionFocused = true
             viewModel.refreshCloudKey()
+            // Probe Ollama as the panel opens so a dead local server is named
+            // before the first ask, not after a failed one (USABILITY §4).
+            viewModel.refreshReadiness()
+            viewModel.refreshClipboardOffer()
+        }
+        .onChange(of: viewModel.question) {
+            viewModel.refreshClipboardOffer()
         }
     }
 
     private var header: some View {
         HStack(spacing: DS.Spacing.tight) {
+            // Drag grip — borderless panels eat background-drags on SwiftUI
+            // content, so without this the panel looks glued in place.
+            Image(systemName: "line.3.horizontal")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .padding(.vertical, 4)
+                .padding(.trailing, 2)
+                .contentShape(Rectangle())
+                .gesture(WindowDragGesture())
+                .help("Drag to move the panel")
+                .accessibilityLabel("Move panel")
+
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
@@ -90,22 +111,34 @@ struct CompanionView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(DS.Status.listening)
                 .help("Stop reading aloud")
+                .accessibilityLabel("Stop reading aloud")
                 .transition(.opacity)
             }
             if !viewModel.turns.isEmpty {
                 Button {
                     viewModel.startNewConversation()
                 } label: {
-                    Label("Clear", systemImage: "trash")
+                    Image(systemName: "trash")
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Clear this conversation (⌘K)")
+                .accessibilityLabel("Clear conversation")
                 .keyboardShortcut("k", modifiers: .command)
             }
             fileBadge
             destinationBadge
+            if let grounding = viewModel.answerGroundingLabel {
+                Text(grounding)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .help(viewModel.answerGrounding == .ocrOnly
+                          ? "Max reads the text on screen, not the picture. Turn on Send the screenshot in the answer menu for diagrams."
+                          : "The screenshot goes with your question")
+                    .lineLimit(1)
+                    .fixedSize()
+            }
             Button {
                 viewModel.isPinned.toggle()
             } label: {
@@ -116,19 +149,38 @@ struct CompanionView: View {
             .help(viewModel.isPinned
                   ? "Unpin — the panel will close again when you click away"
                   : "Pin the panel so it stays put while you work (⌘T). Lessons pin automatically.")
+            .accessibilityLabel(viewModel.isPinned ? "Unpin panel" : "Pin panel")
             .keyboardShortcut("t", modifiers: .command)
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
+
+            Button(action: onMinimize) {
+                Image(systemName: "minus")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .help("Hide the panel — keep the lesson and conversation (summon brings it back)")
+            .accessibilityLabel("Minimize panel")
+
+            Button(action: onClose) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.body)
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Close — clear lesson boxes and hide the panel (Esc)")
+            .accessibilityLabel("Close panel")
+            .keyboardShortcut(.cancelAction)
         }
     }
 
     private var askField: some View {
         HStack(spacing: DS.Spacing.tight) {
-            TextField("Ask, or say why this matters…", text: $viewModel.question, axis: .vertical)
+            TextField(askFieldPrompt, text: $viewModel.question, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...3)
                 .focused($questionFocused)
@@ -160,12 +212,26 @@ struct CompanionView: View {
                     .font(.title3)
             }
             .buttonStyle(.plain)
-            .help("Ask about this screen (Return)")
+            .help(viewModel.lesson != nil
+                  ? "Ask a follow-up about this lesson (Return)"
+                  : "Ask about this screen (Return)")
             .disabled(isFieldEmpty || viewModel.isBusy)
         }
         .padding(.horizontal, DS.Spacing.normal)
         .padding(.vertical, DS.Spacing.snug)
         .background(.quaternary.opacity(DS.Alpha.fieldFill), in: Capsule())
+    }
+
+    /// During a lesson the field is the follow-up channel; otherwise it is the
+    /// reason / question for the next ask or Teach press.
+    private var askFieldPrompt: String {
+        if viewModel.lesson != nil {
+            return "Follow up — ask about this step…"
+        }
+        if viewModel.hasRegion {
+            return "Ask about this region, or hit Teach me…"
+        }
+        return "Ask, dictate, then Teach me — or say why this matters…"
     }
 
     private var isFieldEmpty: Bool {
@@ -323,6 +389,23 @@ struct CompanionView: View {
 
             Spacer(minLength: DS.Spacing.hair)
 
+            sessionModeMenu
+
+            // Briefs only in Prep — always-on competed with Explain/Teach and
+            // duplicated empty-Return standup from the mode itself.
+            if (SessionMode(rawValue: sessionModeRaw) ?? .ask) == .prep {
+                Menu {
+                    Button("Project brief…") { viewModel.askProjectBrief() }
+                        .disabled(viewModel.currentProject == nil || viewModel.isBusy)
+                    Button("Standup prep…") { viewModel.askStandupPrep() }
+                        .disabled(viewModel.isBusy)
+                } label: {
+                    Label("Briefs", systemImage: "list.bullet.clipboard")
+                }
+                .disabled(viewModel.isBusy)
+                .help("Empty Return also drafts standup. Project brief needs a current project.")
+            }
+
             ForEach(CompanionViewModel.primaryPresets) { preset in
                 Button {
                     viewModel.ask(preset)
@@ -331,10 +414,16 @@ struct CompanionView: View {
                 }
                 .disabled(!viewModel.hasCapture || viewModel.isBusy)
                 .help(viewModel.presetWouldAskTypedText
-                      ? "Asks what you typed — your words are used, not this preset"
+                      ? (preset.isTeaching
+                         ? "Teaches what you typed or dictated — not a tour of the whole screen"
+                         : "Asks what you typed — your words are used, not this preset")
                       : (preset.isTeaching
-                         ? "Re-reads the screen, then walks it step by step with boxes. Turn on Guide cursor in the lesson bar to move the pointer."
-                         : preset.question))
+                         ? (viewModel.hasRegion
+                            ? "Re-reads this region, speaks each step, draws boxes, moves the pointer"
+                            : "Re-reads the screen, speaks each step, draws boxes, moves the pointer")
+                         : (viewModel.hasRegion
+                            ? "About the selected region: \(preset.question)"
+                            : preset.question)))
             }
         }
         .controlSize(.small)
@@ -343,6 +432,28 @@ struct CompanionView: View {
         // Without this the row silently compresses its buttons to illegible
         // slivers instead of asking the panel for the width it needs.
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Ask / Teach / Debug / Prep — one personality, four stances.
+    private var sessionModeMenu: some View {
+        let current = SessionMode(rawValue: sessionModeRaw) ?? .ask
+        return Menu {
+            ForEach(SessionMode.allCases) { mode in
+                Button {
+                    sessionModeRaw = mode.rawValue
+                } label: {
+                    if current == mode {
+                        Label(mode.title, systemImage: "checkmark")
+                    } else {
+                        Text(mode.title)
+                    }
+                }
+            }
+        } label: {
+            Label(current.title, systemImage: "slider.horizontal.3")
+        }
+        .help(current.help)
+        .disabled(viewModel.isBusy)
     }
 
     /// The one file Max may propose changes to, and the control for choosing it.
@@ -367,9 +478,18 @@ struct CompanionView: View {
                 Text("Max can propose a change to one file. You always see a diff first.")
             }
         } label: {
-            Label(viewModel.editableFile.isOpen ? viewModel.editableFile.name : "No file",
-                  systemImage: viewModel.editableFile.isOpen ? "doc.text.fill" : "doc")
+            if viewModel.editableFile.isOpen {
+                Label(viewModel.editableFile.name, systemImage: "doc.text.fill")
+            } else {
+                Image(systemName: "doc")
+            }
         }
+        .help(viewModel.editableFile.isOpen
+              ? "Max may propose changes to \(viewModel.editableFile.name)"
+              : "Open one file Max may propose changes to")
+        .accessibilityLabel(viewModel.editableFile.isOpen
+                            ? "File: \(viewModel.editableFile.name)"
+                            : "Open a file to work on")
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .menuIndicator(.hidden)
@@ -468,24 +588,51 @@ struct CompanionView: View {
     /// Surfaced only on an explicit summon — never from background polling.
     private var relatedStrip: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.hair) {
-            Label("You kept this before", systemImage: "clock.arrow.circlepath")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
+            if !viewModel.related.isEmpty {
+                Label("You kept this before", systemImage: "clock.arrow.circlepath")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
 
             ForEach(viewModel.related) { match in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(match.context.intent)
+                Button {
+                    viewModel.askAboutRelated(match)
+                } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(match.context.intent)
+                            .font(.caption)
+                            .lineLimit(2)
+                            .foregroundStyle(.primary)
+                        Text("\(match.reason) · \(match.context.createdAt.formatted(.relative(presentation: .named)))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DS.Spacing.snug)
+                    .padding(.vertical, DS.Spacing.hair)
+                    .background(
+                        match.reason.contains("past fix")
+                            ? DS.Pointer.mark.opacity(DS.Alpha.chipFill)
+                            : Color.primary.opacity(DS.Alpha.chipFill),
+                        in: RoundedRectangle(cornerRadius: DS.Radius.chip)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Put this keep in the ask field — your words, not a new capture")
+            }
+
+            if let clip = viewModel.clipboardOffer {
+                Button {
+                    viewModel.askAboutClipboard()
+                } label: {
+                    Label("Ask about clipboard", systemImage: "doc.on.clipboard")
                         .font(.caption)
-                        .lineLimit(2)
-                    Text("\(match.reason) · \(match.context.createdAt.formatted(.relative(presentation: .named)))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DS.Spacing.snug)
-                .padding(.vertical, DS.Spacing.hair)
-                .background(.quaternary.opacity(DS.Alpha.chipFill), in: RoundedRectangle(cornerRadius: DS.Radius.chip))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(String(clip.prefix(120)))
             }
         }
     }
@@ -546,19 +693,43 @@ struct CompanionView: View {
     /// One exchange. The user's words and Max's are visually distinct because
     /// the whole app rests on that distinction being obvious.
     private func turnView(_ turn: Turn) -> some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.hair) {
+        let isLoading = viewModel.turns.last?.id == turn.id
+            && (viewModel.phase == .thinking || viewModel.phase == .answering)
+
+        return VStack(alignment: .leading, spacing: DS.Spacing.hair) {
             Text(turn.question)
                 .font(.callout.weight(.medium))
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if turn.answer.isEmpty {
-                Text("…")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-            } else {
-                answerBody(turn.answer)
+            if isLoading, viewModel.isHoldingAnswer || turn.answer.isEmpty {
+                answerProgressBar(isTeaching: speechLikelyTeaching)
+            } else if !turn.answer.isEmpty {
+                answerBody(turn.answer, hideSolutionCode: speechLikelyTeaching || viewModel.lesson != nil)
             }
         }
+    }
+
+    private var speechLikelyTeaching: Bool {
+        viewModel.lesson != nil
+            || (SessionMode(rawValue: sessionModeRaw) ?? .ask).prefersTeaching
+            || viewModel.isPreparingLesson
+    }
+
+    /// Bar only — no streamed tokens. Voice and board start when the bar hits done.
+    private func answerProgressBar(isTeaching: Bool) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.tight) {
+            ProgressView(value: max(0.04, viewModel.answerLoadProgress))
+                .progressViewStyle(.linear)
+            Text(isTeaching
+                  ? "Preparing the walkthrough…"
+                  : "Preparing your answer…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, DS.Spacing.tight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel(isTeaching ? "Preparing the walkthrough" : "Preparing your answer")
+        .accessibilityValue("\(Int(viewModel.answerLoadProgress * 100)) percent")
     }
 
     /// Max's reply, drawn according to what is in it.
@@ -566,7 +737,7 @@ struct CompanionView: View {
     /// Re-parsed on every streamed chunk rather than incrementally, because the
     /// text is a few hundred characters and the alternative is keeping a parser
     /// and a view in agreement about a half-written document.
-    private func answerBody(_ answer: String) -> some View {
+    private func answerBody(_ answer: String, hideSolutionCode: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: DS.Spacing.tight) {
             ForEach(Array(AnswerContent.blocks(in: answer).enumerated()), id: \.offset) { _, block in
                 switch block {
@@ -585,12 +756,25 @@ struct CompanionView: View {
                     })
 
                 case let .numbered(items):
-                    listView(items.enumerated().map {
-                        AnswerListRow(id: $0.offset, marker: "\($0.offset + 1).", text: $0.element)
-                    })
+                    // During Teach, the spoken beat and the panel row stay on
+                    // the same index — dim the rest so the eye tracks with the
+                    // voice the way a tutor's finger tracks the board.
+                    listView(
+                        items.enumerated().map {
+                            AnswerListRow(id: $0.offset, marker: "\($0.offset + 1).", text: $0.element)
+                        },
+                        activeIndex: viewModel.lesson != nil ? viewModel.lessonStep : nil
+                    )
 
                 case let .code(code):
-                    CodeBlockView(code: code)
+                    // Walk + board first; solution code after the lesson ends.
+                    if hideSolutionCode {
+                        Label("Solution code waits until the walk ends", systemImage: "eye.slash")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        CodeBlockView(code: code)
+                    }
                 }
             }
         }
@@ -607,18 +791,29 @@ struct CompanionView: View {
 
     /// A list, with the marker in its own column so wrapped lines line up under
     /// the text rather than under the bullet.
-    private func listView(_ rows: [AnswerListRow]) -> some View {
+    private func listView(_ rows: [AnswerListRow], activeIndex: Int? = nil) -> some View {
         VStack(alignment: .leading, spacing: DS.Spacing.hair) {
             ForEach(rows) { row in
+                let isActive = activeIndex == row.id
+                let isDimmed = activeIndex != nil && !isActive
                 HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.tight) {
                     Text(row.marker)
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .font(.callout.monospacedDigit().weight(isActive ? .bold : .regular))
+                        .foregroundStyle(isActive ? AnyShapeStyle(DS.Pointer.mark) : AnyShapeStyle(.tertiary))
                         .frame(minWidth: 16, alignment: .trailing)
                     prose(row.text)
+                        .fontWeight(isActive ? .semibold : .regular)
                 }
+                .padding(.vertical, isActive ? 2 : 0)
+                .padding(.horizontal, isActive ? 4 : 0)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
+                        .fill(isActive ? DS.Pointer.mark.opacity(0.12) : .clear)
+                )
+                .opacity(isDimmed ? 0.42 : 1)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: activeIndex)
     }
 
     /// Offers to point at the control the answer named.
@@ -722,16 +917,26 @@ struct CompanionView: View {
                     .help("Take the boxes off the screen")
             }
 
-            if viewModel.guidedNeedsAccessibility {
-                Text("Cursor follow needs Accessibility extras in Settings.")
-                    .font(.caption2)
-                    .foregroundStyle(DS.Status.problem)
+            if let blocker = viewModel.teachingPointerBlocker {
+                HStack(alignment: .top, spacing: DS.Spacing.tight) {
+                    Text(blocker)
+                        .font(.caption2)
+                        .foregroundStyle(DS.Status.problem)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: DS.Spacing.hair)
+                    Button("Open Accessibility…") {
+                        viewModel.enableTeachingPointerAccess()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .help("Turn on Accessibility extras and open Privacy → Accessibility so you can allow Max")
+                }
             } else if viewModel.guidedMissingOnScreenMatch {
-                Text("No box this step — tip is on the screen; cursor stays put.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else if !viewModel.lessonAdvancesByVoice {
-                Text("Speak answers is off — use the arrows to step.")
+                // Concept beats (no quotes) are not a failure — only a quoted
+                // label that Vision/AX both missed needs a nudge.
+                Text(viewModel.currentLessonStepQuotesScreen
+                      ? "No box yet — press → to re-read, or check the quote is on screen."
+                      : "Concept step — board carries this beat; nothing to box on screen.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -839,7 +1044,7 @@ struct CompanionView: View {
             .scrollIndicators(.never)
             .frame(maxHeight: DS.Size.maxDiffHeight)
             .padding(DS.Spacing.tight)
-            .background(.black.opacity(DS.Alpha.well), in: RoundedRectangle(cornerRadius: DS.Radius.control))
+            .background(DS.Code.well, in: RoundedRectangle(cornerRadius: DS.Radius.control))
 
             HStack(spacing: DS.Spacing.tight) {
                 Button("Apply") { viewModel.applyProposedEdit() }

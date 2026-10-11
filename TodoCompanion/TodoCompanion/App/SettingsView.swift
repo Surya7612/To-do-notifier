@@ -23,6 +23,8 @@ struct SettingsView: View {
         AppSettings.DictationEngine.apple.rawValue
     @AppStorage(AppSettings.Key.mirrorsToAppleReminders) private var mirrorsToAppleReminders = false
     @AppStorage(AppSettings.Key.accessibilityExtrasEnabled) private var accessibilityExtrasEnabled = false
+    @AppStorage(AppSettings.Key.mcpEnabled) private var mcpEnabled = false
+    @AppStorage(AppSettings.Key.mcpLaunch) private var mcpLaunch = ""
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
@@ -141,12 +143,29 @@ struct SettingsView: View {
                 }
 
                 Text("Off by default. When enabled and granted, Tab+Q opens \(Prompt.assistantName) "
-                     + "listening, and Show me also moves the pointer onto the named control. "
-                     + "Teach me with Guide cursor warps the pointer from step to step. Carbon "
-                     + "shortcuts keep working either way. Nothing listens until you press a key.")
+                     + "listening, Show me warps the pointer, Teach guides the cursor, and Max can "
+                     + "also read accessibility text from the focused app (useful in browsers). "
+                     + "Carbon shortcuts keep working either way. Nothing listens until you press a key.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+#if !APP_STORE
+            Section("MCP tools") {
+                Toggle("Call a local MCP server before answering", isOn: $mcpEnabled)
+
+                TextField("Launch command", text: $mcpLaunch, prompt: Text("npx -y @modelcontextprotocol/server-memory"))
+                    .disabled(!mcpEnabled)
+
+                Text("Off by default. When on, Max asks your local MCP server for tool results that "
+                     + "overlap the question and labels them as tool output — never as your words. "
+                     + "Prefer an absolute path (e.g. /opt/homebrew/bin/npx …) so the sandbox can "
+                     + "find the binary. Max still does not open browsers or click for you. A dead "
+                     + "command is named in the status bar — the question still answers without tools.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+#endif
 
             Section("Who answers") {
                 // Menu rather than a segmented control: four providers do not
@@ -364,7 +383,15 @@ struct SettingsView: View {
                                                          assistantName: Prompt.assistantName))
                         .font(.caption)
                         .foregroundStyle(destination.reachesOtherDevices ? Color.secondary : Color.orange)
+                    Text(ReminderMirrorMessaging.oneWaySyncNote)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     if !destination.reachesOtherDevices {
+                        if let mirrorSuccess {
+                            Label(mirrorSuccess, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                         Button("Open System Settings…") {
                             ReminderMirrorMessaging.openSystemSettingsForReminders()
                         }
@@ -642,8 +669,10 @@ struct SettingsView: View {
         let work = TodoBridge.load()
         do {
             try await AppleReminders.sync(openTodos: work.todos, quietHours: work.quietHours)
-            if let destination = mirrorDestination, destination.reachesOtherDevices {
-                mirrorSuccess = "Mirrored — check Reminders on your iPhone"
+            if let destination = mirrorDestination {
+                mirrorSuccess = destination.reachesOtherDevices
+                    ? "Mirrored — check Reminders on your iPhone"
+                    : ReminderMirrorMessaging.thisMacOnlySynced
             }
         } catch {
             mirrorProblem = error.localizedDescription

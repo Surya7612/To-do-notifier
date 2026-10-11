@@ -320,11 +320,9 @@ enum InboxImporter {
     private static func withFolder<T>(_ work: (URL) -> T) -> T? {
         guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
 
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: bookmark,
-                                 options: .withSecurityScope,
-                                 relativeTo: nil,
-                                 bookmarkDataIsStale: &stale),
+        guard let url = SecurityScopedBookmark.resolve(bookmark, persist: { fresh in
+            UserDefaults.standard.set(fresh, forKey: bookmarkKey)
+        }),
               url.startAccessingSecurityScopedResource()
         else { return nil }
         defer { url.stopAccessingSecurityScopedResource() }

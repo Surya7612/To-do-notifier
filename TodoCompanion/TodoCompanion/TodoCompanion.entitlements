@@ -38,5 +38,15 @@
 	-->
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
+
+	<!--
+	  Sparkle 2 installer / downloader XPC services (Developer ID channel).
+	  Bundle id suffixes match Sparkle’s sandboxed updater layout.
+	-->
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>surya.TodoCompanion-spks</string>
+		<string>surya.TodoCompanion-spki</string>
+	</array>
 </dict>
 </plist>

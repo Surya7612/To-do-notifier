@@ -65,8 +65,35 @@ final class CompanionViewModel {
     /// True while a recognizer loads its model, which the status line explains.
     var isLoadingDictationModel = false
 
-    var phase: Phase = .idle
+    var phase: Phase = .idle {
+        didSet {
+            guard case .saved = phase, phase != oldValue else { return }
+            // A confirmation, not a state: left in place it read as the panel
+            // still being busy, and `offersKeepThis` waits for `.idle`.
+            let shown = phase
+            savedPhaseClear?.cancel()
+            savedPhaseClear = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.savedConfirmationSeconds))
+                guard !Task.isCancelled, let self, self.phase == shown else { return }
+                self.phase = .idle
+            }
+        }
+    }
+    private var savedPhaseClear: Task<Void, Never>?
+    private static let savedConfirmationSeconds = 3.5
     var contextLabel: String = "Nothing captured yet"
+
+    /// Soft 0…1 fill while the model streams. The panel shows this bar instead
+    /// of half-written text; speech and the board wait for 1.
+    private(set) var answerLoadProgress: Double = 0
+    /// True while the reply is held back for a Teach or board walk; the panel
+    /// shows the progress bar instead of the half-written text.
+    private(set) var isHoldingAnswer = false
+    /// Set once the model has been silent long enough to need explaining.
+    private var modelLoadHint: String?
+
+    /// Shown while Teach re-asks for a missing storyboard, or if repair failed.
+    private(set) var sketchRepairHint: String?
 
     /// The conversation so far, oldest first. The last turn's answer is what
     /// `answer` is streaming into.
@@ -121,8 +148,13 @@ final class CompanionViewModel {
     /// One-shot tip when a visual question is about to be answered without sight.
     private(set) var visionNudge: String?
 
+    /// Shown under Thinking… when an enabled MCP server fails to answer.
+    private var mcpStatusHint: String?
+
     /// Cold-start readiness: nil until probed, then whether Ollama answered.
     private(set) var ollamaReachable: Bool?
+    /// The chat model Ollama reported it does not have, from the summon warm-up.
+    private(set) var missingOllamaModel: String?
 
     /// Auto-pinned for the active lesson so working underneath does not dismiss.
     private var pinnedForLesson = false
@@ -207,6 +239,23 @@ final class CompanionViewModel {
 
     /// Things saved earlier that look relevant to the screen in front of the user.
     var related: [RetrievalMatch] = []
+    /// Accessibility-tree text for the focused app, when extras are trusted.
+    private(set) var pageStructure: String?
+
+    /// Clipboard string offered as an ask chip when the field is empty.
+    private(set) var clipboardOffer: String?
+
+    /// Diff vs the last keep of this window, shown after a successful save.
+    private(set) var lastSaveChangeLine: String?
+
+    /// How the next answer will be grounded — OCR text vs actual screenshot.
+    var answerGrounding: AnswerGrounding.Mode {
+        AnswerGrounding.mode(hasCapture: hasCapture, sendsImage: AppSettings.sendsImage)
+    }
+
+    var answerGroundingLabel: String? {
+        AnswerGrounding.badgeLabel(for: answerGrounding)
+    }
 
     /// Open tasks from the Electron app, when the user has linked it.
     private var linkedWork = LinkedWork()
@@ -240,7 +289,17 @@ final class CompanionViewModel {
     private let modelContext: ModelContext
     private var observation: ScreenObservation?
     private var captureTask: Task<Void, Never>?
+    private var regionTask: Task<Void, Never>?
     private var answerTask: Task<Void, Never>?
+    private var warpTask: Task<Void, Never>?
+    private var warpGeneration = UUID()
+    /// Identifies the in-flight grab so a cancelled predecessor cannot clear
+    /// `.reading` or re-show the panel while a newer capture still owns them.
+    private var captureGeneration = UUID()
+    private var panelOcclusionOwner: UUID?
+    private var dictationStartInFlight = false
+    /// The answer currently allowed to write panel state; see `submit`.
+    private var answerGeneration = UUID()
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -273,6 +332,12 @@ final class CompanionViewModel {
         switch phase {
         case .idle:
             if let blocker = readinessBlocker { return blocker }
+            // Name the summon shortcut when nothing is captured yet — USABILITY §4
+            // asks for Screen Recording, Ollama, *or* the hotkey, and the first two
+            // only appear as blockers. Without this the idle panel looks inert.
+            if observation == nil {
+                return "Press \(AppSettings.hotkey.displayName) to capture, then ask"
+            }
             return contextLabel
         case .reading: return "Reading your screen…"
         case .startingDictation:
@@ -282,8 +347,21 @@ final class CompanionViewModel {
             return isLoadingDictationModel
                 ? "Loading the Parakeet model — first time only…"
                 : "Turning the microphone on…"
-        case .thinking: return "Thinking…"
-        case .answering: return "Answering…"
+        case .thinking:
+            if let sketchRepairHint { return sketchRepairHint }
+            if let modelLoadHint { return modelLoadHint }
+            if let mcpStatusHint { return "Planning… · \(mcpStatusHint)" }
+            if speech.speaksRegardlessOfSetting || AppSettings.sessionMode.prefersTeaching {
+                return "Planning the lesson…"
+            }
+            return "Thinking…"
+        case .answering:
+            if let sketchRepairHint { return sketchRepairHint }
+            if lesson != nil { return "Teaching — step \(lessonStep + 1)" }
+            if speech.speaksRegardlessOfSetting || AppSettings.sessionMode.prefersTeaching {
+                return "Writing the walkthrough…"
+            }
+            return "Answering…"
         case let .saved(message): return message
         case .needsPermission: return "Screen Recording permission needed"
         case let .failed(message): return message
@@ -298,6 +376,9 @@ final class CompanionViewModel {
         if AppSettings.provider == .ollama, ollamaReachable == false {
             return "Ollama isn’t running — start it, then ask again"
         }
+        if AppSettings.provider == .ollama, let missingOllamaModel {
+            return "Ollama has no \(missingOllamaModel) — run ollama pull \(missingOllamaModel)"
+        }
         return nil
     }
 
@@ -308,13 +389,20 @@ final class CompanionViewModel {
     func refreshReadiness() {
         guard AppSettings.provider == .ollama else {
             ollamaReachable = nil
+            missingOllamaModel = nil
             return
         }
         let endpoint = AppSettings.endpoint
+        let model = AppSettings.model
         Task { [weak self] in
             let ok = await OllamaBrain.isReachable(endpoint: endpoint)
             guard let self else { return }
             self.ollamaReachable = ok
+            guard ok else { return }
+            // Loading starts at the summon rather than at the question, so the
+            // seconds spent reading the screen and typing pay for it.
+            let warm = await OllamaBrain.warm(endpoint: endpoint, model: model)
+            self.missingOllamaModel = warm == .modelMissing ? model : nil
         }
     }
 
@@ -324,6 +412,13 @@ final class CompanionViewModel {
     /// pressed, so `NSWorkspace.frontmostApplication` alone would teach Max's
     /// own windows and warp into the wrong process.
     var resolveContextApp: (() -> NSRunningApplication?)?
+
+    /// When the last grab finished — used to skip a redundant re-capture when
+    /// Explain is pressed a moment after summon.
+    private var lastCaptureAt: Date?
+    /// Quality of the OCR currently on `observation` — Teach upgrades fast
+    /// summon OCR without a second ScreenCaptureKit grab when the pixels are fresh.
+    private var lastOCRQuality: TextRecognizer.Quality = .fast
 
     /// Snapshots the screen behind the companion. Called as the panel appears so
     /// an answer can start the moment the user hits return.
@@ -335,7 +430,9 @@ final class CompanionViewModel {
         refreshReadiness()
         captureTask?.cancel()
         captureTask = Task {
-            _ = await performCapture(frontmostApp: frontmostApp, preserveCropFrame: nil)
+            _ = await performCapture(frontmostApp: frontmostApp,
+                                     preserveCropFrame: nil,
+                                     ocrQuality: .fast)
         }
     }
 
@@ -344,13 +441,18 @@ final class CompanionViewModel {
     /// - Parameter preserveCropFrame: when the user had narrowed to a region,
     ///   re-apply that rectangle after the fresh grab so Teach / Guided stay on
     ///   the selection rather than silently widening to the whole display.
+    /// - Parameter ocrQuality: `.fast` on summon; `.accurate` when Teach needs
+    ///   boxes that match quoted labels.
     @discardableResult
     private func performCapture(frontmostApp: NSRunningApplication?,
                                 preserveCropFrame: CGRect?,
-                                preserveTeaching: Bool = false) async -> Bool {
+                                preserveTeaching: Bool = false,
+                                ocrQuality: TextRecognizer.Quality = .accurate) async -> Bool {
         // Snapshot before flipping to `.reading` — Look again mid-answer must
         // still suppress lesson restart on later stream chunks.
         let answerWasInFlight = phase == .thinking || phase == .answering
+        let myGeneration = UUID()
+        captureGeneration = myGeneration
         phase = .reading
         pointerTarget = nil
         if let frontmostApp,
@@ -365,63 +467,142 @@ final class CompanionViewModel {
         }
         onCaptureBegan?()
         refreshCloudKey()
-        InboxImporter.importAll(into: modelContext)
 
         defer { onCaptureEnded?() }
 
+        // Started alongside the grab rather than after OCR, so the tree walk
+        // costs nothing beyond the capture it runs in parallel with.
+        let pageStructureRead: Task<String?, Never>? = TrustAccessibility.extrasAreActive
+            ? Task.detached(priority: .userInitiated) { AXPageReader.snapshot() }
+            : nil
+        defer { pageStructureRead?.cancel() }
+
         do {
             var fresh = try await ScreenCapture.captureAllDisplays(frontmostApp: frontmostApp)
-            let read = await Self.readText(in: fresh.primary.image)
-            fresh.primary.recognizedText = read.text
-            fresh.primary.textRegions = read.regions
-            for index in fresh.others.indices {
-                fresh.others[index].recognizedText = await Self.readText(in: fresh.others[index].image).text
-            }
-            guard !Task.isCancelled else {
-                // A replacement capture sets `.reading` again; a bare cancel
-                // (dismiss, superseded teach) must not leave `isBusy` stuck.
-                if phase == .reading { phase = .idle }
-                return false
-            }
+            guard stillCurrentCapture(myGeneration) else { return false }
 
-            if let crop = preserveCropFrame,
-               let screen = NSScreen.screens.first(where: { NSMouseInRect(crop.origin, $0.frame, false) })
+            let vocab = ocrQuality == .accurate ? ocrVocabulary() : []
+
+            // With a preserved region, OCR only that crop — full-display Vision
+            // on every monitor then a second pass on the crop was the main
+            // Teach / Look again delay on multi-monitor setups.
+            if let crop = preserveCropFrame {
+                let screen = NSScreen.screens.first(where: { NSMouseInRect(crop.origin, $0.frame, false) })
                     ?? NSScreen.screens.first(where: { $0.frame.intersects(crop) })
-                    ?? NSScreen.main,
-               let narrowed = fresh.cropped(to: crop, on: screen) {
-                var cropped = narrowed
-                let cropRead = await Self.readText(in: cropped.primary.image)
-                cropped.primary.recognizedText = cropRead.text
-                cropped.primary.textRegions = cropRead.regions
-                fresh = cropped
+                    ?? NSScreen.main
+                if let screen, let narrowed = fresh.cropped(to: crop, on: screen) {
+                    var cropped = narrowed
+                    let cropRead = await Self.readText(in: cropped.primary.image,
+                                                       customWords: vocab,
+                                                       quality: ocrQuality)
+                    guard stillCurrentCapture(myGeneration) else { return false }
+                    cropped.primary.recognizedText = cropRead.text
+                    cropped.primary.textRegions = cropRead.regions
+                    fresh = cropped
+                } else {
+                    await applyOCR(to: &fresh, customWords: vocab, quality: ocrQuality)
+                    guard stillCurrentCapture(myGeneration) else { return false }
+                }
+            } else {
+                await applyOCR(to: &fresh, customWords: vocab, quality: ocrQuality)
+                guard stillCurrentCapture(myGeneration) else { return false }
             }
 
-            guard !Task.isCancelled else {
-                if phase == .reading { phase = .idle }
-                return false
-            }
             observation = fresh
             contextLabel = fresh.contextLabel
+            lastCaptureAt = Date()
+            lastOCRQuality = ocrQuality
+            // Structure text is free once Accessibility is on — browsers and
+            // docs especially — and is labelled separately from OCR in the prompt.
+            pageStructure = await pageStructureRead?.value
+            guard stillCurrentCapture(myGeneration) else { return false }
             reloadProjects()
             related = ContextRetriever.related(to: fresh,
                                                among: recentContexts(),
                                                inProject: currentProject)
             linkedWork = TodoBridge.load()
-            if phase == .reading { phase = .idle }
-            mirrorTasksToAppleReminders()
+            refreshClipboardOffer()
+            if stillCurrentCapture(myGeneration), phase == .reading { phase = .idle }
 
-            backfillEmbeddings()
-            await addMeaningMatches(for: fresh)
+            // Inbox, Reminders, embeddings, and meaning matches must not hold
+            // the "Reading your screen…" state — that was the bulk of the
+            // summon delay after OCR had already finished.
+            let captured = fresh
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                InboxImporter.importAll(into: self.modelContext)
+                self.mirrorTasksToAppleReminders()
+                self.backfillEmbeddings()
+                await self.addMeaningMatches(for: captured)
+            }
             return true
         } catch ScreenCaptureError.permissionDenied {
-            guard !Task.isCancelled else { return false }
+            guard stillCurrentCapture(myGeneration) else { return false }
             phase = .needsPermission
             return false
         } catch {
-            guard !Task.isCancelled else { return false }
+            guard stillCurrentCapture(myGeneration) else { return false }
             phase = .failed(error.localizedDescription)
             return false
         }
+    }
+
+    /// Whether this grab still owns the panel's capture state.
+    private func stillCurrentCapture(_ generation: UUID) -> Bool {
+        if Task.isCancelled || captureGeneration != generation {
+            // Only the owner clears `.reading` — a superseded task used to flip
+            // the replacement back to idle mid-OCR and unlock Return too early.
+            return false
+        }
+        return true
+    }
+
+    /// OCR every display in parallel. Serial Vision was ~N× summon latency.
+    private func applyOCR(to observation: inout ScreenObservation,
+                          customWords: [String],
+                          quality: TextRecognizer.Quality) async {
+        let primaryImage = observation.primary.image
+        let otherImages = observation.others.map(\.image)
+
+        async let primaryRead = Self.readText(in: primaryImage,
+                                              customWords: customWords,
+                                              quality: quality)
+        // Accurate secondary-monitor OCR on every summon was a major delay and
+        // rarely needed for the first ask — fast there, accurate when Teach
+        // re-reads for pointing.
+        let secondaryQuality: TextRecognizer.Quality = quality == .accurate ? .fast : .fast
+        let otherReads: [RecognizedScreen] = await withTaskGroup(of: (Int, RecognizedScreen).self) { group in
+            for (index, image) in otherImages.enumerated() {
+                group.addTask {
+                    (index, await Self.readText(in: image,
+                                                customWords: [],
+                                                quality: secondaryQuality))
+                }
+            }
+            var byIndex: [Int: RecognizedScreen] = [:]
+            for await (index, read) in group { byIndex[index] = read }
+            return otherImages.indices.map { byIndex[$0] ?? RecognizedScreen() }
+        }
+
+        let primary = await primaryRead
+        observation.primary.recognizedText = primary.text
+        observation.primary.textRegions = primary.regions
+        for index in observation.others.indices {
+            observation.others[index].recognizedText = otherReads[index].text
+            observation.others[index].textRegions = otherReads[index].regions
+        }
+    }
+
+    /// Hides the panel for a grab; only the owning generation may show it again.
+    private func beginPanelOcclusion(for generation: UUID) {
+        panelOcclusionOwner = generation
+        onPanelOcclusion?(true)
+    }
+
+    private func endPanelOcclusion(for generation: UUID) {
+        guard panelOcclusionOwner == generation else { return }
+        panelOcclusionOwner = nil
+        onPanelOcclusion?(false)
     }
 
     /// Re-scores the related strip once the screen itself has a vector.
@@ -455,8 +636,22 @@ final class CompanionViewModel {
 
     /// Vision is CPU-heavy enough to stall the panel's appearance if it runs
     /// inline, so each display is recognized off the main actor.
-    private static func readText(in image: CGImage) async -> RecognizedScreen {
-        await Task.detached { TextRecognizer.recognize(in: image) }.value
+    private static func readText(in image: CGImage,
+                                 customWords: [String] = [],
+                                 quality: TextRecognizer.Quality = .accurate) async -> RecognizedScreen {
+        await Task.detached {
+            TextRecognizer.recognize(in: image, customWords: customWords, quality: quality)
+        }.value
+    }
+
+    /// Project names and distinctive words from the *previous* primary display,
+    /// fed to Vision as `customWords`. Secondary-display OCR is deliberately
+    /// omitted — dumping every monitor into Vision's bias list slowed summon
+    /// without helping Teach on the focused screen.
+    private func ocrVocabulary() -> [String] {
+        let names = projects.map(\.name)
+        let prior = observation?.primary.recognizedText ?? ""
+        return DictationHints.from(screenText: prior, projectNames: names)
     }
 
     /// Retries after the user grants permission, so they don't have to guess
@@ -466,8 +661,9 @@ final class CompanionViewModel {
     }
 
     /// Presets shown on the action row. Guided is a Teach option (Guide cursor),
-    /// not a third button — same loop, one less mode to miss.
-    static var primaryPresets: [Preset] { [.explain, .nextStep, .teach] }
+    /// not a third button. "Next step" was dropped from the row — it earned the
+    /// least and crowded Explain / Teach into truncated labels.
+    static var primaryPresets: [Preset] { [.explain, .teach] }
 
     /// Ready-made questions for the two things worth asking about a region.
     /// Typing "explain this" every time is friction on the most common action.
@@ -545,48 +741,127 @@ final class CompanionViewModel {
     }
 
     func ask(_ preset: Preset) {
+        // Finish the mic first so a dictated sentence is actually in `question`
+        // when we read it — otherwise Teach raced the last transcript update
+        // and fell back to "walk the whole screen".
+        settleDictation()
         let asked = Self.presetAsk(typed: question, preset: preset)
         question = asked.question
+        guard !isBusy, hasCapture else { return }
 
-        // Teach / Guided must read the screen *now*. The summon capture is often
-        // minutes old once the panel is pinned and the user has kept working —
-        // teaching that stale frame boxes the wrong lines and Guided warps to
-        // places that are no longer there.
-        if preset.isTeaching {
-            guard !isBusy else { return }
-            let context = resolveContextApp?() ?? contextApp
-            let crop = observation?.isCropped == true ? observation?.primaryScreenFrame : nil
-            // Guided is a Teach option (Settings / lesson-bar toggle), not a
-            // separate preset on the action row. The guidedTeach case remains
-            // for callers that still ask for it explicitly.
-            let guided = preset.isGuidedTeaching || AppSettings.guideCursorWhileTeaching
-            captureTask?.cancel()
-            captureTask = Task {
-                // Panel must not be on screen during this grab. Excluding our
-                // windows from ScreenCaptureKit leaves an opaque void where they
-                // were, so OCR of the editor under Max comes back empty and
-                // every lesson box / Guided warp then fails silently.
-                onPanelOcclusion?(true)
-                defer { onPanelOcclusion?(false) }
-                let ok = await performCapture(frontmostApp: context, preserveCropFrame: crop)
-                guard ok, !Task.isCancelled else {
-                    // Cancelled by dismiss / another grab — leave the typed
-                    // (or preset) question so the user can press Teach again.
-                    if phase == .reading { phase = .idle }
-                    return
-                }
-                submit(isFromPreset: asked.isFromPreset,
-                       isTeaching: true,
-                       isGuidedTeaching: guided,
-                       wantsBoard: true)
-            }
+        let contextApp = resolveContextApp?() ?? contextApp
+        // Region applies to every preset, not only a full-screen Teach grab.
+        let crop = observation?.isCropped == true ? observation?.primaryScreenFrame : nil
+        let teaching = preset.isTeaching
+        if teaching {
+            // Teach me is the full teacher: boxes, spoken steps, and cursor
+            // follow. Without Accessibility trust the cursor silently never
+            // moves — ask for the grant at the press, open Settings after the
+            // grab so the list is not buried under the occlusion.
+            prepareTeachingPointerAccess(openSettingsIfNeeded: false)
+        }
+
+        // Board only when it helps: Explain may diagram; Teach only when the
+        // ask is about a concept that needs a sketch. Always-on boards stole
+        // the model's attention from quoting the screen, so boxes and cursor
+        // follow died the moment a diagram appeared.
+        let wantsBoard = preset == .explain
+            || (teaching && Self.asksForDiagram(asked.question))
+
+        // Reuse a fresh grab. Teach upgrades summon's fast OCR in place when
+        // the pixels are still current — a second ScreenCaptureKit pass was
+        // most of the "Teach feels slow" tax after a hotkey summon.
+        let captureIsFresh = lastCaptureAt.map { Date().timeIntervalSince($0) < 2.5 } ?? false
+        let canReuseAccurate = captureIsFresh && lastOCRQuality == .accurate
+        let canUpgradeOCROnly = teaching && captureIsFresh && lastOCRQuality == .fast
+            && observation != nil
+
+        if canReuseAccurate || (!teaching && captureIsFresh) {
+            if teaching { offerAccessibilityGrantOnce() }
+            submit(prompt: asked.question,
+                   isFromPreset: asked.isFromPreset,
+                   isTeaching: teaching,
+                   isGuidedTeaching: teaching,
+                   wantsBoard: wantsBoard)
             return
         }
 
-        submit(isFromPreset: asked.isFromPreset,
-               isTeaching: false,
-               isGuidedTeaching: false,
-               wantsBoard: preset == .explain)
+        let occlusionID = UUID()
+        captureTask?.cancel()
+        captureTask = Task {
+            if canUpgradeOCROnly {
+                let ok = await upgradeOCRInPlace(quality: .accurate)
+                guard ok, !Task.isCancelled else { return }
+            } else {
+                // Panel must not be on screen during this grab. Excluding our
+                // windows from ScreenCaptureKit leaves an opaque void where they
+                // were, so OCR of the editor under Max comes back empty.
+                beginPanelOcclusion(for: occlusionID)
+                defer { endPanelOcclusion(for: occlusionID) }
+                let ok = await performCapture(frontmostApp: contextApp,
+                                              preserveCropFrame: crop,
+                                              ocrQuality: .accurate)
+                guard ok, !Task.isCancelled else { return }
+            }
+            if teaching { offerAccessibilityGrantOnce() }
+            submit(prompt: asked.question,
+                   isFromPreset: asked.isFromPreset,
+                   isTeaching: teaching,
+                   isGuidedTeaching: teaching,
+                   wantsBoard: wantsBoard)
+        }
+    }
+
+    /// Re-runs Vision on the pixels already held — no new ScreenCaptureKit grab.
+    @discardableResult
+    private func upgradeOCRInPlace(quality: TextRecognizer.Quality) async -> Bool {
+        guard var fresh = observation else { return false }
+        let myGeneration = UUID()
+        captureGeneration = myGeneration
+        phase = .reading
+        let vocab = quality == .accurate ? ocrVocabulary() : []
+        await applyOCR(to: &fresh, customWords: vocab, quality: quality)
+        guard stillCurrentCapture(myGeneration) else { return false }
+        observation = fresh
+        lastOCRQuality = quality
+        lastCaptureAt = Date()
+        if phase == .reading { phase = .idle }
+        return true
+    }
+
+    /// Whether the user's words are asking for a concept sketch, not only a
+    /// walk of what's printed.
+    nonisolated static func asksForDiagram(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let cues = ["diagram", "draw", "sketch", "illustrate", "visuali", "picture of",
+                    "data flow", "call graph", "tree of", "flowchart", "flow chart",
+                    "whiteboard", "storyboard"]
+        if cues.contains(where: { lower.contains($0) }) { return true }
+        return lower.contains("show me how")
+            && (lower.contains("works") || lower.contains("flow"))
+    }
+
+    /// Free-typed asks that must take the Teach + board path, not Ask.
+    ///
+    /// "draw and explain… give me the code" was landing as a solution dump with
+    /// no pen — hard-board and sketch playback only arm when `isTeaching`.
+    nonisolated static func asksForSketchLesson(_ text: String) -> Bool {
+        if asksForDiagram(text) { return true }
+        let lower = text.lowercased()
+        let cues = [
+            "teach me", "teach this", "walk me through", "walk through",
+            "explain how to", "explain me how", "how to solve",
+            "step by step", "step-by-step", "tutor me",
+        ]
+        return cues.contains(where: { lower.contains($0) })
+    }
+
+    /// Stops the mic and keeps whatever transcript has already landed in the field.
+    private func settleDictation() {
+        guard isListening || dictationStartInFlight else { return }
+        dictationStartInFlight = false
+        dictation.stop()
+        endListening()
     }
 
     /// Whether the preset buttons would ask the user's own words instead.
@@ -608,16 +883,25 @@ final class CompanionViewModel {
             return
         }
 
-        let mouse = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
-                ?? NSScreen.main
-        else { return }
+        // Prefer the captured display's screen so the overlay and the crop share
+        // a coordinate space. Falling back to the mouse screen still works when
+        // the selection is on a secondary that `cropped(to:on:)` can promote.
+        let preferredFrame = current.primaryScreenFrame
+        let screen = preferredFrame.flatMap { frame in
+            NSScreen.screens.first { $0.frame.intersects(frame) }
+        }
+            ?? NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) })
+            ?? NSScreen.main
+        guard let screen else { return }
 
-        Task {
+        let sessionGeneration = captureGeneration
+        regionTask?.cancel()
+        regionTask = Task {
             hidingPanel(true)
             let selection = await regionSelector.selectRegion(on: screen)
             hidingPanel(false)
 
+            guard !Task.isCancelled, captureGeneration == sessionGeneration else { return }
             guard let selection else { return }
             guard let narrowed = current.cropped(to: selection, on: screen) else {
                 phase = .failed("That selection was too small to read.")
@@ -626,12 +910,15 @@ final class CompanionViewModel {
 
             var updated = narrowed
             let read = await Self.readText(in: narrowed.primary.image)
+            guard !Task.isCancelled, captureGeneration == sessionGeneration else { return }
             updated.primary.recognizedText = read.text
             updated.primary.textRegions = read.regions
             observation = updated
+            lastCaptureAt = Date()
+            lastOCRQuality = .accurate
             pointerTarget = nil
             contextLabel = "Selected region of \(updated.contextLabel)"
-            if phase == .failed("") || phase == .idle { phase = .idle }
+            if phase == .idle || phase == .failed("") { phase = .idle }
         }
     }
 
@@ -644,7 +931,8 @@ final class CompanionViewModel {
     /// Dictates into the same field used for typing, so speech and text are the
     /// same input rather than two separate flows.
     func toggleDictation() {
-        if isListening {
+        if isListening || dictationStartInFlight {
+            dictationStartInFlight = false
             dictation.stop()
             endListening()
             return
@@ -656,6 +944,9 @@ final class CompanionViewModel {
 
         // Stated before anything can go wrong, so a failure that arrives later
         // replaces a visible "starting" rather than appearing out of nowhere.
+        // `dictationStartInFlight` blocks a second talk-hotkey press from
+        // starting another engine while `prepare()` is still awaiting.
+        dictationStartInFlight = true
         isLoadingDictationModel = dictation.willLoadModel
         phase = .startingDictation
 
@@ -685,6 +976,7 @@ final class CompanionViewModel {
                             "No sound from “\(device)”. Pick a different mic in System Settings → Sound → Input."
                     }
                 )
+                dictationStartInFlight = false
                 isLoadingDictationModel = false
                 isListening = dictation.isListening
                 dictationIsOnDevice = dictation.isOnDevice
@@ -692,6 +984,7 @@ final class CompanionViewModel {
                 if phase == .startingDictation { phase = .idle }
                 if !isListening { endListening() }
             } catch {
+                dictationStartInFlight = false
                 isLoadingDictationModel = false
                 endListening()
                 phase = .failed(error.localizedDescription)
@@ -700,6 +993,7 @@ final class CompanionViewModel {
     }
 
     private func endListening() {
+        dictationStartInFlight = false
         isListening = false
         dictationHint = ""
         onListeningEnded?()
@@ -765,13 +1059,46 @@ final class CompanionViewModel {
         if let url { NSWorkspace.shared.open(url) }
     }
 
-    func submit() { submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false, wantsBoard: false) }
+    func submit() {
+        settleDictation()
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty Return in Prep / Teach is a stance shortcut, not a no-op —
+        // Prep drafts a standup from keeps and tasks; Teach starts a walk.
+        // Non-empty Teach also goes through `ask(.teach)` so typed Return gets
+        // the same accurate OCR re-capture as the Teach me button — session
+        // mode used to stream against summon's fast OCR and point wrongly.
+        if trimmed.isEmpty {
+            switch AppSettings.sessionMode {
+            case .prep:
+                askStandupPrep()
+            case .teach:
+                ask(.teach)
+            case .ask, .debug:
+                break
+            }
+            return
+        }
+        // "draw and explain…" is Teach, even in Ask mode — otherwise the user
+        // gets a code dump and never arms the pen / storyboard path.
+        if AppSettings.sessionMode == .teach || Self.asksForSketchLesson(trimmed) {
+            ask(.teach)
+            return
+        }
+        submit(prompt: nil,
+               isFromPreset: false,
+               isTeaching: false,
+               isGuidedTeaching: false,
+               wantsBoard: false)
+    }
 
-    private func submit(isFromPreset: Bool,
+    private func submit(prompt promptOverride: String? = nil,
+                        isFromPreset: Bool,
                         isTeaching: Bool,
                         isGuidedTeaching: Bool = false,
                         wantsBoard: Bool = false) {
-        let prompt = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        if promptOverride == nil { settleDictation() }
+        let prompt = (promptOverride ?? question)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isBusy else { return }
 
         // A typed instruction to set a reminder is carried out rather than
@@ -791,14 +1118,43 @@ final class CompanionViewModel {
                                                                    suggestion: reminderSuggestion)
         }
 
+        // A follow-up typed while a lesson is open continues the teach
+        // conversation — ending the lesson here tore the boxes down the moment
+        // someone asked "why that line?", which is exactly when they need them.
+        let mode = AppSettings.sessionMode
+        let continueTeaching = lesson != nil && !isTeaching && !isFromPreset
+        // Session mode Teach makes Return start a lesson walk without needing
+        // the Teach me button — same machinery, one less press.
+        let teach = isTeaching
+            || continueTeaching
+            || (mode.prefersTeaching && !isFromPreset)
+        let guide = isGuidedTeaching
+            || (continueTeaching && AppSettings.guideCursorWhileTeaching)
+            || (teach && AppSettings.guideCursorWhileTeaching)
+
         answerTask?.cancel()
         speech.stop()
+        teachingPlayback?.cancel()
+        teachingPlayback = nil
         proposedEdit = nil
         pointerTarget = nil
         visionNudge = nil
         lessonSuppressedForAnswer = false
-        endLesson()
+        if continueTeaching {
+            // Drop the prior step index so the follow-up lesson starts at 1,
+            // but leave the overlay up until the new walk draws — tearing it
+            // down mid-question made follow-ups feel like the teach mode died.
+            lesson = nil
+            lessonStep = 0
+            lessonMarks = []
+            lastGuidedWarpStep = nil
+            onHighlightEnded?()
+        } else {
+            endLesson()
+        }
         phase = .thinking
+        answerLoadProgress = 0.02
+        sketchRepairHint = nil
 
         // The question moves into the transcript immediately so a follow-up
         // reads as a conversation rather than as the field having been cleared.
@@ -809,89 +1165,262 @@ final class CompanionViewModel {
 
         let brain = makeBrain()
         let includeImage = AppSettings.sendsImage
-        let context = AskContext(
-            observation: observation,
-            memories: ContextRetriever.promptLines(for: related),
-            tasks: taskLines(),
-            includeImage: includeImage,
-            // Everything before the turn just added, so the model is not shown
-            // the question it is currently answering twice.
-            history: turns.dropLast(),
-            editableFile: editableFile.context,
-            isTeaching: isTeaching,
-            isGuidedTeaching: isGuidedTeaching,
-            wantsBoard: wantsBoard || isTeaching
-        )
+        // Bare Teach preset → whole-screen walk. Anything the user typed or
+        // dictated (including a follow-up) is the focus the lesson must serve.
+        let focus: String? = (teach && !isFromPreset) ? prompt : nil
+        let screenText = observation?.recognizedText ?? ""
+        let problem = ProblemTutor.inferred(from: screenText)
+        let boardWanted = wantsBoard || teach
+            || (mode.prefersBoard && Self.asksForDiagram(prompt))
+            || (problem == .codingProblem && teach)
 
-        // Teach advances by buttons / Space when Speak answers is off — forcing
-        // speech used to brick lessons that had no voice. Explain boards with no
-        // lesson still need a voice (or manual frame controls) to step frames.
-        speech.speaksRegardlessOfSetting = wantsBoard && !isTeaching
-        followAlongThisAnswer = isTeaching
-        // Guided Teach keeps this true for the lesson so each spoken step can
-        // warp the cursor. Cleared with the lesson, not with ordinary teaching.
-        guidedTeachThisAnswer = isGuidedTeaching
+        // Teach forces speech for this answer so steps advance with the voice
+        // and the cursor can follow — a silent lesson is boxes with no teacher.
+        // Arrows on the lesson bar still work if speech fails. Explain boards
+        // also speak so multi-frame diagrams can step with the voice.
+        speech.speaksRegardlessOfSetting = teach || boardWanted
+        followAlongThisAnswer = teach
+        guidedTeachThisAnswer = guide
         // Clear any prior board *before* arming this answer's flag — `endBoard`
         // zeroes `wantsBoardThisAnswer`, so setting the flag first left every
         // Explain/Teach stream unable to open a board.
         endBoard()
-        wantsBoardThisAnswer = wantsBoard || isTeaching
+        wantsBoardThisAnswer = boardWanted
 
         if Self.looksLikeVisualQuestion(prompt),
            !includeImage || !brain.leavesTheMachine {
             visionNudge = "Diagrams need a cloud model with “Send the screenshot” on — switch from the badge"
         }
 
+        let historySnapshot = Array(turns.dropLast())
+        let memoriesSnapshot = ContextRetriever.promptLines(for: related)
+        let tasksSnapshot = taskLines()
+        let pageSnapshot = pageStructure
+        let observationSnapshot = observation
+        let fileSnapshot = editableFile.context
+        let mcpOn = AppSettings.mcpEnabled
+        let mcpLaunch = AppSettings.mcpLaunchTokens
+        mcpStatusHint = nil
+
+        let generation = UUID()
+        answerGeneration = generation
         answerTask = Task {
+            // Every await below is a point where the panel may have been
+            // dismissed or a newer question asked. A superseded answer must not
+            // write phase, open the board, or start speaking afterwards.
+            @MainActor func superseded() -> Bool {
+                Task.isCancelled || self.answerGeneration != generation
+            }
+            @MainActor func abandon() {
+                guard self.answerGeneration == generation else { return }
+                self.clearTeachingSpeechOverride()
+                self.answerLoadProgress = 0
+                self.sketchRepairHint = nil
+                if self.phase == .thinking || self.phase == .answering { self.phase = .idle }
+            }
+
+            var toolNotes: [String] = []
+            if mcpOn {
+                let enrichment = await MCPClient.enrich(question: prompt,
+                                                        launch: mcpLaunch,
+                                                        enabled: true)
+                guard !superseded() else { abandon(); return }
+                toolNotes = MCPClient.promptLines(for: enrichment.notes)
+                if let problem = enrichment.problem {
+                    mcpStatusHint = problem
+                }
+            }
+
+            let context = AskContext(
+                observation: observationSnapshot,
+                memories: memoriesSnapshot,
+                tasks: tasksSnapshot,
+                includeImage: includeImage,
+                history: historySnapshot,
+                editableFile: fileSnapshot,
+                isTeaching: teach,
+                isGuidedTeaching: guide,
+                wantsBoard: boardWanted,
+                teachingFocus: focus,
+                sessionMode: mode,
+                pageStructure: pageSnapshot,
+                problemTutor: problem,
+                toolNotes: toolNotes
+            )
+
             // Accumulated locally rather than in a property: the turn is the
             // one place an answer lives, and a second copy of it that has to be
             // kept in step is the sort of thing that silently drifts.
             var streamed = ""
+            // Hold the panel only for Teach / board walks — ordinary Ask streams
+            // again so every question does not feel like a blocked progress bar.
+            let holdUntilComplete = teach || boardWanted
+            isHoldingAnswer = holdUntilComplete
+            answerLoadProgress = 0.05
+            // A local model that has been unloaded takes many seconds to say
+            // anything, and an unexplained bar at its floor reads as a hang.
+            let firstTokenWatch = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, let self,
+                      self.answerGeneration == generation, self.phase == .thinking else { return }
+                self.modelLoadHint = brain.leavesTheMachine
+                    ? "Waiting for the first words…"
+                    : "Loading \(AppSettings.model) on this Mac — the first answer takes longest…"
+            }
+            defer {
+                firstTokenWatch.cancel()
+                if self.answerGeneration == generation {
+                    self.modelLoadHint = nil
+                    self.isHoldingAnswer = false
+                }
+            }
             do {
                 let stream = brain.answerStream(question: prompt, context: context)
                 for try await chunk in stream {
-                    if Task.isCancelled {
-                        clearTeachingSpeechOverride()
-                        return
+                    if superseded() { abandon(); return }
+                    if streamed.isEmpty {
+                        firstTokenWatch.cancel()
+                        modelLoadHint = nil
                     }
                     streamed += chunk
-                    recordAnswer(streamed, for: turnID)
                     if phase != .answering { phase = .answering }
-                    // Lesson first, then speech: follow-along advances by matching
-                    // the clause being heard against the lesson. Starting speech
-                    // before the lesson existed left every clause on the ordinary
-                    // path, which requires the Settings toggle — so Teach me
-                    // looked like follow-along being broken.
-                    if isTeaching { beginLesson(from: streamed) }
-                    if wantsBoardThisAnswer { refreshBoard(from: streamed) }
-                    speech.speakArriving(streamed)
+                    // The panel shows this bar for every answer, so it has to
+                    // move for every answer; one that only moved while held read
+                    // as frozen on a plain question.
+                    answerLoadProgress = min(0.92, 0.08 + Double(streamed.count) / 1_800)
+                    if !holdUntilComplete {
+                        recordAnswer(streamed, for: turnID)
+                        speech.speakArriving(streamed)
+                    }
                 }
-                guard !Task.isCancelled else {
-                    clearTeachingSpeechOverride()
-                    return
+                guard !superseded() else { abandon(); return }
+
+                answerLoadProgress = 1
+                var finalAnswer = streamed
+                if teach { beginLesson(from: finalAnswer) }
+
+                // Repair only when there is *no* board at all. A one-frame fence
+                // used to fail `storyboard` and cost a full second model call.
+                if teach, BoardScene.from(answer: finalAnswer) == nil {
+                    sketchRepairHint = "Sketch missing — drawing the storyboard…"
+                    answerLoadProgress = 0.55
+                    if let repaired = await self.repairTeachStoryboard(
+                        brain: brain,
+                        baseContext: context,
+                        answer: finalAnswer
+                    ) {
+                        guard !superseded() else { abandon(); return }
+                        finalAnswer = finalAnswer + "\n\n" + repaired
+                        beginLesson(from: finalAnswer)
+                    }
+                    guard !superseded() else { abandon(); return }
+                    sketchRepairHint = BoardScene.from(answer: finalAnswer) == nil
+                        ? "No sketch board — teaching from the steps only"
+                        : nil
                 }
 
-                if isTeaching { beginLesson(from: streamed) }
-                if wantsBoardThisAnswer { refreshBoard(from: streamed) }
-                speech.finish(streamed)
-                captureProposedEdit(from: streamed)
-                findPointerTarget(in: streamed)
+                recordAnswer(finalAnswer, for: turnID)
+                if wantsBoardThisAnswer || teach {
+                    explainSpeakable = SpeechPlayback.speakable(from: finalAnswer)
+                    explainHeardCharacters = 0
+                    refreshBoard(from: finalAnswer)
+                    // The answer is final, so a board that has not appeared is
+                    // not coming. Still reserving the beat for one hid the step
+                    // tips and left an empty screen under "Step 1 of 5".
+                    if boardScene == nil {
+                        wantsBoardThisAnswer = false
+                        if lesson != nil { showLessonStep() }
+                    }
+                }
+                if teach, lesson != nil {
+                    startTeachingPlayback()
+                } else {
+                    speech.finish(finalAnswer)
+                }
+                captureProposedEdit(from: finalAnswer)
+                findPointerTarget(in: finalAnswer)
                 lastTurnAt = Date()
                 phase = .idle
+                answerLoadProgress = 0
                 // Keep the override while a lesson is still on screen so a late
                 // clause can still advance it. Cleared when the lesson ends, or
                 // immediately when teaching produced only an ordinary answer.
                 if lesson == nil { clearTeachingSpeechOverride() }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !superseded() else { abandon(); return }
                 clearTeachingSpeechOverride()
-                phase = .failed(error.localizedDescription)
+                sketchRepairHint = nil
+                answerLoadProgress = 0
+                phase = .failed(Self.failureMessage(for: error))
             }
         }
     }
 
+    /// What a failed answer says, in words someone can act on.
+    ///
+    /// `URLError`'s own descriptions name the transport ("The network
+    /// connection was lost.") and cloud providers reach here without the
+    /// mapping `OllamaBrain` does, so the common cases are restated once.
+    static func failureMessage(for error: Error) -> String {
+        guard let urlError = error as? URLError else { return error.localizedDescription }
+        switch urlError.code {
+        case .timedOut:
+            return BrainError.timedOut.localizedDescription
+        case .networkConnectionLost:
+            return BrainError.connectionLost.localizedDescription
+        case .notConnectedToInternet, .cannotFindHost, .dnsLookupFailed:
+            return "No internet connection — switch to the local model, or try again once online."
+        default:
+            return error.localizedDescription
+        }
+    }
+
+    /// One board-only follow-up so Teach is not a code dump without a sketch.
+    private func repairTeachStoryboard(brain: Brain,
+                                       baseContext: AskContext,
+                                       answer: String) async -> String? {
+        let stepLines: [String] = {
+            if let lesson = Lesson.from(answer: answer) {
+                return lesson.steps.map(\.text)
+            }
+            for block in AnswerContent.blocks(in: answer) {
+                if case let .numbered(items) = block { return items }
+            }
+            return []
+        }()
+        guard stepLines.count >= 2 else { return nil }
+
+        var repairContext = baseContext
+        repairContext.isTeaching = true
+        repairContext.wantsBoard = true
+        repairContext.history = []
+        // Image already informed the first answer; the repair is steps → board.
+        repairContext.includeImage = false
+
+        let question = Prompt.boardRepairQuestion(steps: stepLines)
+        var collected = ""
+        do {
+            for try await chunk in brain.answerStream(question: question, context: repairContext) {
+                if Task.isCancelled { return nil }
+                collected += chunk
+                answerLoadProgress = min(0.9, 0.55 + Double(collected.count) / 2_400)
+            }
+        } catch {
+            return nil
+        }
+        guard BoardScene.storyboard(from: collected) != nil else { return nil }
+        // Keep only the fence so we do not paste a second prose lesson.
+        if let json = BoardScene.extractBoardJSON(from: collected) {
+            return "```board\n\(json)\n```"
+        }
+        return collected
+    }
+
     /// Session-only speech / follow-along forced by Teach me.
     private var followAlongThisAnswer = false
+
+    /// Teach / Guided is in flight for this answer (before or during the lesson).
+    var isPreparingLesson: Bool { followAlongThisAnswer }
 
     /// Session-only: Guided Teach warps the cursor to each step's box.
     private var guidedTeachThisAnswer = false
@@ -941,11 +1470,11 @@ final class CompanionViewModel {
     private weak var contextApp: NSRunningApplication?
 
     private func findPointerTarget(in answer: String) {
-        guard let observation, observation.primaryScreenFrame != nil else {
+        guard let observation else {
             pointerTarget = nil
             return
         }
-        pointerTarget = ScreenTextLocator.locate(named: answer, in: observation.primary.textRegions)
+        pointerTarget = observation.locatePointable(named: answer)?.match
     }
 
     /// Draws a box around what the answer named, and warps the pointer onto it
@@ -962,35 +1491,30 @@ final class CompanionViewModel {
         let answer = turns.last?.answer ?? ""
         guard !answer.isEmpty else { return }
 
+        let occlusionID = UUID()
         captureTask?.cancel()
         captureTask = Task { [weak self] in
             guard let self else { return }
 
             let context = resolveContextApp?() ?? contextApp
             let crop = observation?.isCropped == true ? observation?.primaryScreenFrame : nil
-            onPanelOcclusion?(true)
-            defer { onPanelOcclusion?(false) }
+            beginPanelOcclusion(for: occlusionID)
+            defer { endPanelOcclusion(for: occlusionID) }
 
             let ok = await performCapture(frontmostApp: context,
                                           preserveCropFrame: crop,
                                           preserveTeaching: true)
             guard ok, !Task.isCancelled else { return }
 
-            guard let match = locatePointer(in: answer),
-                  let frame = observation?.primaryScreenFrame
+            guard let hit = observation?.locatePointable(named: answer)
             else {
                 phase = .failed("That label isn’t on screen anymore — try Look again")
                 return
             }
 
-            pointerTarget = match
-            highlightPointer(match, in: frame)
+            pointerTarget = hit.match
+            highlightPointer(hit.match, in: hit.frame)
         }
-    }
-
-    private func locatePointer(in answer: String) -> ScreenTextLocator.Match? {
-        guard let observation, observation.primaryScreenFrame != nil else { return nil }
-        return ScreenTextLocator.locate(named: answer, in: observation.primary.textRegions)
     }
 
     private func highlightPointer(_ match: ScreenTextLocator.Match, in frame: CGRect) {
@@ -1008,13 +1532,16 @@ final class CompanionViewModel {
     /// what makes Show me and Guided Teach land on the control that was boxed.
     private func warpPointer(to point: CGPoint) {
         let app = contextApp
-        Task { [weak self] in
+        let generation = UUID()
+        warpGeneration = generation
+        warpTask?.cancel()
+        warpTask = Task { [weak self] in
             app?.activate(options: [.activateIgnoringOtherApps])
             // Longer than a single frame: Guided warps while Max still holds
             // key focus and a speaking synthesizer is starting, and 80ms was
             // often not enough for the context app to finish coming forward.
             try? await Task.sleep(for: .milliseconds(350))
-            guard self != nil else { return }
+            guard !Task.isCancelled, let self, self.warpGeneration == generation else { return }
             AXControlLocator.movePointer(to: point)
         }
     }
@@ -1050,13 +1577,10 @@ final class CompanionViewModel {
         }
 
         guard let observation,
-              let frame = observation.primaryScreenFrame,
-              let match = ScreenTextLocator.locate(named: clause,
-                                                   in: observation.primary.textRegions,
-                                                   requiringQuoted: true)
+              let hit = observation.locatePointable(named: clause, requiringQuoted: true)
         else { return }
 
-        onHighlight?(ScreenTextLocator.screenRect(for: match.boundingBox, in: frame), true)
+        onHighlight?(ScreenTextLocator.screenRect(for: hit.match.boundingBox, in: hit.frame), true)
     }
 
     // MARK: - Teaching
@@ -1082,14 +1606,37 @@ final class CompanionViewModel {
     /// and keeps yanking focus into the context app mid-answer.
     private var lastGuidedWarpStep: Int?
 
+    /// Steps that already got one OCR re-read after a miss. Without this a
+    /// tip-only beat would re-capture forever when the label simply is not
+    /// on screen (conceptual step, or empty editor).
+    private var anchorRetrySteps: Set<Int> = []
+
+    /// One-beat-at-a-time voice walk for Teach. Cancelled on Done, arrows, or quit.
+    private var teachingPlayback: Task<Void, Never>?
+
+    /// Brief hold after a spoken beat so the eye can land on the mark before
+    /// the next step — the classroom "point and pause" cue.
+    private static let teachingBeatPause: Duration = .milliseconds(180)
+
     // MARK: - Teaching board
 
     /// Drawn on Max's grid panel — invented diagrams, not OCR marks.
-    var onBoardScene: ((BoardScene, Int) -> Void)?
+    /// Scene, frame, and what Max says over that frame (paces the pen).
+    var onBoardScene: ((BoardScene, Int, String?) -> Void)?
     var onBoardEnded: (() -> Void)?
 
     private(set) var boardScene: BoardScene?
     private(set) var boardFrameIndex = 0
+
+    /// Frame and beat last sent to the board. Republishing restarts the pen,
+    /// so it happens when the beat changes and never on an incidental
+    /// `showLessonStep` — an anchor retry mid-sentence used to wipe the
+    /// drawing and start it again while Max was still talking about it.
+    private var publishedBoardBeat: (frame: Int, step: Int)?
+
+    /// Explain boards follow how far through the spoken answer the voice is.
+    private var explainSpeakable = ""
+    private var explainHeardCharacters = 0
 
     /// User closed the board from its own chrome.
     func closeBoard() {
@@ -1103,50 +1650,89 @@ final class CompanionViewModel {
               let scene = BoardScene.from(answer: answer)
         else { return }
 
+        let isNewScene = boardScene != scene
         boardScene = scene
         if lesson != nil {
             boardFrameIndex = scene.frameIndex(forLessonStep: lessonStep)
         } else {
             boardFrameIndex = scene.clampedFrameIndex(boardFrameIndex)
         }
-        publishBoard()
+        if isNewScene { publishedBoardBeat = nil }
+        publishBoardIfBeatChanged()
     }
 
-    private func publishBoard() {
+    /// Sends the current frame unless that exact beat is already being drawn.
+    private func publishBoardIfBeatChanged(force: Bool = false) {
         guard let boardScene else { return }
-        onBoardScene?(boardScene, boardFrameIndex)
+        let beat = (frame: boardFrameIndex, step: lesson == nil ? -1 : lessonStep)
+        if !force, let published = publishedBoardBeat,
+           published.frame == beat.frame, published.step == beat.step {
+            return
+        }
+        publishedBoardBeat = beat
+        onBoardScene?(boardScene, boardFrameIndex, boardNarration())
+    }
+
+    /// What Max says over the current frame: the lesson beat, or for Explain
+    /// the share of the spoken answer that falls on this frame.
+    private func boardNarration() -> String? {
+        if let lesson, lesson.steps.indices.contains(lessonStep) {
+            return lesson.steps[lessonStep].text
+        }
+        guard let boardScene, boardScene.frames.count > 0, !explainSpeakable.isEmpty else { return nil }
+        let count = boardScene.frames.count
+        let length = explainSpeakable.count
+        let start = length * boardFrameIndex / count
+        let end = length * (boardFrameIndex + 1) / count
+        let text = explainSpeakable
+        let lower = text.index(text.startIndex, offsetBy: start)
+        let upper = text.index(text.startIndex, offsetBy: max(start, end))
+        return String(text[lower..<upper])
     }
 
     private func syncBoardToLessonStep() {
         guard let boardScene else { return }
-        let index = boardScene.frameIndex(forLessonStep: lessonStep)
-        guard index != boardFrameIndex else {
-            publishBoard()
-            return
-        }
-        boardFrameIndex = index
-        publishBoard()
+        boardFrameIndex = boardScene.frameIndex(forLessonStep: lessonStep)
+        publishBoardIfBeatChanged()
     }
 
-    /// Explain (no lesson): advance one board frame per spoken clause.
+    /// A short head-start so the pen is already moving when the voice begins.
+    /// The pen is paced to the narration, so waiting for it to finish would
+    /// put the whole beat's silence in front of the sentence.
+    private func waitForSketchReveal() async {
+        guard boardScene != nil else { return }
+        try? await Task.sleep(for: .milliseconds(Int(SketchRevealTiming.voiceLeadSeconds * 1_000)))
+    }
+
+    /// Explain (no lesson): the frame follows how far through the spoken
+    /// answer the voice has got. Advancing one frame per clause skipped the
+    /// first frame the moment speech began and ran out of frames long before
+    /// a long answer ended.
     private func advanceExplainBoard(spokenIn clause: String?) {
         guard wantsBoardThisAnswer,
               lesson == nil,
               let scene = boardScene,
               scene.frames.count > 1,
-              clause != nil
+              let clause,
+              !explainSpeakable.isEmpty
         else { return }
 
-        let next = boardFrameIndex + 1
-        guard next < scene.frames.count else { return }
-        boardFrameIndex = next
-        publishBoard()
+        let heardBefore = explainHeardCharacters
+        explainHeardCharacters += clause.count
+        let fraction = Double(heardBefore) / Double(max(explainSpeakable.count, 1))
+        let target = min(scene.frames.count - 1, Int(fraction * Double(scene.frames.count)))
+        guard target > boardFrameIndex else { return }
+        boardFrameIndex = target
+        publishBoardIfBeatChanged()
     }
 
     private func endBoard() {
         let hadBoard = boardScene != nil
         boardScene = nil
         boardFrameIndex = 0
+        publishedBoardBeat = nil
+        explainSpeakable = ""
+        explainHeardCharacters = 0
         wantsBoardThisAnswer = false
         if hadBoard { onBoardEnded?() }
     }
@@ -1173,7 +1759,7 @@ final class CompanionViewModel {
         guard !lessonSuppressedForAnswer else { return }
         guard let parsed = Lesson.from(answer: answer),
               let observation,
-              let frame = observation.primaryScreenFrame
+              !observation.pointingSurfaces.isEmpty
         else { return }
 
         // Called again as the stream grows: keep the current step when more
@@ -1182,6 +1768,7 @@ final class CompanionViewModel {
         lesson = parsed
         if starting {
             lessonStep = 0
+            anchorRetrySteps = []
             // Lesson means working underneath the panel — auto-pin so a click
             // into the editor does not tear the boxes down (USABILITY §3).
             // Set the flag *after* toggling pin: `isPinned.didSet` clears it so
@@ -1193,13 +1780,19 @@ final class CompanionViewModel {
         } else {
             lessonStep = min(lessonStep, parsed.steps.count - 1)
         }
-        resolveLessonMarks(in: observation.primary.textRegions, on: frame)
+        resolveLessonMarks(across: observation.pointingSurfaces)
         showLessonStep()
     }
 
     func endLesson() {
         lessonExpiry?.cancel()
         lessonExpiry = nil
+        teachingPlayback?.cancel()
+        teachingPlayback = nil
+        speech.stop()
+        // Guided leaves a Standalone highlight up `untilHidden`; without this
+        // the amber box outlived Done / Quit and looked like the lesson stuck.
+        onHighlightEnded?()
         // While this answer is still arriving, refuse to start the lesson again
         // from later chunks — otherwise Done is undone mid-stream. Look again
         // mid-stream sets the flag in `performCapture` before phase becomes
@@ -1217,6 +1810,7 @@ final class CompanionViewModel {
         lessonStep = 0
         lessonMarks = []
         lastGuidedWarpStep = nil
+        anchorRetrySteps = []
         pinnedForLesson = false
         clearTeachingSpeechOverride()
         if shouldUnpin {
@@ -1226,14 +1820,114 @@ final class CompanionViewModel {
         endBoard()
     }
 
+    /// Walks the lesson the way a tutor does: show the mark, say that beat,
+    /// pause, then advance. The panel's current step stays in lockstep.
+    private func startTeachingPlayback() {
+        teachingPlayback?.cancel()
+        speech.stop()
+        teachingPlayback = Task { [weak self] in
+            guard let self else { return }
+            guard let steps = self.lesson?.steps, !steps.isEmpty else { return }
+
+            for index in steps.indices {
+                guard !Task.isCancelled, self.lesson != nil else { return }
+                self.lessonStep = index
+                self.lastGuidedWarpStep = nil
+                // Later steps often miss on the first grab (editor empty, pane
+                // scrolled). One re-read before the tip-only fallback is what
+                // made step 1 box and step 3 only show a floating chip.
+                if self.lessonMarks.indices.contains(index),
+                   self.lessonMarks[index].isEmpty,
+                   !steps[index].anchors.isEmpty {
+                    await self.refreshLessonAnchors()
+                }
+                self.showLessonStep()
+                // Pen finishes the cut before the voice — otherwise Max narrates
+                // over a blank board and the "video" feel collapses.
+                await self.waitForSketchReveal()
+                guard !Task.isCancelled, self.lesson != nil else { return }
+                await self.speech.speakAndAwait(steps[index].text)
+                guard !Task.isCancelled, self.lesson != nil else { return }
+                try? await Task.sleep(for: Self.teachingBeatPause)
+            }
+        }
+    }
+
     /// Guide cursor for the rest of this lesson (and remember for the next Teach).
     func setGuideCursorWhileTeaching(_ on: Bool) {
         AppSettings.guideCursorWhileTeaching = on
         guidedTeachThisAnswer = on
-        if on { showLessonStep() }
+        if on {
+            prepareTeachingPointerAccess()
+            // Clearing lets the current step warp again after Guide was toggled
+            // off — otherwise `lastGuidedWarpStep == lessonStep` blocked it.
+            lastGuidedWarpStep = nil
+            showLessonStep()
+        }
     }
 
     var guideCursorWhileTeaching: Bool { guidedTeachThisAnswer }
+
+    /// Why the cursor did not move — for the lesson bar, not a silent no-op.
+    var teachingPointerBlocker: String? {
+        guard guidedTeachThisAnswer, lesson != nil else { return nil }
+        if !AppSettings.accessibilityExtrasEnabled {
+            return "Pointer teaching is off — tap Enable below."
+        }
+        if !TrustAccessibility.isTrusted {
+            return "Allow Max under System Settings → Privacy & Security → Accessibility."
+        }
+        return nil
+    }
+
+    /// Turns on extras, asks macOS for the Accessibility prompt, and opens
+    /// Settings when trust is still missing. Called from Teach and the banner.
+    func enableTeachingPointerAccess() {
+        AppSettings.guideCursorWhileTeaching = true
+        guidedTeachThisAnswer = true
+        prepareTeachingPointerAccess()
+        lastGuidedWarpStep = nil
+        if lesson != nil { showLessonStep() }
+    }
+
+    /// Enables the Accessibility-extras flag and requests the TCC prompt.
+    ///
+    /// Broad reason the cursor "never moves": warping needs
+    /// `accessibilityExtrasEnabled` *and* `AXIsProcessTrusted()`. Both were
+    /// off by default, so Teach drew boxes and looked finished while the
+    /// pointer stayed put. Asking here — when the user pressed Teach — is the
+    /// self-heal.
+    ///
+    /// - Parameter openSettingsIfNeeded: when false, only registers the TCC
+    ///   request (so Max appears in the Accessibility list). Teach defers the
+    ///   System Settings hand-off until the capture panel is visible again.
+    private func prepareTeachingPointerAccess(openSettingsIfNeeded: Bool = true) {
+        AppSettings.guideCursorWhileTeaching = true
+        if !AppSettings.accessibilityExtrasEnabled {
+            TrustAccessibility.setExtrasEnabled(true)
+        } else if !TrustAccessibility.isTrusted {
+            _ = TrustAccessibility.request()
+        }
+        // Prompt alone does not wait for the toggle in System Settings — open
+        // the pane whenever trust is still missing so Enable is not a dead end.
+        if openSettingsIfNeeded, !TrustAccessibility.isTrusted {
+            TrustAccessibility.openSystemSettings()
+        }
+    }
+
+    private var hasOfferedAccessibilityGrant = false
+
+    /// Opens the Accessibility list from Teach once per launch, not per press.
+    ///
+    /// Every press used to bring System Settings forward while the grant was
+    /// missing, so a lesson started over someone's work by covering it. Once
+    /// is the offer; after that the lesson teaches with boxes alone and the
+    /// switch stays in Settings.
+    private func offerAccessibilityGrantOnce() {
+        guard !TrustAccessibility.isTrusted, !hasOfferedAccessibilityGrant else { return }
+        hasOfferedAccessibilityGrant = true
+        TrustAccessibility.openSystemSettings()
+    }
 
     /// Moves to a step because the user pressed a button.
     ///
@@ -1251,13 +1945,28 @@ final class CompanionViewModel {
         let target = max(0, min(lesson.steps.count - 1, lessonStep + offset))
         guard target != lessonStep else { return }
 
+        // Manual advance takes over from the automatic walk — otherwise the
+        // playback task would yank the step back a moment later.
+        teachingPlayback?.cancel()
+        teachingPlayback = nil
+        speech.stop()
+
         lessonStep = target
+        lastGuidedWarpStep = nil
         showLessonStep()
 
-        Task {
-            await refreshLessonAnchors()
-            guard self.lesson != nil else { return }
-            showLessonStep()
+        let beat = lesson.steps[target].text
+        // One at a time: rapid arrow presses used to stack re-captures and
+        // speak several beats over one another.
+        teachingPlayback = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshLessonAnchors()
+            guard !Task.isCancelled, self.lesson != nil else { return }
+            self.showLessonStep()
+            // Speak only this beat so arrows stay in sync with the voice.
+            if self.lessonAdvancesByVoice {
+                await self.speech.speakAndAwait(beat)
+            }
         }
     }
 
@@ -1267,7 +1976,7 @@ final class CompanionViewModel {
         let target = max(0, min(scene.frames.count - 1, boardFrameIndex + offset))
         guard target != boardFrameIndex else { return }
         boardFrameIndex = target
-        publishBoard()
+        publishBoardIfBeatChanged()
     }
 
     var canAdvanceBoardFrame: Bool {
@@ -1315,7 +2024,12 @@ final class CompanionViewModel {
     }
 
     /// Moves to whichever step the clause now being read aloud belongs to.
+    ///
+    /// Only used when Teach is *not* driving `teachingPlayback` (e.g. Speak
+    /// answers on a leftover monologue). Beat-gated playback already sets the
+    /// step before each utterance, so matching here would race it.
     private func advanceLesson(spokenIn clause: String?) {
+        guard teachingPlayback == nil else { return }
         guard let lesson, let clause else { return }
         guard let target = lesson.step(spokenIn: clause, notBefore: lessonStep),
               target != lessonStep
@@ -1335,12 +2049,39 @@ final class CompanionViewModel {
         }
     }
 
-    private func resolveLessonMarks(in regions: [TextRegion], on frame: CGRect) {
-        guard let lesson else { return }
-        lessonFrame = frame
+    /// Resolves every step's quoted labels across every capture surface.
+    ///
+    /// Anchors are resolved in the order Max named them, not display-major
+    /// order — otherwise an arrow `"A" → "B"` with A on monitor 2 and B on
+    /// monitor 1 drew backwards and Guided warped to the wrong box.
+    ///
+    /// OCR first; Accessibility tree as a second pass for the same quote when
+    /// Vision misses (browsers / thin editors). AX was already used for Guided
+    /// warps but never fed the overlay — so the tip chip appeared with no box.
+    private func resolveLessonMarks(across surfaces: [(regions: [TextRegion], frame: CGRect)]) {
+        guard let lesson, let first = surfaces.first else { return }
+
         lessonMarks = lesson.steps.map { step in
-            ScreenTextLocator.locate(labels: step.anchors, in: regions)
-                .map { ScreenTextLocator.screenRect(for: $0.boundingBox, in: frame) }
+            let fromOCR: [CGRect] = step.anchors.compactMap { anchor in
+                for surface in surfaces {
+                    if let hit = ScreenTextLocator.locate(label: anchor, in: surface.regions) {
+                        return ScreenTextLocator.screenRect(for: hit.boundingBox, in: surface.frame)
+                    }
+                }
+                return nil
+            }
+            if !fromOCR.isEmpty { return fromOCR }
+            guard TrustAccessibility.extrasAreActive else { return [] }
+            return step.anchors.compactMap { AXControlLocator.locate(label: $0)?.frame }
+        }
+
+        let allMarks = lessonMarks.flatMap { $0 }
+        if allMarks.isEmpty {
+            lessonFrame = first.frame
+        } else {
+            // Only the displays that actually contributed a box — unioning every
+            // capture surface made the overlay span empty monitors.
+            lessonFrame = allMarks.reduce(CGRect.null) { $0.union($1) }
         }
     }
 
@@ -1363,11 +2104,16 @@ final class CompanionViewModel {
 
         let step = lesson.steps[lessonStep]
         let current = lessonMarks[lessonStep]
+        // Clicky points at OCR; Golpo keeps concept tips on the whiteboard.
+        // Suppress floating chips whenever a board owns (or will own) the beat —
+        // waiting for the fence to parse used to drop a black pill on Max.
+        let boardOwnsBeat = current.isEmpty && (boardScene != nil || wantsBoardThisAnswer)
+        let caption = (current.isEmpty && !boardOwnsBeat) ? step.cue : ""
         onLessonMarks?(LessonMarks(
             current: current,
-            covered: lessonMarks.prefix(lessonStep).flatMap { $0 },
+            covered: [],
             number: lessonStep + 1,
-            caption: step.caption,
+            caption: caption,
             // An arrow needs somewhere to go: a step whose second label Vision
             // could not find would otherwise draw one from a box to itself.
             isConnected: step.isConnected && current.count > 1,
@@ -1376,18 +2122,47 @@ final class CompanionViewModel {
 
         syncBoardToLessonStep()
 
-        // Guided Teach: the user asked the cursor to follow. Warp to the first
-        // box of this step when extras are on; without a grant, boxes alone
-        // still teach. Never clicks — the user does that. Only when the step
-        // *changes* — beginLesson is called per streamed chunk for the same
-        // step, and warping every time fights the user for the pointer.
+        // One silent re-read when a quoted step drew nothing — arrows already
+        // do this; voice advance used to skip it and strand later beats on tips.
+        if current.isEmpty,
+           !step.anchors.isEmpty,
+           !anchorRetrySteps.contains(lessonStep),
+           observation?.isCropped != true {
+            anchorRetrySteps.insert(lessonStep)
+            Task { [weak self] in
+                guard let self else { return }
+                await self.refreshLessonAnchors()
+                guard self.lesson != nil else { return }
+                self.showLessonStep()
+            }
+        }
+
+        // Guided Teach: warp to the first box of this step. Never clicks —
+        // the user does that. Only when the step *changes* — beginLesson is
+        // called per streamed chunk for the same step, and warping every time
+        // fights the user for the pointer. Also wait until the beat walk (or a
+        // manual arrow) owns the step — warping while the answer is still
+        // streaming yanked the cursor before the voice had anything to say.
         guard guidedTeachThisAnswer else { return }
-        guard let rect = current.first else { return }
         guard lastGuidedWarpStep != lessonStep else { return }
         guard TrustAccessibility.extrasAreActive else { return }
+        guard teachingPlayback != nil
+                || phase == .idle
+                || phase == .reading
+        else { return }
 
-        lastGuidedWarpStep = lessonStep
-        warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
+        if let rect = current.first {
+            lastGuidedWarpStep = lessonStep
+            // Also draw the amber Show-me box so the pointer and the mark agree.
+            onHighlight?(rect, true)
+            warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
+        }
+    }
+
+    /// Whether the current step named something printable (vs a pure concept beat).
+    var currentLessonStepQuotesScreen: Bool {
+        guard let lesson, lesson.steps.indices.contains(lessonStep) else { return false }
+        return !lesson.steps[lessonStep].anchors.isEmpty
     }
 
     /// Whether Guided is active but cannot move the pointer yet.
@@ -1420,13 +2195,20 @@ final class CompanionViewModel {
         guard observation?.isCropped != true else { return }
 
         let context = resolveContextApp?() ?? contextApp
-        guard let fresh = try? await ScreenCapture.captureAllDisplays(frontmostApp: context),
-              let frame = fresh.primaryScreenFrame
+        guard var fresh = try? await ScreenCapture.captureAllDisplays(frontmostApp: context)
         else { return }
 
-        let read = await Self.readText(in: fresh.primary.image)
-        guard lesson != nil else { return }
-        resolveLessonMarks(in: read.regions, on: frame)
+        let vocab = ocrVocabulary()
+        let primaryRead = await Self.readText(in: fresh.primary.image, customWords: vocab)
+        fresh.primary.recognizedText = primaryRead.text
+        fresh.primary.textRegions = primaryRead.regions
+        for index in fresh.others.indices {
+            let other = await Self.readText(in: fresh.others[index].image, customWords: vocab)
+            fresh.others[index].recognizedText = other.text
+            fresh.others[index].textRegions = other.regions
+        }
+        guard lesson != nil, !fresh.pointingSurfaces.isEmpty else { return }
+        resolveLessonMarks(across: fresh.pointingSurfaces)
     }
 
     private func recordAnswer(_ text: String, for turnID: UUID) {
@@ -1480,6 +2262,12 @@ final class CompanionViewModel {
         }
 
         let (intent, topics) = raw.splittingHashtags()
+        let prior = ScreenChange.priorKeep(for: observation, among: recentContexts())
+        let change = prior.flatMap {
+            ScreenChange.summary(previous: $0.recognizedText, current: observation.recognizedText)
+        }
+        lastSaveChangeLine = change?.line
+
         let record = SavedContext(
             intent: intent,
             recognizedText: observation.recognizedText,
@@ -1503,17 +2291,25 @@ final class CompanionViewModel {
         }
 
         let tagSuffix = topics.isEmpty ? "" : " · \(topics.map { "#\($0)" }.joined(separator: " "))"
+        let changeSuffix = change.map { " · \($0.line)" } ?? ""
         let destination = currentProject.map { "Saved to \($0.name)" } ?? "Saved"
         question = ""
-        phase = .saved("\(destination)\(tagSuffix)")
-        addSummary(to: record)
+        phase = .saved("\(destination)\(tagSuffix)\(changeSuffix)")
+        addSummary(to: record, changePreface: change?.line)
 
         if let reminder {
-            scheduleReminder(for: record, at: reminder, destination: destination, tagSuffix: tagSuffix)
-            // Handed to Apple now rather than on the next summon: this is
-            // usually said just before walking away from the Mac, which is the
-            // one case where there is no next summon.
-            mirrorTasksToAppleReminders(announceSuccess: true)
+            // In this order, not side by side. Handing a reminder to Apple
+            // cancels Max's own notification for it, and a cancel that lands
+            // before the notification has been added cancels nothing — so both
+            // alerted, on the Mac, for the one thing asked about once.
+            Task {
+                await scheduleReminder(for: record, at: reminder,
+                                       destination: destination, tagSuffix: tagSuffix)
+                // Handed to Apple now rather than on the next summon: this is
+                // usually said just before walking away from the Mac, which is
+                // the one case where there is no next summon.
+                mirrorTasksToAppleReminders(announceSuccess: true)
+            }
         }
     }
 
@@ -1570,7 +2366,7 @@ final class CompanionViewModel {
     /// same second with the same words.
     private func standDown(forMirrored taskIDs: [String]) {
         for identifier in ProjectExport.reminderIdentifiers(inTaskIDs: taskIDs) {
-            Reminders.cancel(id: identifier)
+            Reminders.standDown(id: identifier)
         }
     }
 
@@ -1580,26 +2376,34 @@ final class CompanionViewModel {
     private func scheduleReminder(for record: SavedContext,
                                   at date: Date,
                                   destination: String,
-                                  tagSuffix: String) {
+                                  tagSuffix: String) async {
         let id = record.reminderIdentifier
         let intent = record.intent
         let sourceApp = record.sourceApp
 
-        Task {
-            let scheduled = await Reminders.schedule(id: id,
-                                                     at: date,
-                                                     intent: intent,
-                                                     sourceApp: sourceApp)
-            guard case .saved = phase else { return }
-
-            if scheduled {
-                phase = .saved("\(destination) · reminder \(Self.reminderFormat(date))\(tagSuffix)")
-            } else {
-                record.remindAt = nil
-                try? modelContext.save()
-                phase = .saved("Saved, but notifications are off in System Settings.")
-            }
+        let scheduled = await Reminders.schedule(id: id,
+                                                 at: date,
+                                                 intent: intent,
+                                                 sourceApp: sourceApp)
+        if !scheduled {
+            // Independent of what the panel shows: the permission prompt
+            // can outlast the saved confirmation, and a reminder kept on a
+            // refused grant is one that silently never fires.
+            record.remindAt = nil
+            try? modelContext.save()
         }
+
+        switch phase {
+        case .saved:
+            break
+        case .idle where !scheduled:
+            break
+        default:
+            return
+        }
+        phase = scheduled
+            ? .saved("\(destination) · reminder \(Self.reminderFormat(date))\(tagSuffix)")
+            : .saved("Saved, but notifications are off in System Settings.")
     }
 
     /// "tomorrow at 9:00 AM" reads better than a bare timestamp for something a
@@ -1700,21 +2504,25 @@ final class CompanionViewModel {
     }
 
     /// Fills in the model's own description in the background so saving stays instant.
-    private func addSummary(to record: SavedContext) {
+    private func addSummary(to record: SavedContext, changePreface: String? = nil) {
         let brain = localBrain()
         let intent = record.intent
         let screenText = record.recognizedText
 
         Task {
-            guard let summary = try? await brain.summarize(intent: intent, screenText: screenText),
-                  !summary.isEmpty
-            else {
-                // Still worth a vector from the user's own words alone.
-                await addEmbedding(to: record)
-                return
+            let gloss = (try? await brain.summarize(intent: intent, screenText: screenText))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let pieces = [changePreface, gloss].compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
             }
-            record.aiSummary = summary
-            try? modelContext.save()
+            if !pieces.isEmpty {
+                // Change line is facts from OCR; gloss is labelled in the UI as
+                // inference. Keeping both in aiSummary is fine — the library
+                // already frames that field as the model's reading.
+                record.aiSummary = pieces.joined(separator: " · ")
+                try? modelContext.save()
+            }
             // Deliberately after the summary lands, since the summary is part
             // of what gets embedded. Embedding first would mean vectoring a
             // save without the model's description of what was on screen.
@@ -1776,9 +2584,15 @@ final class CompanionViewModel {
     /// never touched the app they were asking about.
     func endSession() {
         captureTask?.cancel()
+        regionTask?.cancel()
+        regionSelector.cancel()
+        warpTask?.cancel()
         answerTask?.cancel()
+        answerGeneration = UUID()
+        answerLoadProgress = 0
+        sketchRepairHint = nil
         speech.stop()
-        if isListening {
+        if isListening || dictationStartInFlight {
             dictation.stop()
             endListening()
         }
@@ -1805,7 +2619,9 @@ final class CompanionViewModel {
         // between questions about the same file is the normal way to use this
         // and re-picking it every time through a modal would be absurd.
         observation = nil
+        pageStructure = nil
         related = []
+        mcpStatusHint = nil
         phase = .idle
         contextLabel = "Nothing captured yet"
         reminderSuggestion = nil
@@ -1910,5 +2726,92 @@ final class CompanionViewModel {
         )
         descriptor.fetchLimit = 300
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - Continuity actions (project brief, standup, clipboard, lesson)
+
+    /// Reads the pasteboard when the field is empty so a chip can offer it.
+    func refreshClipboardOffer() {
+        guard question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            clipboardOffer = nil
+            return
+        }
+        let pasted = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pasted, pasted.count >= 4, pasted.count <= 2_000 else {
+            clipboardOffer = nil
+            return
+        }
+        clipboardOffer = pasted
+    }
+
+    /// Puts a prior keep's intent into the field so the user can ask about it.
+    func askAboutRelated(_ match: RetrievalMatch) {
+        question = "About what I kept — \"\(match.context.intent)\": "
+        refreshClipboardOffer()
+    }
+
+    /// Uses clipboard contents as the question (or appends if the field is empty).
+    func askAboutClipboard() {
+        guard let offer = clipboardOffer else { return }
+        question = offer
+        clipboardOffer = nil
+        submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false, wantsBoard: false)
+    }
+
+    /// Drafts a project brief from the user's own intents and open tasks.
+    func askProjectBrief() {
+        guard let project = currentProject else {
+            phase = .failed("Pick a project first — the brief is built from what you kept in it.")
+            return
+        }
+        let contexts = project.contexts.sorted { $0.createdAt > $1.createdAt }
+        let intents = contexts.map(\.intent)
+        let tasks = linkedWork.todos(withIDs: project.linkedTodoIDs).filter { !$0.isDone }.map(\.title)
+        let due = contexts.filter {
+            $0.hasReminderDue(within: 48 * 60 * 60) || $0.hasOverdueReminder
+        }.map(\.intent)
+
+        guard let prompt = ProjectBrief.askPrompt(projectName: project.name,
+                                                  intents: intents,
+                                                  openTaskTitles: tasks,
+                                                  dueSoonIntents: due) else {
+            phase = .failed("Nothing in \(project.name) yet to brief on.")
+            return
+        }
+        question = prompt
+        submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false, wantsBoard: false)
+    }
+
+    /// Standup / meeting prep from tasks, due reminders, and recent keeps.
+    func askStandupPrep() {
+        let contexts = recentContexts()
+        let due = contexts.filter {
+            $0.hasReminderDue(within: 48 * 60 * 60) || $0.hasOverdueReminder
+        }.map(\.intent)
+        let recent = contexts.prefix(8).map(\.intent)
+        let tasks = linkedWork.openTodos.prefix(10).map(\.title)
+
+        question = StandupPrep.askPrompt(projectName: currentProject?.name,
+                                         openTaskTitles: Array(tasks),
+                                         dueSoonIntents: due,
+                                         recentKeepIntents: Array(recent))
+        submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false, wantsBoard: false)
+    }
+
+    /// Copies the active lesson to the pasteboard as Markdown.
+    @discardableResult
+    func exportLessonMarkdown() -> Bool {
+        guard let lesson else { return false }
+        let title: String = {
+            if let window = observation?.windowTitle, !window.isEmpty { return window }
+            if let app = observation?.appName, !app.isEmpty { return app }
+            return "Lesson"
+        }()
+        let markdown = lesson.markdown(title: title)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(markdown, forType: .string)
+        phase = .saved("Lesson copied as Markdown")
+        return true
     }
 }

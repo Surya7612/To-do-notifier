@@ -10,6 +10,9 @@ struct CapturedDisplay {
     var recognizedText: String = ""
     /// Where each word sat, kept so an answer can point at what it names.
     var textRegions: [TextRegion] = []
+    /// Global AppKit frame of this display, so a box on a second monitor
+    /// maps onto that screen rather than the focused one.
+    var screenFrame: CGRect? = nil
 }
 
 /// Everything captured on one summon, plus the context we know about it.
@@ -61,18 +64,73 @@ struct ScreenObservation {
         }
     }
 
+    /// Every display that has both OCR boxes and a known screen frame — what
+    /// Show me / Teach / follow-along search when the focused monitor is empty.
+    var pointingSurfaces: [(regions: [TextRegion], frame: CGRect)] {
+        var surfaces: [(regions: [TextRegion], frame: CGRect)] = []
+        if let frame = primaryScreenFrame {
+            surfaces.append((primary.textRegions, frame))
+        }
+        for other in others {
+            guard let frame = other.screenFrame, !other.textRegions.isEmpty else { continue }
+            surfaces.append((other.textRegions, frame))
+        }
+        return surfaces
+    }
+
+    /// Best OCR match for a named control across every captured display.
+    ///
+    /// Scores every surface rather than taking the first hit: a weak match on
+    /// the focused display used to beat a quoted label on a second monitor.
+    func locatePointable(named answer: String,
+                         requiringQuoted: Bool = false) -> (match: ScreenTextLocator.Match, frame: CGRect)? {
+        var best: (match: ScreenTextLocator.Match, frame: CGRect, score: Int)?
+        for surface in pointingSurfaces {
+            guard let match = ScreenTextLocator.locate(named: answer,
+                                                       in: surface.regions,
+                                                       requiringQuoted: requiringQuoted)
+            else { continue }
+            let quoted = answer.localizedCaseInsensitiveContains("\"\(match.text)\"")
+            let score = match.text.count + (quoted ? 100 : 0)
+            if score > (best?.score ?? -1) {
+                best = (match, surface.frame, score)
+            }
+        }
+        return best.map { ($0.match, $0.frame) }
+    }
+
     /// Narrows to a region the user dragged out, given in global screen
     /// coordinates on `screen`.
     ///
     /// Other displays are dropped: once someone has pointed at a specific
     /// rectangle, text from a different monitor is noise rather than context.
     func cropped(to selection: CGRect, on screen: NSScreen) -> ScreenObservation? {
-        // The area the current image covers, which after an earlier crop is the
-        // previous selection rather than the display. Measuring a second
-        // selection against the whole screen scaled it by the wrong factor and
-        // offset it by the first crop's origin, so re-selecting a region either
-        // cropped somewhere else entirely or failed as "too small to read".
-        cropped(to: selection, inDisplayFrame: primaryScreenFrame ?? screen.frame)
+        // A second selection against an existing crop is measured against that
+        // crop's frame, not the whole display — otherwise the scale and origin
+        // are wrong and re-selecting fails as "too small to read".
+        if isCropped {
+            return cropped(to: selection, inDisplayFrame: primaryScreenFrame ?? screen.frame)
+        }
+
+        // The overlay sits on the mouse screen; the summon's primary may be a
+        // different monitor. Crop the display that actually contains the
+        // selection, not whichever one happened to be focused.
+        let center = CGPoint(x: selection.midX, y: selection.midY)
+        if let frame = primary.screenFrame ?? primaryScreenFrame,
+           frame.contains(center) || frame.intersects(selection) {
+            return cropped(to: selection, inDisplayFrame: frame)
+        }
+        for other in others {
+            guard let frame = other.screenFrame,
+                  frame.contains(center) || frame.intersects(selection)
+            else { continue }
+            var promoted = self
+            promoted.primary = other
+            promoted.others = []
+            promoted.primaryScreenFrame = frame
+            return promoted.cropped(to: selection, inDisplayFrame: frame)
+        }
+        return cropped(to: selection, inDisplayFrame: primaryScreenFrame ?? screen.frame)
     }
 
     /// The coordinate arithmetic, split out from `NSScreen` because that class
@@ -100,7 +158,7 @@ struct ScreenObservation {
         else { return nil }
 
         var narrowed = self
-        narrowed.primary = CapturedDisplay(image: cut, index: primary.index)
+        narrowed.primary = CapturedDisplay(image: cut, index: primary.index, screenFrame: selection)
         narrowed.others = []
         narrowed.isCropped = true
         // The selection, not the display: text boxes from the re-read of this
@@ -187,17 +245,24 @@ enum ScreenCapture {
 
         guard let primaryImage = captured[0] else { throw ScreenCaptureError.noDisplay }
 
-        let others = ordered.indices.dropFirst().compactMap { offset in
-            captured[offset].map { CapturedDisplay(image: $0, index: offset + 1) }
+        let primaryFrame = nsScreen(for: focused)?.frame
+        var primary = CapturedDisplay(image: primaryImage, index: 1)
+        primary.screenFrame = primaryFrame
+
+        let others = ordered.indices.dropFirst().compactMap { offset -> CapturedDisplay? in
+            guard let image = captured[offset] else { return nil }
+            var display = CapturedDisplay(image: image, index: offset + 1)
+            display.screenFrame = nsScreen(for: ordered[offset])?.frame
+            return display
         }
 
         var observation = ScreenObservation(
-            primary: CapturedDisplay(image: primaryImage, index: 1),
+            primary: primary,
             others: others,
             appName: frontmostApp?.localizedName,
             windowTitle: frontWindowTitle(in: content, for: frontmostApp)
         )
-        observation.primaryScreenFrame = nsScreen(for: focused)?.frame
+        observation.primaryScreenFrame = primaryFrame
         return observation
     }
 
@@ -232,6 +297,14 @@ enum ScreenCapture {
         config.height = Int(Double(display.height) * scale)
         config.showsCursor = false
         config.captureResolution = .best
+        // Keep the pixel grid 1:1 with the display — downscaling here would
+        // blur the small UI chrome Teach and Show me need to read.
+        config.scalesToFit = false
+        config.capturesAudio = false
+        // Drop window drop-shadows so OCR does not treat soft grey fringes as
+        // glyphs next to real labels.
+        config.ignoreShadowsDisplay = true
+        config.ignoreShadowsSingleWindow = true
 
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
     }

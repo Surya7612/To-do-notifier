@@ -1621,10 +1621,8 @@ need. Moving the user's cursor (Phase 10) is rejected outright. The focus sessio
 (Phase 3) belongs to the Electron app and stays there. Merging the two apps was
 measured and rejected; see §9 and the note in Phase 7.
 
-**The real next step is not a feature.** Distribution is the binding constraint:
-`scripts/release-companion.sh` builds a DMG, but without the paid Apple Developer
-Program there is no Developer ID signing, no notarization, and no Sparkle
-updates, so every downloader must right-click → Open to get past Gatekeeper. That
-is the thing standing between this working well for one person and being usable
-by anyone else — which, by §14's own test, is the only measure that was ever
-worth anything here.
+**Distribution is no longer the binding constraint.** Suite and companion scripts
+Developer ID–sign, notarize, and (for Max) emit a Sparkle `appcast.xml` once
+EdDSA keys exist. The remaining channel work is Mac App Store packaging as a
+second track without Sparkle — see `docs/APP_STORE.md`. Gatekeeper-clean install
+from the family DMG is the default path for new users.

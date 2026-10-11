@@ -10,6 +10,11 @@
 // your team ID in it. Xcode's Signing & Capabilities tab does the same thing.
 DEVELOPMENT_TEAM =
 
+// Public EdDSA key for Sparkle (Developer ID channel). Overridden in
+// Local.xcconfig after `scripts/sparkle-generate-keys.sh`. Empty disables
+// meaningful update verification until a key is set for release archives.
+SPARKLE_PUBLIC_ED_KEY =
+
 // Optional, so a clone with no Local.xcconfig builds without a missing-file
 // warning. Automatic signing will then ask for a team, which is the correct
 // prompt rather than a confusing failure against somebody else's account.

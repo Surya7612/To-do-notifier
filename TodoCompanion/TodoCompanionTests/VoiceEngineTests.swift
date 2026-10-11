@@ -86,6 +86,18 @@ struct SpeechChunkingTests {
         #expect(spoken.hasSuffix("."), "a cut anywhere else is audible")
     }
 
+    @Test("a teaching beat is split so no piece overruns the synthesis cap")
+    func teachingBeatStaysUnderTheCap() {
+        // One enqueue of a long step is what made Kokoro truncate mid-word —
+        // heard as mumbling between clauses.
+        let longBeat = String(repeating: "Look at the next binding and say what it does. ", count: 12)
+        let pieces = SpeechPlayback.chunksForBeat(longBeat)
+
+        #expect(pieces.count > 1)
+        #expect(pieces.allSatisfy { $0.count <= SpeechPlayback.maximumChunk })
+        #expect(pieces.joined().contains("binding"))
+    }
+
     @Test("a decimal point is not a sentence end")
     func decimalsAreNotBoundaries() {
         // "The file is 3." then "5 megabytes" — the reason a period alone

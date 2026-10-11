@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged with the generated Info.plist. NSScreenCaptureUsageDescription is
+	  not always emitted from INFOPLIST_KEY_* on this Xcode, and ScreenCaptureKit
+	  requires the string before the Screen Recording prompt.
+	-->
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Max captures what is on your screen when you press the hotkey, so it can answer questions about what you are looking at. Capture is never continuous or in the background.</string>
+</dict>
+</plist>

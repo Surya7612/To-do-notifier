@@ -9,10 +9,10 @@ import SwiftUI
 /// faint outlines so the walk through is visible as a whole rather than one
 /// frame at a time.
 ///
-/// A step with nothing Vision can box still draws: its caption and number are
-/// written on the screen as a tip. Skipping the update left the previous step's
-/// boxes stranded while the panel said a different step — Guided looked like it
-/// was pointing at the wrong thing.
+/// A step with nothing Vision can box still draws a short cue (the quoted label
+/// or a clipped tip) and its number — never the full spoken sentence, which
+/// hid the user's work and only duplicated the panel. Skipping the update left
+/// the previous step's boxes stranded while the panel said a different step.
 ///
 /// A full-screen window rather than one sized to each box, because several
 /// marks are on screen at once and their numbers sit outside them. It is
@@ -31,8 +31,8 @@ final class LessonOverlay {
     ///   - current: Boxes for the step showing now, in the order Max named them.
     ///   - covered: Boxes from earlier steps, drawn faintly.
     ///   - number: The step's position in the lesson, shown on its first box.
-    ///   - caption: The few words printed beside the first box — or alone when
-    ///     there is no box, so a conceptual step still writes on the screen.
+    ///   - caption: Short cue beside a miss / conceptual step. Empty when the
+    ///     box itself is the cue — teachers point; they do not re-paste the talk.
     ///   - isConnected: Whether to run an arrow from each box to the next.
     ///   - screen: The area the marks are measured against.
     func show(current: [CGRect],
@@ -66,6 +66,9 @@ final class LessonOverlay {
 
     func hide() {
         window?.orderOut(nil)
+        window?.contentView = nil
+        window?.close()
+        window = nil
     }
 
     private func flipped(_ rect: CGRect, in screen: CGRect) -> CGRect {
@@ -131,12 +134,9 @@ private struct LessonMarksView: View {
 
             if !caption.isEmpty {
                 captionChip.offset(x: captionPlacement.x, y: captionPlacement.y)
-            } else if current.isEmpty {
-                // Number alone when the model wrote no opening words worth
-                // printing — still better than leaving the previous step's
-                // badge stranded on screen.
-                badge.offset(x: floatingOrigin.x, y: floatingOrigin.y)
             }
+            // No lone floating badge: the panel already says "Step N of M", and
+            // a number over empty air (often Max itself) reads as a miss.
         }
         .ignoresSafeArea()
     }
@@ -167,34 +167,28 @@ private struct LessonMarksView: View {
             .shadow(radius: 2)
     }
 
-    /// The step's own words, printed next to what they are about.
-    ///
-    /// Opaque, unlike everything else drawn here, and for the same reason the
-    /// code well in the panel is: this sits over whatever the user happens to
-    /// have on screen, and text that takes its contrast from the wallpaper is
-    /// text nobody can read.
+    /// A tiny name-tag for what the tutor is pointing at when Vision missed —
+    /// one line, narrow, so it cannot blanket the code underneath.
     private var captionChip: some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Badge lives on the box when there is one; only join it here for
-            // conceptual steps that have nothing else to hang a number on.
+        HStack(alignment: .center, spacing: 6) {
             if current.isEmpty { badge }
             Text(caption)
-                .font(.callout.weight(.medium))
+                .font(.caption.weight(.semibold).monospaced())
                 .foregroundStyle(.white)
-                .lineLimit(3)
-                .frame(maxWidth: 340, alignment: .leading)
+                .lineLimit(1)
+                .frame(maxWidth: 180, alignment: .leading)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
-                .fill(Color.black.opacity(0.86))
+                .fill(Color.black.opacity(0.82))
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous)
                         .strokeBorder(DS.Pointer.mark.opacity(0.55))
                 )
         )
-        .shadow(radius: 6, y: 2)
+        .shadow(radius: 3, y: 1)
     }
 
     /// Beside the first box when there is one; otherwise a tip floating near
@@ -208,27 +202,27 @@ private struct LessonMarksView: View {
 
     /// A conceptual step with no OCR hit still has to land somewhere readable.
     /// Prefer the last covered box so the tip follows the walk; otherwise sit
-    /// over the middle-right of the capture — where an editor usually is —
-    /// rather than dead centre on top of the problem statement.
+    /// over the *left* third of the capture (problem statement on LeetCode-
+    /// shaped layouts) — middle-right put the tip on Max's own panel.
     private var floatingOrigin: CGPoint {
         if let last = covered.last {
             return captionOrigin(under: last)
         }
-        let estimatedHeight: CGFloat = 72
-        let x = min(max(bounds.width * 0.52, 16), max(16, bounds.width - 360))
-        let y = min(max(bounds.height * 0.28, 16), max(16, bounds.height - estimatedHeight - 16))
+        let estimatedHeight: CGFloat = 28
+        let x = min(max(bounds.width * 0.08, 16), max(16, bounds.width - 200))
+        let y = min(max(bounds.height * 0.36, 16), max(16, bounds.height - estimatedHeight - 16))
         return CGPoint(x: x, y: y)
     }
 
     /// Below the box, or above it when the box is near the bottom of the
-    /// screen. A caption clipped off the edge is the one place this can fail
+    /// screen. A cue clipped off the edge is the one place this can fail
     /// silently, since the user cannot tell it was ever drawn.
     private func captionOrigin(under rect: CGRect) -> CGPoint {
-        let estimatedHeight: CGFloat = 72
+        let estimatedHeight: CGFloat = 28
         let below = rect.maxY + Self.captionDrop
         let fits = below + estimatedHeight < bounds.height
 
-        return CGPoint(x: min(rect.minX, max(0, bounds.width - 360)),
+        return CGPoint(x: min(rect.minX, max(0, bounds.width - 200)),
                        y: fits ? below : max(0, rect.minY - estimatedHeight - Self.captionDrop))
     }
 

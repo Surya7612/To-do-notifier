@@ -68,7 +68,9 @@ enum ContextRetriever {
                 reasons.append(hitTopics.map { "#\($0)" }.joined(separator: " "))
             }
 
-            if !candidate.windowTitle.isEmpty, candidate.windowTitle == observation.windowTitle {
+            let sameWindow = !candidate.windowTitle.isEmpty
+                && candidate.windowTitle == observation.windowTitle
+            if sameWindow {
                 score += 2.5
                 reasons.append("same window")
             } else if !candidate.sourceApp.isEmpty, candidate.sourceApp == observation.appName {
@@ -84,6 +86,17 @@ enum ContextRetriever {
             if !overlap.isEmpty {
                 score += min(3.0, 1.2 * Double(overlap.count))
                 reasons.append("mentions \(overlap.sorted().prefix(2).joined(separator: ", "))")
+            }
+
+            // Same window + a reason that sounds like a fix, or an error token
+            // on screen that also lives in the saved OCR — the "I fixed this
+            // here before" loop. Stronger than bare same-window so it leads the
+            // strip when both apply.
+            if sameWindow, looksLikePastFix(intent: candidate.intent,
+                                            savedOCR: candidate.recognizedText,
+                                            screenOCR: observation.recognizedText) {
+                score += 2.0
+                reasons.append("past fix here")
             }
 
             // Catches what the literal signals cannot: a reason worded nothing
@@ -169,6 +182,27 @@ enum ContextRetriever {
         "them", "they", "she", "him", "its", "it's", "all", "any", "some", "more", "most",
         "swift", "file", "app", "window", "code",
     ]
+
+    /// Cues that the user's own reason was about solving something, or that an
+    /// error-like token on screen also appears in what they kept.
+    private static let fixIntentCues: Set<String> = [
+        "fix", "fixed", "fixing", "bug", "error", "crash", "broken", "solved",
+        "workaround", "patch", "regression", "failing", "failure", "exception",
+        "stack", "trace", "nil", "segfault",
+    ]
+
+    private static func looksLikePastFix(intent: String,
+                                         savedOCR: String,
+                                         screenOCR: String) -> Bool {
+        let intentTokens = tokenize(intent)
+        if !intentTokens.isDisjoint(with: fixIntentCues) { return true }
+
+        let screenErrors = tokenize(screenOCR).intersection(fixIntentCues)
+        guard !screenErrors.isEmpty else { return false }
+        let savedTokens = tokenize(savedOCR)
+        return !screenErrors.isDisjoint(with: savedTokens)
+            || !intentTokens.isDisjoint(with: screenErrors)
+    }
 
     private static func tokenize(_ text: String) -> Set<String> {
         Set(

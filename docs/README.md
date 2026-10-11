@@ -9,6 +9,9 @@ This repository holds two applications. Start with whichever you came for.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Electron process layout, modules, data flow, external APIs |
 | [PLAN.md](PLAN.md) | The design document — roadmap, and what was rejected and why |
 | [USABILITY.md](USABILITY.md) | Current-version usability upgrades (and explicit non-goals) |
+| [DEMO.md](DEMO.md) | Live demo rehearsal checklist for interviews |
+| [INTERVIEW.md](INTERVIEW.md) | 30s narrative, why-not-APNs, AI Engineer talking points |
+| [APP_STORE.md](APP_STORE.md) | Mac App Store vs Developer ID + Sparkle channel notes |
 | [../AGENTS.md](../AGENTS.md) | Working notes for contributors and AI coding agents |
 | [ASSETS.md](ASSETS.md) | Companion art licensing (not covered by MIT) |
 | [screenshots/](screenshots/) | App UI captures used in the README |

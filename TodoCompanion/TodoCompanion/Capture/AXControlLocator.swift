@@ -10,8 +10,8 @@ import Foundation
 /// exactly the apps pointing is most useful for. When AX *does* know the
 /// control, though, it can move or click the pointer, which OCR boxes cannot.
 ///
-/// Motion and clicks run only from a button press. Follow-along and lessons
-/// stay on OCR marks and never call into this.
+/// Motion runs from Show me and Guided Teach when OCR has no box. Clicks stay
+/// user-only — Max never clicks for them.
 @MainActor
 enum AXControlLocator {
     struct Match: Equatable, Sendable {
@@ -93,16 +93,7 @@ enum AXControlLocator {
         }
     }
 
-    /// Left-clicks at `point` in Cocoa screen coordinates.
-    static func click(at point: CGPoint) {
-        let flipped = cgPoint(fromCocoa: point)
-        let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
-                           mouseCursorPosition: flipped, mouseButton: .left)
-        let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
-                         mouseCursorPosition: flipped, mouseButton: .left)
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
-    }
+    // Click-for-user intentionally absent — Max warps the pointer; the user acts.
 
     // MARK: - Tree walk
 
