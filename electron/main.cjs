@@ -33,7 +33,10 @@ const { createPetRuntime } = require("./petRuntime.cjs");
 const { createTrayRuntime } = require("./trayRuntime.cjs");
 const { registerIpc } = require("./registerIpc.cjs");
 const { createVoiceHotkeys } = require("./lib/voiceHotkeys.cjs");
-const { loadCompanionProjects } = require("./lib/companionProjects.cjs");
+const {
+  loadCompanionProjects,
+  watchCompanionProjects,
+} = require("./lib/companionProjects.cjs");
 const { importCompanionTasks } = require("./lib/companionTasks.cjs");
 
 // Some shells set this and break Electron GUI launches
@@ -318,6 +321,7 @@ if (!gotLock) {
 
     ctx.reminderTimer = setInterval(tick, 30_000);
     setTimeout(tick, 1500);
+    ctx.stopWatchingCompanion = watchCompanionProjects(tick);
 
     app.on("activate", () => {
       windows.createMainWindow({ show: true });
@@ -346,6 +350,7 @@ if (!gotLock) {
     }
     ctx.isQuitting = true;
     if (ctx.reminderTimer) clearInterval(ctx.reminderTimer);
+    ctx.stopWatchingCompanion?.();
     pet.stopPetFlight();
   });
 }

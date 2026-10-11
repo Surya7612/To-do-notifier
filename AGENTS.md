@@ -306,6 +306,22 @@ was the actual bug behind "the reminder never showed up": Max published the requ
 nothing on the other side ever asked. The IPC handler survives only so that returning to the window
 picks up a reminder set moments ago instead of waiting for the next tick.
 
+The tick is the fallback rather than the trigger. `watchCompanionProjects` watches the companion's
+container folder and imports about 300 ms after a publish, because half a minute between "remind me"
+and the task appearing reads, said aloud, as the feature not working. It watches the *directory*:
+`ProjectExport` writes atomically by replacing the file, and a watch on the file itself goes quiet
+after the first replace. A task that came from Max carries a **From Max** badge, read off the
+`companion:` id, for the same reason the project badge exists — where a task came from is a fact
+about it the user cannot otherwise see.
+
+The title it arrives with is `ReminderPhrase.taskTitle`, not the saved reason verbatim. "Remind me
+in two hours to text voice bugs" is an instruction to Max, and as a row in a list that already shows
+the due time it says the time twice. Only a sentence that *opens* with a reminder cue is reshaped,
+and only the cue and the time words the parser itself matched are removed, so what is left is still
+the user's own words; elsewhere the time is part of what is described ("notes from tomorrow's
+standup") and is left alone. The saved reason is untouched — this is a title for another app, not
+a rewrite of what was kept, which is why `intent` itself never changes.
+
 A fired reminder keeps being offered for `offerWindowAfterDue`, and that is not a nicety: offering only
 *future* ones meant "remind me in one minute" left the export a minute later, so unless the to-do app
 happened to be open inside that minute the task was never created. An overdue task is exactly what
@@ -1011,7 +1027,7 @@ the edge is the only part of this that fails invisibly.
 | `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
-| `Store/ReminderPhrase.swift` | ~272 | Decides whether a saved reason is asking to be brought back, and when. Pure logic, no notification machinery. |
+| `Store/ReminderPhrase.swift` | ~355 | Decides whether a saved reason is asking to be brought back, and when, and the title it carries into the to-do app. Pure logic, no notification machinery. |
 | `Store/ReminderMirror.swift` | ~140 | Which of the to-do app's tasks belong in Apple Reminders, and what to withdraw. Pure. |
 | `Store/ReminderMirrorMessaging.swift` | ~55 | Settings copy and System Settings deep-link for the mirror destination. Pure. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
@@ -1024,7 +1040,7 @@ the edge is the only part of this that fails invisibly.
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~320 | Brings in captures from a phone through a user-chosen folder, arming a reminder when the capture asked for one. Posts when something arrives so an open library can remount. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
-| `Store/ProjectExport.swift` | ~188 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
+| `Store/ProjectExport.swift` | ~229 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
 | `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
 | `Support/AppSettings.swift` | ~430 | `UserDefaults` keys, defaults, both hotkeys, Accessibility extras flag, session mode, MCP launch, the provider choice (Ollama / OpenAI / Claude / Gemini), and `AnswerDestination`. |
@@ -1110,6 +1126,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `ScreenRectTests` | Normalized box → screen coordinates | Vision and AppKit share a bottom-left origin where `cropped(to:)` needs a flip, so the mistake is a box a mirrored distance up the screen, which looks plausible. Also pins that a cropped capture maps into the *selection*. |
 | `SavedContextTests` | `#tag` splitting, search haystack, hotkey choices | Runs on every save; mistakes are persisted. |
 | `ReminderMirrorTests` | What is copied into Apple Reminders, and what is taken back | The only place this app writes into something Apple syncs, so every failure lands in the user's pocket rather than on screen. Pins that a backlog is *not* copied, since an alarm already past is delivered on sync and would alert for everything at once, and that a task merely falling due is not mistaken for one that was finished. |
+| `ReminderTaskTitleTests` | The title a reminder carries into the to-do app | It is the user's words with the cue and the time taken out, so the failure is putting words in their mouth: pins that only a sentence opening with a cue is reshaped, that a date merely mentioned survives, and that a sentence which is all cue keeps its words. |
 | `ReminderPhraseTests` | What counts as asking for a reminder, and at what time | Guards the line between a request and a mention. Also pins that a bare day becomes morning, since midnight would fire while the user is asleep. |
 | `OpenAIModelChoiceTests` | Which model the Settings picker shows for a stored name | The failure is silent in both directions: an unlisted name must reach Custom rather than be quietly replaced, and the legacy default must stay listed or an existing setting reads as though the user typed it. Also pins that no blurb quotes a price. |
 | `CloudModelChoiceTests` / `ReminderMirrorMessagingTests` | Claude/Gemini model lists, and Reminders Settings copy | Same no-price rule for the other vendors; destination messaging must distinguish iCloud sync from this-Mac-only and point at System Settings on denial. |
@@ -1137,6 +1154,10 @@ compounding* rather than merely wrong once: an import that is not idempotent add
 every tick, and one that is too eager brings back a task the user has already completed. It also pins
 that nothing is written when nothing is new, since that is what keeps a 30-second tick from rewriting
 the file.
+
+`electron/lib/companionWatch.test.ts` pins that one publish — several file events in a burst —
+imports once, that other files in the container are ignored, and that a companion never installed
+means no watch rather than a crash.
 
 `electron/lib/remindersService.test.ts` pins who announces what. An imported reminder must produce no
 notification here, because Max already scheduled one — and the same sweep must go on announcing every

@@ -126,7 +126,7 @@ enum ProjectExport {
                 .map { record in
                     TaskRequest(
                         id: record.reminderIdentifier,
-                        title: record.intent.trimmingCharacters(in: .whitespacesAndNewlines),
+                        title: ReminderPhrase.taskTitle(from: record.intent, now: record.createdAt),
                         dueAt: record.remindAt ?? now
                     )
                 }
@@ -158,8 +158,9 @@ enum ProjectExport {
         return pendingReminders.compactMap { record in
             guard let dueAt = record.remindAt, dueAt > stillOffered else { return nil }
 
-            let title = record.intent.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return nil }
+            guard !record.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            let title = ReminderPhrase.taskTitle(from: record.intent, now: record.createdAt)
 
             let identifier = importedTaskPrefix + record.reminderIdentifier
             guard !known.contains(identifier) else { return nil }

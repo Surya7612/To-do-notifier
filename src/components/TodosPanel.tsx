@@ -245,6 +245,14 @@ export function TodosPanel({
                   <div className="todo-meta row" style={{ gap: "0.5rem" }}>
                     <span>{formatDue(todo.dueAt)}</span>
                     {dueBadge(todo, lead)}
+                    {todo.id.startsWith("companion:") && (
+                      <span
+                        className="badge from-max"
+                        title="Set in Max. Max sends the notification for it."
+                      >
+                        From Max
+                      </span>
+                    )}
                     {projectByTodoId.get(todo.id) && (
                       <span className="badge project">
                         {projectByTodoId.get(todo.id)?.name}

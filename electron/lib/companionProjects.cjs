@@ -129,8 +129,55 @@ function loadCompanionProjects(filePath = companionProjectsPath()) {
   }
 }
 
+/**
+ * Calls `onChange` shortly after the companion republishes.
+ *
+ * The 30-second tick alone meant a reminder set in the companion took up to
+ * half a minute to appear here — long enough, said aloud in front of someone,
+ * to look like it had not worked. The tick stays as the fallback: this watches
+ * the *directory*, because the companion writes atomically by replacing the
+ * file, and a watch on the file itself stops firing after the first replace.
+ *
+ * Absent directory (the companion never installed or never run) is not an
+ * error, just no watch. Returns a function that stops watching.
+ *
+ * @param {() => void} onChange
+ * @param {{ filePath?: string, debounceMs?: number, watch?: typeof fs.watch }} [options]
+ */
+function watchCompanionProjects(onChange, options = {}) {
+  const filePath = options.filePath || companionProjectsPath();
+  const debounceMs = options.debounceMs ?? 300;
+  const watch = options.watch || fs.watch;
+  const name = path.basename(filePath);
+
+  let timer = null;
+  let watcher;
+  try {
+    watcher = watch(path.dirname(filePath), (_event, changed) => {
+      // Some platforms omit the name; treat that as possibly ours.
+      if (changed && changed.toString() !== name) return;
+      // One save produces several events (temp file, rename); act once.
+      clearTimeout(timer);
+      timer = setTimeout(onChange, debounceMs);
+    });
+    watcher.on?.("error", () => {});
+  } catch {
+    return () => {};
+  }
+
+  return () => {
+    clearTimeout(timer);
+    try {
+      watcher.close();
+    } catch {
+      /* already closed */
+    }
+  };
+}
+
 module.exports = {
   companionProjectsPath,
   parseCompanionProjects,
   loadCompanionProjects,
+  watchCompanionProjects,
 };

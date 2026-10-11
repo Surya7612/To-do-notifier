@@ -33,6 +33,59 @@ nonisolated enum ReminderPhrase {
         "todo", "to-do", "to do",
     ]
 
+    /// The task a reminder becomes in the to-do app, in the user's own words.
+    ///
+    /// "Remind me in two hours to text voice bugs" is an instruction to this
+    /// app, and as a row in a task list it reads as one: the list already
+    /// shows the due time, so the cue and the time are said twice. Only those
+    /// two are removed, and only words the parser itself recognised, so what
+    /// remains is still entirely the user's. The saved reason is untouched —
+    /// this is a title for somewhere else, not a rewrite of what was kept.
+    static func taskTitle(from intent: String, now: Date = Date()) -> String {
+        let original = intent.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only a sentence that opens by asking is reshaped. Anywhere else the
+        // time words are part of what is described — "notes from tomorrow's
+        // standup" — and taking them out would change what it says.
+        guard let leadingCue,
+              leadingCue.firstMatch(in: original, range: NSRange(original.startIndex..., in: original)) != nil
+        else { return original }
+        var title = original
+
+        if let matched = suggestion(in: title, now: now)?.matchedText,
+           let range = title.range(of: matched) {
+            title.removeSubrange(range)
+        }
+        title = replacing(leadingCue, in: title)
+        title = replacing(danglingPreposition, in: title)
+        title = title
+            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet.whitespaces.union(.punctuationCharacters))
+
+        // Too little left means the sentence was mostly cue and time — "remind
+        // me tomorrow" — and the whole of it says more than a fragment would.
+        guard title.count >= 3 else { return original }
+        return title.prefix(1).uppercased() + title.dropFirst()
+    }
+
+    private static let leadingCue = try? NSRegularExpression(
+        pattern: #"^\s*(?:please\s+)?(?:remind\s+me|don'?t\s+forget|do\s+not\s+forget)"#
+            + #"(?:\s+(?:to|about|that|of))?\s*,?\s*"#,
+        options: [.caseInsensitive]
+    )
+
+    /// "at", "on" or "by" left stranded where a time was taken out.
+    private static let danglingPreposition = try? NSRegularExpression(
+        pattern: #"\s+(?:at|on|by|in)\s*$"#,
+        options: [.caseInsensitive]
+    )
+
+    private static func replacing(_ pattern: NSRegularExpression?, in text: String) -> String {
+        guard let pattern else { return text }
+        return pattern.stringByReplacingMatches(in: text,
+                                                range: NSRange(text.startIndex..., in: text),
+                                                withTemplate: "")
+    }
+
     /// When a request has no time in it, morning is the least intrusive guess.
     private static let defaultHour = 9
 

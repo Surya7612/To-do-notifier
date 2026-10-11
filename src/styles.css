@@ -254,6 +254,13 @@ button {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
+/* Same footing as a project: a fact about where the task came from, not a
+   status this app can change. */
+.badge.from-max {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 40%, transparent);
+}
+
 .timer-display {
   font-size: 4rem;
   font-weight: 700;
