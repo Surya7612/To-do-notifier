@@ -37,6 +37,7 @@ nonisolated enum ContextGraph {
         case save
         case project
         case topic
+        case word
         case app
 
         var id: String { rawValue }
@@ -46,6 +47,7 @@ nonisolated enum ContextGraph {
             case .save: "Saves"
             case .project: "Projects"
             case .topic: "Topics"
+            case .word: "Shared words"
             case .app: "Apps"
             }
         }
@@ -55,9 +57,33 @@ nonisolated enum ContextGraph {
             case .save: "photo"
             case .project: "folder"
             case .topic: "number"
+            case .word: "text.quote"
             case .app: "app.dashed"
             }
         }
+    }
+
+    /// The most shared words drawn. More turns the picture back into a mat.
+    static let sharedWordLimit = 12
+
+    private static let stopwords: Set<String> = [
+        "the", "and", "for", "with", "this", "that", "was", "were", "are", "you", "your",
+        "our", "not", "from", "into", "over", "out", "off", "how", "what", "when", "why",
+        "who", "can", "will", "just", "about", "then", "there", "here", "have", "has", "had",
+        "did", "does", "been", "them", "they", "its", "all", "any", "some", "more", "most",
+        "later", "remind", "remember", "look", "check", "read", "need", "want", "should",
+        "tomorrow", "today", "tonight", "minutes", "hour", "hours", "again", "back", "thing",
+        "things", "stuff", "something", "keep", "save", "note", "come", "get", "make",
+    ]
+
+    /// Distinctive words of a saved reason.
+    static func words(in title: String) -> Set<String> {
+        Set(
+            title.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter { $0.count > 3 && !stopwords.contains($0) && !$0.allSatisfy(\.isNumber) }
+        )
     }
 
     struct Node: Identifiable, Equatable {
@@ -125,6 +151,30 @@ nonisolated enum ContextGraph {
             }
         }
 
+        // Most saves carry no #tag, so without this the picture was a few app
+        // hubs with unlabelled dots around them. A word two reasons share is
+        // the user's own words agreeing, which is a fact about them rather
+        // than a resemblance — the same footing as a tag. A word that is
+        // already a topic is left to the topic node.
+        if kinds.contains(.word) {
+            var savesByWord: [String: [String]] = [:]
+            for item in items {
+                let topics = Set(item.topics)
+                for word in words(in: item.title) where !topics.contains(word) {
+                    savesByWord[word, default: []].append("save:\(item.id)")
+                }
+            }
+            let shared = savesByWord
+                .filter { $0.value.count >= 2 }
+                .sorted { $0.value.count != $1.value.count ? $0.value.count > $1.value.count : $0.key < $1.key }
+                .prefix(sharedWordLimit)
+            for (word, saveIDs) in shared {
+                let id = "word:\(word)"
+                add(Node(id: id, kind: .word, label: "\u{201C}\(word)\u{201D}"))
+                for saveID in saveIDs { connect(saveID, id) }
+            }
+        }
+
         // Sorted so the layout's initial placement is the same every time the
         // window opens, rather than reshuffling with dictionary order.
         return Graph(nodes: nodes.values.sorted { $0.id < $1.id }, edges: edges)
@@ -151,9 +201,11 @@ nonisolated enum GraphLayout {
 
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let area = size.width * size.height
-        // Fruchterman–Reingold's ideal edge length: the side of the square each
-        // node would get if the canvas were divided evenly between them.
-        let ideal = sqrt(area / CGFloat(nodes.count))
+        // Fruchterman–Reingold's ideal edge length, scaled down from the side
+        // of the square each node would get if the canvas were divided evenly.
+        // At full size the layout fills the canvas by construction, so the
+        // balance point for anything loosely held lies past the margin.
+        let ideal = sqrt(area / CGFloat(nodes.count)) * spacing
 
         // Start on a circle rather than at random. Deterministic, and it avoids
         // the degenerate case where two nodes land on the same point and the
@@ -215,6 +267,21 @@ nonisolated enum GraphLayout {
                 displacement[target].y += uy * force
             }
 
+            // A pull to the middle. With repulsion alone, anything joined to
+            // nothing is pushed until it hits the margin, so a library of
+            // mostly untagged saves came out as a ring of dots along the
+            // border with an empty middle.
+            for i in 0..<nodes.count {
+                let dx = center.x - points[i].x
+                let dy = center.y - points[i].y
+                let distance = sqrt(dx * dx + dy * dy)
+                guard distance > 0.01 else { continue }
+                let pull = nodes[i].degree == 0 ? looseGravity : gravity
+                let force = pull * (distance * distance) / ideal
+                displacement[i].x += dx / distance * force
+                displacement[i].y += dy / distance * force
+            }
+
             for i in 0..<nodes.count {
                 let magnitude = max(sqrt(displacement[i].x * displacement[i].x
                     + displacement[i].y * displacement[i].y), 0.01)
@@ -238,4 +305,15 @@ nonisolated enum GraphLayout {
     }
 
     static let margin: CGFloat = 40
+
+    /// Well below an edge's pull, so connected nodes still cluster by their
+    /// links rather than all collapsing onto the centre.
+    static let gravity: CGFloat = 0.05
+
+    /// A node joined to nothing has no edge holding it, so it gets as much
+    /// pull as an edge would give it — enough to sit inside the picture.
+    static let looseGravity: CGFloat = 1.0
+
+    /// Fraction of the evenly-divided square used as the ideal edge length.
+    static let spacing: CGFloat = 0.5
 }

@@ -59,7 +59,20 @@ enum AppWindow {
 enum LibraryWindow {
     static var opener: (() -> Void)?
 
-    static func open() { opener?() }
+    /// Posted with a keep's `reminderIdentifier` so an open library selects it.
+    static let selectNotification = Notification.Name("LibraryWindow.select")
+
+    /// Held for a window that is not open yet, which reads it once it appears.
+    static var pendingSelection: String?
+
+    static func open(selecting identifier: String? = nil) {
+        NSApp.activate(ignoringOtherApps: true)
+        if let identifier {
+            pendingSelection = identifier
+            NotificationCenter.default.post(name: selectNotification, object: identifier)
+        }
+        opener?()
+    }
 }
 
 private struct MenuBarLabel: View {

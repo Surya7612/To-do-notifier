@@ -42,7 +42,7 @@ If the panel status line names a blocker — Screen Recording, Ollama not
 running, a model that is not pulled — fix that *before* talking. That line is
 the cold-start contract ([USABILITY.md](USABILITY.md) §4).
 
-## Demo spine (~8 minutes)
+## Demo spine (~10 minutes)
 
 1. **Summon** with the hotkey. Point at the status line: it names a blocker
    or invites a question — never sits silently empty.
@@ -59,11 +59,23 @@ the cold-start contract ([USABILITY.md](USABILITY.md) §4).
    titled without the "Remind me in two minutes" part. With the mirror on and
    iCloud Reminders, the phone gets Apple's alert and the Mac does not alert
    twice. Without the mirror, Max's own notification fires.
-5. **Library** → Due soon (or Overdue once it has fired), open the save:
-   *Why I kept this* is your words; *What the model thinks it shows* is the
-   model's, and appears once the local model has written it. Graph view only if
-   you have a handful of tagged saves — two or three nodes look empty.
-6. **Architecture one-liner** (see [INTERVIEW.md](INTERVIEW.md)): two apps,
+5. **Snooze it from the banner** when it fires. The library then reads
+   "seen …" for that reminder rather than "no response yet", and opening the
+   banner jumps straight to the keep.
+6. **"What did I save yesterday?"** (or "…about <topic> this week"). The strip
+   reads *Found in your library* with the reason each one matched — "kept
+   yesterday · mentions retrieval" — and Max answers from those alone. With
+   nothing in that window, it says so instead of inventing.
+7. **"I have 45 minutes. What should I work on?"** — Max picks from the to-do
+   app's open tasks, overdue first, quoting titles exactly and saying its time
+   estimate is its own. Prep mode → Briefs offers the same at 30 min / 1 h / 2 h.
+8. **Library** → open the save: *Why I kept this* is your words; *What the
+   model thinks it shows* is the model's. In a project, the arrow beside a task
+   opens the To-Do Notifier at that row. The Connections graph links keeps
+   through words their reasons share, so it is worth showing even without
+   tags. The footer says how often Max brought keeps back and how often you
+   used them.
+9. **Architecture one-liner** (see [INTERVIEW.md](INTERVIEW.md)): two apps,
    one task list, neither writes the other's file; off-Mac alerts via Apple
    Reminders, not a custom push server.
 
@@ -82,6 +94,8 @@ the cold-start contract ([USABILITY.md](USABILITY.md) §4).
 | Mirror toggle flips off | Reminders + Calendars entitlement/TCC; Open System Settings from the caption |
 | Mirror on, phone silent | Orange "this Mac only" copy — enable iCloud Reminders, toggle off/on |
 | Dictation silent on first Parakeet press | Wait for "Loading the Parakeet model…" |
+| Recall answers about the screen instead | Ask in the past tense — "what did I save", "what was I working on". Present tense is a screen question by design |
+| Arrow to the to-do app opens it but not at the row | The installed To-Do Notifier predates the link; install the new build |
 
 ## Sample screens that photograph well
 

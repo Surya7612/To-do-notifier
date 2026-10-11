@@ -44,6 +44,12 @@ const api = {
   ollamaStatus: () => ipcRenderer.invoke("ollama:status"),
   ollamaChat: (payload) => ipcRenderer.invoke("ollama:chat", payload),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
+  takePendingFocus: () => ipcRenderer.invoke("nav:take-pending"),
+  onFocusRequest: (cb) => {
+    const listener = (_event, target) => cb(target);
+    ipcRenderer.on("nav:focus", listener);
+    return () => ipcRenderer.removeListener("nav:focus", listener);
+  },
   onDataChanged: (cb) => {
     const listener = (_event, data) => cb(data);
     ipcRenderer.on("data:changed", listener);

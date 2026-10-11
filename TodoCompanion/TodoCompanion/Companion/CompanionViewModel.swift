@@ -239,6 +239,13 @@ final class CompanionViewModel {
 
     /// Things saved earlier that look relevant to the screen in front of the user.
     var related: [RetrievalMatch] = []
+    /// Whether `related` came from searching the library for the question
+    /// rather than from the screen — the strip says which, and a late meaning
+    /// pass for the screen must not replace what the user just asked for.
+    private(set) var relatedIsRecall = false
+    /// Keeps already counted as brought back this summon, so a second scoring
+    /// pass does not count the same one twice.
+    private var resurfacedThisSummon: Set<PersistentIdentifier> = []
     /// Accessibility-tree text for the focused app, when extras are trusted.
     private(set) var pageStructure: String?
 
@@ -520,6 +527,9 @@ final class CompanionViewModel {
             related = ContextRetriever.related(to: fresh,
                                                among: recentContexts(),
                                                inProject: currentProject)
+            relatedIsRecall = false
+            resurfacedThisSummon = []
+            noteResurfaced(related)
             linkedWork = TodoBridge.load()
             refreshClipboardOffer()
             if stillCurrentCapture(myGeneration), phase == .reading { phase = .idle }
@@ -624,7 +634,8 @@ final class CompanionViewModel {
         guard let vector = try? await localBrain().embed(prepared, model: embeddingModel) else {
             return
         }
-        guard !Task.isCancelled, observation.contextLabel == self.observation?.contextLabel else {
+        guard !Task.isCancelled, observation.contextLabel == self.observation?.contextLabel,
+              !relatedIsRecall else {
             return
         }
 
@@ -632,6 +643,7 @@ final class CompanionViewModel {
                                            among: recentContexts(),
                                            inProject: currentProject,
                                            screenEmbedding: vector)
+        noteResurfaced(related)
     }
 
     /// Vision is CPU-heavy enough to stall the panel's appearance if it runs
@@ -1193,8 +1205,24 @@ final class CompanionViewModel {
         }
 
         let historySnapshot = Array(turns.dropLast())
+        var recallNote: String?
+        if !isFromPreset, !teach, LibraryRecall.isRecallQuestion(prompt) {
+            let recalled = LibraryRecall.matches(for: prompt,
+                                                 among: recentContexts(),
+                                                 inProject: currentProject)
+            recallNote = LibraryRecall.scopeNote(for: prompt,
+                                                 found: recalled.count,
+                                                 projectName: currentProject?.name)
+            related = recalled
+            relatedIsRecall = true
+        }
         let memoriesSnapshot = ContextRetriever.promptLines(for: related)
         let tasksSnapshot = taskLines()
+        let planningNote: String? = (!teach && FocusPlan.isPlanningQuestion(prompt))
+            ? FocusPlan.note(minutes: FocusPlan.minutes(in: prompt),
+                             hasTasks: !tasksSnapshot.isEmpty,
+                             projectName: currentProject?.name)
+            : nil
         let pageSnapshot = pageStructure
         let observationSnapshot = observation
         let fileSnapshot = editableFile.context
@@ -1234,7 +1262,9 @@ final class CompanionViewModel {
             let context = AskContext(
                 observation: observationSnapshot,
                 memories: memoriesSnapshot,
+                recallNote: recallNote,
                 tasks: tasksSnapshot,
+                planningNote: planningNote,
                 includeImage: includeImage,
                 history: historySnapshot,
                 editableFile: fileSnapshot,
@@ -2401,8 +2431,11 @@ final class CompanionViewModel {
         default:
             return
         }
+        // Said at the moment it matters: a reminder that only this Mac will
+        // ring is one the user has to be at this Mac to get.
+        let reach = AppSettings.mirrorsToAppleReminders ? " · also on iPhone" : " · this Mac only"
         phase = scheduled
-            ? .saved("\(destination) · reminder \(Self.reminderFormat(date))\(tagSuffix)")
+            ? .saved("\(destination) · reminder \(Self.reminderFormat(date))\(reach)\(tagSuffix)")
             : .saved("Saved, but notifications are off in System Settings.")
     }
 
@@ -2747,8 +2780,35 @@ final class CompanionViewModel {
 
     /// Puts a prior keep's intent into the field so the user can ask about it.
     func askAboutRelated(_ match: RetrievalMatch) {
+        noteUsed(match)
         question = "About what I kept — \"\(match.context.intent)\": "
         refreshClipboardOffer()
+    }
+
+    /// Shows a recalled or resurfaced keep in the library, screenshot and all.
+    func openInLibrary(_ match: RetrievalMatch) {
+        noteUsed(match)
+        LibraryWindow.open(selecting: match.context.reminderIdentifier)
+    }
+
+    private func noteResurfaced(_ matches: [RetrievalMatch]) {
+        let now = Date()
+        var changed = false
+        for match in matches where !resurfacedThisSummon.contains(match.id) {
+            resurfacedThisSummon.insert(match.id)
+            match.context.timesResurfaced += 1
+            match.context.lastResurfacedAt = now
+            changed = true
+        }
+        if changed { try? modelContext.save() }
+    }
+
+    /// Recall is the user asking, not Max volunteering, so it is left out of
+    /// the count that says whether volunteering is worth it.
+    private func noteUsed(_ match: RetrievalMatch) {
+        guard !relatedIsRecall else { return }
+        match.context.timesUsedWhenResurfaced += 1
+        try? modelContext.save()
     }
 
     /// Uses clipboard contents as the question (or appends if the field is empty).
@@ -2781,6 +2841,15 @@ final class CompanionViewModel {
         }
         question = prompt
         submit(isFromPreset: false, isTeaching: false, isGuidedTeaching: false, wantsBoard: false)
+    }
+
+    /// Picks what to do next from open tasks, for a stated amount of time.
+    ///
+    /// Asked as a preset because the wording is this app's: it must never
+    /// become the reason something was kept, nor read as a reminder request.
+    func askWhatNext(minutes: Int) {
+        submit(prompt: "I have \(FocusPlan.describe(minutes: minutes)). What should I work on?",
+               isFromPreset: true, isTeaching: false, isGuidedTeaching: false, wantsBoard: false)
     }
 
     /// Standup / meeting prep from tasks, due reminders, and recent keeps.

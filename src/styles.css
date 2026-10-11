@@ -216,6 +216,13 @@ button {
   opacity: 0.55;
 }
 
+/* The row a link from the companion asked for. */
+.todo-item.linked {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+  transition: outline-color 0.6s ease;
+}
+
 .todo-item.done .todo-title {
   text-decoration: line-through;
 }

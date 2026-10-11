@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Set before any reminder can fire, or a notification arriving while the
         // app is running is swallowed instead of shown.
         UNUserNotificationCenter.current().delegate = self
+        Reminders.registerActions()
 
         GlobalHotkey.shared.activate(AppSettings.hotkey) { [weak self] in
             self?.companion.toggle()
@@ -202,16 +203,53 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     }
 
     /// A reminder is only useful if it can take you back to what you saved, so
-    /// opening one shows the library rather than just dismissing.
+    /// opening one shows that keep in the library rather than just dismissing.
+    /// Every response is also recorded, since it is the only sign this Mac
+    /// gets that the alert reached anyone.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+        let action = response.actionIdentifier
+        let identifier = response.notification.request.content.userInfo[Reminders.contextIDKey] as? String
 
         await MainActor.run {
-            NSApp.activate(ignoringOtherApps: true)
-            LibraryWindow.open()
+            self.handleReminderResponse(action: action, identifier: identifier)
+        }
+    }
+
+    private func handleReminderResponse(action: String, identifier: String?) {
+        let context = ContextStore.shared.mainContext
+        let record = identifier.flatMap { id in
+            (try? context.fetch(FetchDescriptor<SavedContext>(
+                predicate: #Predicate { $0.reminderIdentifier == id }
+            )))?.first
+        }
+
+        switch action {
+        case Reminders.snoozeActionID:
+            guard let record else { return }
+            let quietHours = TodoBridge.load().quietHours
+            let date = quietHours.firstMomentAfter(Date().addingTimeInterval(Reminders.snoozeInterval))
+            let id = record.reminderIdentifier
+            let intent = record.intent
+            let sourceApp = record.sourceApp
+            Task {
+                guard await Reminders.schedule(id: id, at: date, intent: intent, sourceApp: sourceApp,
+                                               reclaimingFromApple: true) else { return }
+                record.remindAt = date
+                record.reminderAcknowledgedAt = nil
+                try? context.save()
+            }
+        case Reminders.acknowledgeActionID, UNNotificationDismissActionIdentifier:
+            record?.reminderAcknowledgedAt = Date()
+            try? context.save()
+        case UNNotificationDefaultActionIdentifier:
+            record?.reminderAcknowledgedAt = Date()
+            try? context.save()
+            LibraryWindow.open(selecting: record?.reminderIdentifier)
+        default:
+            break
         }
     }
 }

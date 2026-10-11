@@ -399,6 +399,13 @@ struct CompanionView: View {
                         .disabled(viewModel.currentProject == nil || viewModel.isBusy)
                     Button("Standup prep…") { viewModel.askStandupPrep() }
                         .disabled(viewModel.isBusy)
+                    Divider()
+                    Section("What should I work on?") {
+                        Button("I have 30 minutes") { viewModel.askWhatNext(minutes: 30) }
+                        Button("I have an hour") { viewModel.askWhatNext(minutes: 60) }
+                        Button("I have 2 hours") { viewModel.askWhatNext(minutes: 120) }
+                    }
+                    .disabled(viewModel.isBusy)
                 } label: {
                     Label("Briefs", systemImage: "list.bullet.clipboard")
                 }
@@ -589,37 +596,32 @@ struct CompanionView: View {
     private var relatedStrip: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.hair) {
             if !viewModel.related.isEmpty {
-                Label("You kept this before", systemImage: "clock.arrow.circlepath")
+                Label(viewModel.relatedIsRecall ? "Found in your library" : "You kept this before",
+                      systemImage: viewModel.relatedIsRecall ? "magnifyingglass" : "clock.arrow.circlepath")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
 
-            ForEach(viewModel.related) { match in
-                Button {
-                    viewModel.askAboutRelated(match)
-                } label: {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(match.context.intent)
+            ForEach(viewModel.related.prefix(Self.relatedChipLimit)) { match in
+                HStack(spacing: DS.Spacing.hair) {
+                    relatedChip(match)
+                    Button {
+                        viewModel.openInLibrary(match)
+                    } label: {
+                        Image(systemName: "arrow.up.forward.square")
                             .font(.caption)
-                            .lineLimit(2)
-                            .foregroundStyle(.primary)
-                        Text("\(match.reason) · \(match.context.createdAt.formatted(.relative(presentation: .named)))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, DS.Spacing.snug)
-                    .padding(.vertical, DS.Spacing.hair)
-                    .background(
-                        match.reason.contains("past fix")
-                            ? DS.Pointer.mark.opacity(DS.Alpha.chipFill)
-                            : Color.primary.opacity(DS.Alpha.chipFill),
-                        in: RoundedRectangle(cornerRadius: DS.Radius.chip)
-                    )
+                    .buttonStyle(.plain)
+                    .help("Open this keep in the library")
+                    .accessibilityLabel("Open in library")
                 }
-                .buttonStyle(.plain)
-                .help("Put this keep in the ask field — your words, not a new capture")
+            }
+
+            if viewModel.related.count > Self.relatedChipLimit {
+                Text("\(viewModel.related.count - Self.relatedChipLimit) more — Max was shown all of them")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             if let clip = viewModel.clipboardOffer {
@@ -635,6 +637,38 @@ struct CompanionView: View {
                 .help(String(clip.prefix(120)))
             }
         }
+    }
+
+    /// Recall can return eight keeps, and eight chips push the answer off the
+    /// panel; the model still sees every one.
+    private static let relatedChipLimit = 4
+
+    private func relatedChip(_ match: RetrievalMatch) -> some View {
+        Button {
+            viewModel.askAboutRelated(match)
+        } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(match.context.intent)
+                    .font(.caption)
+                    .lineLimit(2)
+                    .foregroundStyle(.primary)
+                Text("\(match.reason) · \(match.context.createdAt.formatted(.relative(presentation: .named)))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.Spacing.snug)
+            .padding(.vertical, DS.Spacing.hair)
+            .background(
+                match.reason.contains("past fix")
+                    ? DS.Pointer.mark.opacity(DS.Alpha.chipFill)
+                    : Color.primary.opacity(DS.Alpha.chipFill),
+                in: RoundedRectangle(cornerRadius: DS.Radius.chip)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Put this keep in the ask field — your words, not a new capture")
     }
 
     /// Grows with the answer instead of reserving a fixed block: a two-line

@@ -59,6 +59,14 @@
         "zip"
       ],
       "hardenedRuntime": true,
+      "protocols": [
+        {
+          "name": "To-Do Notifier",
+          "schemes": [
+            "todonotifier"
+          ]
+        }
+      ],
       "gatekeeperAssess": false,
       "identity": null,
       "entitlements": "build/entitlements.mac.plist",

@@ -174,6 +174,18 @@ private struct LibraryBrowser: View {
                 scopePicker
                 Divider()
                 list
+                if let summary = ResurfaceStats.summary(ResurfaceStats.counts(
+                    contexts.map { (shown: $0.timesResurfaced, used: $0.timesUsedWhenResurfaced) }
+                )) {
+                    Divider()
+                    Text(summary)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, DS.Spacing.normal)
+                        .padding(.vertical, DS.Spacing.tight)
+                        .help("Counted on this Mac only. Opening or asking about a keep from the panel counts as reaching for it.")
+                }
             }
             .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         } detail: {
@@ -205,6 +217,10 @@ private struct LibraryBrowser: View {
         }
         .task(id: scope) { work = TodoBridge.load() }
         .task(id: search) { await refreshSemanticMatches() }
+        .onAppear { selectPending() }
+        .onReceive(NotificationCenter.default.publisher(for: LibraryWindow.selectNotification)) { _ in
+            selectPending()
+        }
         .searchable(text: $search, placement: .sidebar, prompt: "Search reasons, screen text, apps")
         .frame(minWidth: 820, minHeight: 520)
         .toolbar {
@@ -248,6 +264,21 @@ private struct LibraryBrowser: View {
             Button("Cancel", role: .cancel) { projectName = "" }
             Button("Rename") { renameCurrentProject() }
         }
+    }
+
+    /// Shows the keep a reminder or the panel pointed at, widening the scope
+    /// and clearing the search so it cannot be selected yet filtered out.
+    private func selectPending() {
+        guard let identifier = LibraryWindow.pendingSelection,
+              let match = contexts.first(where: { $0.reminderIdentifier == identifier })
+        else { return }
+        LibraryWindow.pendingSelection = nil
+        if !inScope.contains(where: { $0.persistentModelID == match.persistentModelID }) {
+            scope = .everything
+        }
+        search = ""
+        isShowingGraph = false
+        selection = match
     }
 
     private func createProject() {
@@ -401,6 +432,10 @@ private struct ProjectOverview: View {
                     .foregroundStyle(.tertiary)
                     .textCase(.uppercase)
                 Spacer()
+                if ToDoApp.isInstalled {
+                    Button("Open in To-Do Notifier") { ToDoApp.showProject(project.identifier) }
+                        .font(.caption)
+                }
                 Button("Choose tasks…") { isPickingTasks = true }
                     .font(.caption)
                     .disabled(work.todos.isEmpty)
@@ -427,12 +462,22 @@ private struct ProjectOverview: View {
                                 .font(.caption)
                                 .foregroundStyle(todo.isOverdue ? DS.Status.problem : Color.secondary)
                         }
+                        if ToDoApp.isInstalled {
+                            Button {
+                                ToDoApp.showTask(todo.id)
+                            } label: {
+                                Image(systemName: "arrow.up.forward.square")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Show this task in the To-Do Notifier")
+                            .accessibilityLabel("Show \(todo.title) in the To-Do Notifier")
+                        }
                     }
                     .font(.callout)
                 }
 
                 // Completing a task belongs in the app that owns tasks.
-                Text("Tick these off in the To-Do Notifier — this view only reads them.")
+                Text("Tick these off in the To-Do Notifier — the arrow takes you to the task.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -675,9 +720,11 @@ private struct ContextDetailView: View {
                                     .foregroundStyle(context.hasPendingReminder ? DS.Status.saved : Color.secondary)
 
                                 if !context.hasPendingReminder {
-                                    Text("already passed")
+                                    Text(Self.deliveryState(of: context))
                                         .font(.caption)
-                                        .foregroundStyle(.tertiary)
+                                        .foregroundStyle(context.reminderAcknowledgedAt == nil
+                                                         ? AnyShapeStyle(DS.Status.problem)
+                                                         : AnyShapeStyle(.tertiary))
                                 }
                             } else {
                                 Text("None set")
@@ -710,6 +757,22 @@ private struct ContextDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(Color.orange)
                         }
+
+                        if context.remindAt != nil, ToDoApp.isInstalled {
+                            Button("Show the task in To-Do Notifier") {
+                                ToDoApp.showTask(ProjectExport.importedTaskPrefix + context.reminderIdentifier)
+                            }
+                            .font(.caption)
+                            .buttonStyle(.link)
+                        }
+
+                        if context.hasPendingReminder {
+                            Text(AppSettings.mirrorsToAppleReminders
+                                 ? "Also goes to your iPhone through Apple Reminders."
+                                 : "Rings on this Mac only, and only if it is awake. Turn on Apple Reminders in Settings to get it on your iPhone.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
 
@@ -718,6 +781,12 @@ private struct ContextDetailView: View {
                         Text(context.provenanceLabel)
                         Text(context.createdAt.formatted(date: .abbreviated, time: .shortened))
                             .foregroundStyle(.secondary)
+                        if let resurfaced = ResurfaceStats.detail(shown: context.timesResurfaced,
+                                                                  used: context.timesUsedWhenResurfaced) {
+                            Label(resurfaced, systemImage: "clock.arrow.circlepath")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                     .font(.callout)
                 }
@@ -783,9 +852,22 @@ private struct ContextDetailView: View {
             }
 
             context.remindAt = date
+            context.reminderAcknowledgedAt = nil
             reminderProblem = nil
             try? modelContext.save()
         }
+    }
+
+    /// What is actually known about a reminder whose time has gone by. Only
+    /// a response to the banner counts as seen; silence is reported as
+    /// silence, not as a miss, because macOS does not say which it was.
+    static func deliveryState(of context: SavedContext) -> String {
+        if let seen = context.reminderAcknowledgedAt {
+            return "seen \(seen.formatted(.relative(presentation: .named)))"
+        }
+        return AppSettings.mirrorsToAppleReminders
+            ? "passed — no response on this Mac (it may have been handled on your phone)"
+            : "passed — no response yet"
     }
 
     /// Bound by identifier rather than by `Project` so the picker does not need

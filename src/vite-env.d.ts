@@ -4,6 +4,13 @@ import type {
   CompanionTaskRequest,
 } from "./shared/types";
 
+/** Where a `todonotifier://` link from the companion asked to go. */
+export interface FocusTarget {
+  kind: "task" | "project";
+  id: string;
+  nonce: number;
+}
+
 export interface TodoApi {
   getData: () => Promise<AppData>;
   setData: (data: AppData) => Promise<AppData>;
@@ -13,6 +20,8 @@ export interface TodoApi {
     updatedAt: string | null;
   }>;
   companionImportTasks: () => Promise<{ created: number }>;
+  takePendingFocus: () => Promise<FocusTarget | null>;
+  onFocusRequest: (cb: (target: FocusTarget) => void) => () => void;
   showMain: () => Promise<void>;
   setPetVisible: (visible: boolean) => Promise<AppData>;
   setPetHover: (hovering: boolean) => Promise<void>;

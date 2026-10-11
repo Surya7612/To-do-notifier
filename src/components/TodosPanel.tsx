@@ -1,4 +1,5 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { FocusTarget } from "../vite-env";
 import { v4 as uuid } from "uuid";
 import type { AppData, TodoItem } from "../shared/types";
 import { bumpTraining } from "../shared/types";
@@ -39,13 +40,39 @@ function defaultDueLocal() {
 export function TodosPanel({
   data,
   save,
+  focusTarget = null,
 }: {
   data: AppData;
   save: (d: AppData) => Promise<AppData>;
+  focusTarget?: FocusTarget | null;
 }) {
   const [title, setTitle] = useState("");
   const [dueLocal, setDueLocal] = useState(defaultDueLocal);
   const [projectFilter, setProjectFilter] = useState<string>(ALL_PROJECTS);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+  // Sent from the companion, which can show a task but leaves completing it
+  // to this app. The filter is cleared for a task so a project filter left
+  // on from earlier cannot hide the row the link was for.
+  useEffect(() => {
+    if (!focusTarget) return;
+    if (focusTarget.kind === "project") {
+      setProjectFilter(focusTarget.id);
+      return;
+    }
+    setProjectFilter(ALL_PROJECTS);
+    setHighlightedId(focusTarget.id);
+    const scroll = window.setTimeout(() => {
+      document
+        .querySelector(`[data-todo-id="${CSS.escape(focusTarget.id)}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 50);
+    const clear = window.setTimeout(() => setHighlightedId(null), 4000);
+    return () => {
+      window.clearTimeout(scroll);
+      window.clearTimeout(clear);
+    };
+  }, [focusTarget]);
   const lead = data.settings.reminderLeadMinutes || 60;
   const { projects, projectByTodoId } = useCompanionProjects();
   useCompanionTasks();
@@ -232,7 +259,10 @@ export function TodosPanel({
             {visible.map((todo) => (
               <li
                 key={todo.id}
-                className={`todo-item ${todo.status === "done" ? "done" : ""}`}
+                data-todo-id={todo.id}
+                className={`todo-item ${todo.status === "done" ? "done" : ""} ${
+                  highlightedId === todo.id ? "linked" : ""
+                }`}
               >
                 <input
                   type="checkbox"

@@ -201,3 +201,77 @@ struct GraphLayoutTests {
         #expect(positions["save:1"]?.y == size.height / 2)
     }
 }
+
+/// Most saves carry no #tag, so shared words are what connect a real library.
+/// They are the user's own words agreeing, and the tests pin that nothing
+/// weaker than that draws an edge.
+@Suite("Context graph shared words")
+struct ContextGraphSharedWordTests {
+    private func item(_ id: String, _ title: String, topics: [String] = []) -> ContextGraph.Item {
+        ContextGraph.Item(id: id, title: title, topics: topics)
+    }
+
+    @Test("a distinctive word in two reasons joins them through one node")
+    func sharedWordConnects() throws {
+        let graph = ContextGraph.build(items: [
+            item("1", "compare retrieval scoring"),
+            item("2", "retrieval paper from Engram"),
+        ], kinds: [.word])
+
+        let node = try #require(graph.nodes.first { $0.id == "word:retrieval" })
+        #expect(node.kind == .word)
+        #expect(node.degree == 2)
+    }
+
+    @Test("a word only one reason uses draws nothing")
+    func uniqueWordIsSilent() {
+        let graph = ContextGraph.build(items: [
+            item("1", "compare retrieval scoring"),
+            item("2", "renew the passport"),
+        ], kinds: [.word])
+        #expect(graph.nodes.allSatisfy { $0.kind == .save })
+        #expect(graph.edges.isEmpty)
+    }
+
+    @Test("filler and short words never connect anything")
+    func fillerIsIgnored() {
+        let graph = ContextGraph.build(items: [
+            item("1", "remind me to look at this later"),
+            item("2", "look at this later, remind me"),
+        ], kinds: [.word])
+        #expect(graph.edges.isEmpty)
+    }
+
+    @Test("a word that is already a topic is left to the topic node")
+    func topicWinsOverWord() {
+        let graph = ContextGraph.build(items: [
+            item("1", "engram notes", topics: ["engram"]),
+            item("2", "engram follow-up", topics: ["engram"]),
+        ], kinds: [.topic, .word])
+        #expect(!graph.nodes.contains { $0.id == "word:engram" })
+        #expect(graph.nodes.contains { $0.id == "topic:engram" })
+    }
+
+    @Test("only the most shared words are drawn")
+    func capsWordCount() {
+        let items = (0..<30).flatMap { index in
+            [item("a\(index)", "alpha\(index)word shared"), item("b\(index)", "alpha\(index)word other")]
+        }
+        let graph = ContextGraph.build(items: items, kinds: [.word])
+        #expect(graph.nodes.count { $0.kind == .word } == ContextGraph.sharedWordLimit)
+    }
+
+    @Test("a save joined to nothing is pulled in from the border")
+    func looseSaveIsNotStrandedOnTheEdge() throws {
+        let size = CGSize(width: 800, height: 600)
+        let items = (1...6).map { ContextGraph.Item(id: "\($0)", title: "x\($0)", topics: ["hub"]) }
+            + [ContextGraph.Item(id: "loose", title: "alone")]
+        let graph = ContextGraph.build(items: items, kinds: [.topic])
+        let positions = GraphLayout.positions(for: graph, in: size)
+        let loose = try #require(positions["save:loose"])
+
+        let onBorder = loose.x <= GraphLayout.margin + 1 || loose.x >= size.width - GraphLayout.margin - 1
+            || loose.y <= GraphLayout.margin + 1 || loose.y >= size.height - GraphLayout.margin - 1
+        #expect(!onBorder)
+    }
+}

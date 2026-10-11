@@ -25,8 +25,15 @@ struct AskContext: Sendable {
     var observation: ScreenObservation?
     /// Things the user saved earlier, in their own words.
     var memories: [String] = []
+    /// Set when the question asked about past keeps and `memories` holds what
+    /// a library search found for it — including when it found nothing, which
+    /// the model has to say rather than fill in.
+    var recallNote: String?
     /// Open tasks from the To-Do Notifier, if it has been linked.
     var tasks: [String] = []
+    /// Set when the question asks what to work on, so the model chooses from
+    /// `tasks` rather than offering general productivity advice.
+    var planningNote: String?
     var includeImage = false
     /// Earlier turns of this conversation, oldest first.
     var history: [Turn] = []
@@ -494,6 +501,10 @@ enum Prompt {
             )
         }
 
+        if let recallNote = context.recallNote {
+            parts.append(recallNote)
+        }
+
         if !context.memories.isEmpty {
             parts.append("The user saved these earlier, in their own words:\n"
                          + context.memories.joined(separator: "\n"))
@@ -502,6 +513,10 @@ enum Prompt {
         if !context.toolNotes.isEmpty {
             parts.append("MCP tool results (user-enabled, not the user's words):\n"
                          + context.toolNotes.joined(separator: "\n"))
+        }
+
+        if let planningNote = context.planningNote {
+            parts.append(planningNote)
         }
 
         if !context.tasks.isEmpty {

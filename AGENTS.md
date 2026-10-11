@@ -185,6 +185,30 @@ zero one: measured with `nomic-embed-text`, plainly unrelated pairs score 0.31�
 0.62–0.69. Contribution scales from the floor, not from zero, or everything above the line would
 arrive with the same near-maximum boost.
 
+**Recall is keyed on the question; resurfacing is keyed on the screen.** "What was I researching
+yesterday?" says nothing about the window it is asked over, so screen-keyed retrieval found nothing and
+the model, shown no keeps, either said so or invented some. `LibraryRecall` runs when the question asks
+about the *past* — "did I save", "I kept", "what was I working on", "my saves" — and never on the
+present tense, because "how do I save this?" and "what should I work on?" are questions about now. A
+named time is a **filter, not a score**: a keep from last week is not a weaker answer to "yesterday",
+it is no answer. Within it, the question's subject words rank what is left, the user's own words
+counting double the model's gloss, as everywhere else. The model is told the scope it searched even
+when nothing was found, and told to say so, because an empty list with no explanation is exactly what
+invites invention. The strip says "Found in your library" so the two kinds of match never look alike.
+
+**"What should I work on?" is answered from the task list, and its estimates are labelled.** The to-do
+app records no durations, so nothing here can know what fits in forty-five minutes. `FocusPlan` hands
+the model the open tasks — overdue first, then soonest due, narrowed to the current project — with the
+stated budget, and requires it to quote titles exactly and to say that any judgement of length is its
+own. With no tasks linked it says so instead of producing a generic productivity list. The Prep
+briefs menu offers it as a preset, so its wording can never become a saved reason.
+
+**Whether resurfacing helps is counted, on this Mac.** The plan's own success test is "I would have
+forgotten that if it had not brought it back", and no relevance score can answer it. Each keep counts
+how often a summon showed it and how often the user then reached for it — asked about it, or opened it
+in the library — and the library says both, including when the answer is "never". Recall is excluded:
+that is the user asking, not Max volunteering. Nothing about it leaves the machine.
+
 **Embedding is local, structurally.** `embed` is absent from the `Brain` protocol and exists only on
 `OllamaBrain`, exactly as `summarize` is. Embedding is the *worst* thing to export, because it runs
 once per save rather than once per question — the volume is the user's whole library, not one
@@ -314,6 +338,16 @@ after the first replace. A task that came from Max carries a **From Max** badge,
 `companion:` id, for the same reason the project badge exists — where a task came from is a fact
 about it the user cannot otherwise see.
 
+**The companion links into the to-do app rather than completing tasks itself.** Ticking a task off
+belongs to the app that owns it, and a checkbox here would have to write `app-data.json`. What the
+companion can do is remove the hunt: `ToDoApp` opens `todonotifier://task?id=…` or `project?id=…`, and
+`electron/lib/deepLink.cjs` brings that window up on the Todos tab with the row highlighted or the
+project filtered. A URL because it is the one thing macOS routes between two unrelated processes, and
+it launches the other app when it is not running. The main process holds the target until the
+renderer takes it, since a link that launched or created the window arrives before React is
+listening. Unknown links parse to nothing; the most one may do is open the window. An older build
+without the scheme still gets opened, just not at the row.
+
 The title it arrives with is `ReminderPhrase.taskTitle`, not the saved reason verbatim. "Remind me
 in two hours to text voice bugs" is an instruction to Max, and as a row in a list that already shows
 the due time it says the time twice. Only a sentence that *opens* with a reminder cue is reshaped,
@@ -386,6 +420,16 @@ a save, the phone import, launch and wake each start scheduling and mirroring as
 and a cancel that arrives before the request exists removes nothing, so the Mac alerted alongside
 Apple. The one exception is a time the user picks in the library, which passes
 `reclaimingFromApple`, since Apple holds the old time until the next sweep.
+
+**A reminder says what is known about its delivery, and no more.** A local notification cannot
+report that a banner was seen. What it can report is a response, so the category carries **Snooze 10
+minutes** and **Got it**, with `.customDismissAction` so a dismissal counts too, and opening it takes
+the library straight to that keep. Each response sets `reminderAcknowledgedAt`. A passed reminder
+with none reads "no response yet" — never "missed", since macOS does not say which it was — and with
+the mirror on, "may have been handled on your phone". "Got it" rather than "Done" because the task
+it became lives in the other app, and a button here claiming it finished would not finish it there.
+Where a pending reminder will ring is stated beside it, and in the save confirmation: "this Mac only"
+is the fact a user most needs before walking away.
 
 The permission needs a **hand-written entitlements file**, which is why `TodoCompanion.entitlements`
 exists at all. Xcode has no build setting that emits a Reminders entitlement, and without
@@ -529,6 +573,13 @@ clicks, so toggles, buttons and pickers all work, and only **text fields** are d
 click, show no caret, and silently swallow typing. `SettingsView` therefore activates on appear, as
 `LibraryMenuButton` already did. A window where every control works except the ones needing a keyboard
 is this bug, not a SwiftUI binding problem.
+
+**Settings shows what everyone needs first and hides the rest until asked.** Shortcuts, who answers
+(the screenshot switch lives there, since it decides whether a visual question can be answered),
+the to-do link, the Reminders mirror and voice come first; dictation engine, Accessibility extras,
+meaning search, phone capture and MCP sit behind an Advanced switch. That section is forced open
+while anything in it is on, because a hidden setting that is doing something is how a feature ends
+up running with no visible cause.
 
 **Cloud models are picked from a list, not typed.** `OpenAIModelChoice`, `AnthropicModelChoice`, and
 `GeminiModelChoice` are fixed rather than fetched from each vendor's models endpoint, because that
@@ -831,6 +882,13 @@ settles somewhere new each time looks impressive once and is useless twice. Rend
 rather than as views, because a few hundred `View` identities with their own animation machinery
 stutter where an immediate-mode draw does not.
 
+Most saves carry no `#tag`, so a real library drew as app hubs with unlabelled dots around them.
+Two things changed that. A **word two saved reasons share** becomes a node — the user's own words
+agreeing, on the same footing as a tag, capped at the twelve most shared and never filler or a word
+already a topic. And a node joined to nothing gets as much pull towards the centre as an edge would
+give it, where before repulsion alone pushed it onto the border. A small library labels everything;
+the unlabelled-until-hovered rule is for the large one it was written for.
+
 **Indicators are their own windows.** One-shot ScreenCaptureKit grabs get no system recording indicator,
 so a capture would otherwise be completely invisible — the wrong property for a feature that reads your
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
@@ -981,13 +1039,13 @@ the edge is the only part of this that fails invisibly.
 
 | File | Lines | Purpose |
 |---|---|---|
-| `TodoCompanionApp.swift` | ~90 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy. |
-| `App/AppDelegate.swift` | ~217 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder taps, and republishes the project export on every store save. |
-| `App/SettingsView.swift` | ~690 | Both hotkeys, provider choice, Ollama and OpenAI/Claude/Gemini settings, voice and follow-along, Accessibility extras, MCP tools, the to-do app link, and the Apple Reminders mirror. |
+| `TodoCompanionApp.swift` | ~120 | Entry point. `MenuBarExtra` scene, settings and library windows, accessory activation policy, and `LibraryWindow.open(selecting:)` so a reminder or the panel can open the library at one keep. |
+| `App/AppDelegate.swift` | ~255 | Lifecycle. Registers the global hotkey, owns the panel controller, handles reminder responses (open, Snooze, Got it, dismiss — each recorded), and republishes the project export on every store save. |
+| `App/SettingsView.swift` | ~745 | Essentials first — hotkeys, who answers (with the screenshot switch), the to-do app link, the Apple Reminders mirror, voice — then an Advanced switch over dictation engine, Accessibility extras, meaning search, phone capture and MCP. Advanced stays open while anything in it is on. |
 | `Companion/CompanionPanelController.swift` | ~318 | Panel lifecycle, cursor-relative placement, pinning, summoning straight into dictation, and wiring the view model to the capture indicator, the lesson overlay, and the teaching grid board. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
-| `Companion/CompanionView.swift` | ~1190 | Panel UI: status header with the who-answers, session-mode, and open-file menus and the pin, ask field, dictation and save buttons, save options, related-context strip, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~2690 | Orchestrates capture → OCR → retrieval → model → save. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, session modes, MCP enrichment, AX page text, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, the lesson being walked, and the teaching-grid board. |
+| `Companion/CompanionView.swift` | ~1265 | Panel UI: status header with the who-answers, session-mode, and open-file menus and the pin, ask field, dictation and save buttons, save options, related-context strip (screen matches or library recall, each openable in the library), the what-to-work-on briefs, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
+| `Companion/CompanionViewModel.swift` | ~2890 | Orchestrates capture → OCR → retrieval → model → save, plus recall and planning from the question. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, session modes, MCP enrichment, AX page text, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, the lesson being walked, the teaching-grid board, and the local count of what resurfacing brought back and what was used. |
 | `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
 | `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
 | `Capture/ScreenCapture.swift` | ~340 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
@@ -1007,7 +1065,7 @@ the edge is the only part of this that fails invisibly.
 | `Support/WindowDragArea.swift` | ~27 | AppKit strip that starts a window drag where SwiftUI hosting swallows it. |
 | `Capture/CaptureIndicator.swift` | ~196 | Cursor-tracking ring shown while capturing (blue) or listening (pink, driven by mic level). |
 | `Capture/RegionSelector.swift` | ~137 | Drag-to-select overlay. Crops the screenshot already in memory rather than capturing again. |
-| `Brain/Brain.swift` | ~460 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, the file-editing rules, teaching, session modes, problem-tutor, MCP tool notes, and the grid-board scene format. |
+| `Brain/Brain.swift` | ~590 | `Brain` protocol, `AskContext`, `Turn`, and the shared prompt text — including Max's persona, the conversation rules, the Markdown formatting rules, the file-editing rules, teaching, session modes, problem-tutor, MCP tool notes, the recall and planning notes, and the grid-board scene format. |
 | `Brain/SessionMode.swift` | ~70 | Ask / Teach / Debug / Prep stances and their system-prompt guidance. Pure. |
 | `Brain/ProblemTutor.swift` | ~60 | Whether the screen looks like a coding problem, and the tutor paragraph it earns. Pure. |
 | `Brain/ScreenKind.swift` | ~148 | What sort of material is on screen, and the paragraph of prompt guidance it earns. Pure. |
@@ -1024,14 +1082,17 @@ the edge is the only part of this that fails invisibly.
 | `Voice/DictationRecognizer.swift` | ~241 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
 | `Voice/DictationHints.swift` | ~96 | Picks the words on screen worth telling the recognizer to expect. Pure. |
 | `Voice/ParakeetDictationRecognizer.swift` | ~148 | The Parakeet backend, on the Neural Engine through FluidAudio. |
-| `Store/SavedContext.swift` | ~223 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`) and hashtag parsing. |
+| `Store/SavedContext.swift` | ~255 | SwiftData models (`SavedContext`, `Project`, `ConversationTurn`), reminder acknowledgement and resurface counts, and hashtag parsing. |
 | `Store/TextDiff.swift` | ~168 | Line diff and fenced-code-block extraction. Pure. |
 | `Store/EditableFile.swift` | ~128 | The one user-picked file Max may propose changes to, with a confirmed write and a session revert. |
 | `Store/ReminderPhrase.swift` | ~355 | Decides whether a saved reason is asking to be brought back, and when, and the title it carries into the to-do app. Pure logic, no notification machinery. |
 | `Store/ReminderMirror.swift` | ~140 | Which of the to-do app's tasks belong in Apple Reminders, and what to withdraw. Pure. |
 | `Store/ReminderMirrorMessaging.swift` | ~55 | Settings copy and System Settings deep-link for the mirror destination. Pure. |
 | `Store/ContextStore.swift` | ~25 | Shared `ModelContainer`, with an in-memory fallback rather than refusing to launch. |
-| `Store/ContextGraph.swift` | ~241 | Builds the node/edge view of saves, projects, topics and apps, and lays it out. Pure. |
+| `Store/ContextGraph.swift` | ~320 | Builds the node/edge view of saves, projects, topics, words two reasons share, and apps, and lays it out with a pull that keeps unjoined saves off the border. Pure. |
+| `Store/LibraryRecall.swift` | ~250 | Answers "what did I keep?" from the question: past-tense recall detection, time windows (yesterday, last week, on Monday), the current-project scope, and subject-word ranking. Pure. |
+| `Store/FocusPlan.swift` | ~95 | "What should I work on?": recognises the ask, reads a time budget, and writes the note that confines the model to the open tasks. Pure. |
+| `Store/ResurfaceStats.swift` | ~50 | Whether resurfacing is earning its place, as library copy. Pure. |
 | `Store/ContextRetriever.swift` | ~210 | Explainable relevance scoring against the current screen, including past-fix and the optional meaning signal. |
 | `Store/ScreenChange.swift` | ~75 | OCR-token diff since the last keep of the same window — change-aware re-save copy. Pure. |
 | `Store/ProjectBrief.swift` | ~50 | Assembles a project-brief ask from the user's own intents and open tasks. Pure. |
@@ -1040,8 +1101,9 @@ the edge is the only part of this that fails invisibly.
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~320 | Brings in captures from a phone through a user-chosen folder, arming a reminder when the capture asked for one. Posts when something arrives so an open library can remount. |
 | `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
-| `Store/ProjectExport.swift` | ~229 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge. |
-| `Support/Reminders.swift` | ~80 | Schedules and cancels the local notification behind a reminder. |
+| `Store/ProjectExport.swift` | ~235 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge; skips an identical rewrite. |
+| `Support/Reminders.swift` | ~130 | Schedules and cancels the local notification behind a reminder, with Snooze and Got it actions. |
+| `Support/ToDoApp.swift` | ~45 | `todonotifier://` links that open the To-Do Notifier at a task or project, falling back to opening the app. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
 | `Support/AppSettings.swift` | ~430 | `UserDefaults` keys, defaults, both hotkeys, Accessibility extras flag, session mode, MCP launch, the provider choice (Ollama / OpenAI / Claude / Gemini), and `AnswerDestination`. |
 | `Store/MCPClient.swift` | ~260 | Opt-in local MCP stdio client: list tools, call a few that overlap the question, label results for the prompt. Soft-fails. |
@@ -1056,8 +1118,8 @@ the edge is the only part of this that fails invisibly.
 | `Hotkey/EventTapHotkey.swift` | ~130 | CGEvent tap for Tab+Q when Accessibility extras are active. |
 | `Hotkey/TabChordDetector.swift` | ~30 | Pure Tab+Q chord state machine. |
 | `Hotkey/HotkeyChoice.swift` | ~75 | The vetted list of non-reserved Carbon shortcuts, and the talk shortcut default. |
-| `Library/GraphView.swift` | ~203 | `Canvas` rendering of the graph, with hover to trace a connection. |
-| `Library/LibraryView.swift` | ~751 | Browse by project, search, reassign, rename, and delete saved contexts. Remounts when the phone inbox imports so an open window notices. Sets, changes and cancels a reminder on anything kept. Project overview pairs what was kept with the project's open tasks. |
+| `Library/GraphView.swift` | ~240 | `Canvas` rendering of the graph, with hover to trace a connection, every label in a small library, and a count of saves joined to nothing. |
+| `Library/LibraryView.swift` | ~895 | Browse by project, search, reassign, rename, and delete saved contexts. Remounts when the phone inbox imports so an open window notices. Sets, changes and cancels a reminder on anything kept. Project overview pairs what was kept with the project's open tasks, each linking into the To-Do Notifier. Says whether a passed reminder was seen and where a pending one will ring, and how often resurfacing was used. |
 
 ## Build & run
 
@@ -1116,6 +1178,11 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `CodeBlockTests` | Pulling the file out of a reply | A model's reply is prose with a file inside it. Extracting wrongly means writing prose, or half a file, over the user's code, so an unterminated fence must yield nothing. |
 | `ContextGraphTests` | Nodes and edges built from saves | A wrong edge is a wrong claim about how the user's material relates, and it is drawn large enough to be believed. Pins that shared tags collapse to one node and that filtering a kind removes its edges too. |
 | `GraphLayoutTests` | Force-directed placement | No assertable "correct" coordinates, so it pins the properties that make it usable: everything placed, nothing off-canvas, connected nodes closer than unconnected, and the same picture every time. |
+| `LibraryRecallTests` | Which questions search the library, and the time window and ranking they get | Decides what the model is told the user kept. Too eager and a question about the screen arrives buried under old keeps; too reluctant and "what was I researching yesterday?" gets an invented answer. Pins that present-tense questions are not recall, that a window filters rather than scores, and that an empty search tells the model to say so. The clock is fixed so day boundaries are asserted rather than hoped for. |
+| `FocusPlanTests` | "What should I work on?" and the time budget in it | The failures are a generic lecture (not recognised), a screen question hijacked into planning, and a budget misread. Pins that the model is confined to the listed tasks and must own its estimates, and says so when none are linked. |
+| `ResurfaceStatsTests` | The library's account of whether resurfacing helped | The one place the app reports on itself, so it must not flatter itself: unshown keeps are not counted and uses never exceed showings. |
+| `ToDoAppLinkTests` | The `todonotifier://` links | Half of a contract with `deepLink.cjs`; asserts on the URL string, including a `companion:` id surviving as a query item. |
+| `ContextGraphSharedWordTests` | Shared-word nodes and the pull on unjoined saves | A shared word draws an edge, so it pins that nothing weaker than the user's own words agreeing can: a word used once, filler, or a word already a topic draws nothing. Also pins that a save joined to nothing is not left on the border. |
 | `ScreenTextLocatorTests` | Which words in an answer may point at the screen | This one draws on the user's display, so a wrong match is a confident claim about the wrong pixels. Most cases pin what must yield **nothing** — a short unquoted word, a match inside a longer word, a label Vision never saw — rather than a best guess. |
 | `LessonTests` | Reading a lesson out of an answer, following the voice through it, and resolving every label a step names | The parse is the only thing between a reply and a mode that draws continuously on the user's screen, and it fails silently in both directions: too eager and any answer containing a list puts boxes over an editor, too reluctant and "Teach me" appears to do nothing. Most of it pins what must **not** become a lesson — a list too short to be worth a mode, and a numbered answer that quotes nothing on screen. Also pins that matching survives `SpeechPlayback.speakable`, since the voice rewrites the sentence the match is made against, and that it never runs backwards to a label mentioned twice. The marks suite pins the two things a step draws besides boxes, both of which land on the user's own screen: an arrow only where Max wrote one — two labels in a step is not a relation between them — and a caption cut at a word rather than mid-word. |
 | `BoardSceneTests` | Parsing the teaching-grid `board` fence | Invented diagrams have their own surface; a bad or unclosed fence must yield nothing so Teach/Explain still work as prose. Pins step→frame selection and concept colour fallback. |
@@ -1158,6 +1225,8 @@ the file.
 `electron/lib/companionWatch.test.ts` pins that one publish — several file events in a burst —
 imports once, that other files in the container are ignored, and that a companion never installed
 means no watch rather than a crash.
+
+`electron/lib/deepLink.test.ts` pins that a link from outside the app does nothing unless it is exactly a task or project link with a sane id — the worst a malformed one may do is nothing.
 
 `electron/lib/remindersService.test.ts` pins who announces what. An imported reminder must produce no
 notification here, because Max already scheduled one — and the same sweep must go on announcing every

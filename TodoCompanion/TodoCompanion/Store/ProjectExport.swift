@@ -218,9 +218,15 @@ enum ProjectExport {
         do {
             let directory = location.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try encode(payload)
+            // The store saves for reasons the other app cannot see — a keep
+            // being brought back is counted on every summon — and the reader
+            // watches this folder, so an identical rewrite would wake it for
+            // nothing.
+            if let existing = try? Data(contentsOf: location), existing == data { return }
             // Atomic because the reader is another process polling on its own
             // schedule; a torn write would show up there as corrupt JSON.
-            try encode(payload).write(to: location, options: .atomic)
+            try data.write(to: location, options: .atomic)
         } catch {
             // A failure here costs the other app a label, not this app a save.
             NSLog("[ProjectExport] couldn't write \(location.path): \(error)")

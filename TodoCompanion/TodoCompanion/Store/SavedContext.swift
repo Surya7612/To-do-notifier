@@ -119,6 +119,24 @@ final class SavedContext {
     /// cancellable.
     var reminderIdentifier: String = UUID().uuidString
 
+    /// When the user opened the reminder's notification or marked it done.
+    ///
+    /// The only delivery state a local notification can honestly report: macOS
+    /// says nothing about a banner that was shown and ignored, so "not
+    /// acknowledged" is as far as this goes, and the library says exactly that
+    /// rather than claiming the alert was missed.
+    var reminderAcknowledgedAt: Date?
+
+    /// How many times retrieval put this in front of the user on a summon,
+    /// and how many of those times they reached for it.
+    ///
+    /// Kept on this Mac and never sent anywhere. It exists so the library can
+    /// say whether bringing things back is actually earning its place — the
+    /// plan's own success test — which no score can.
+    var timesResurfaced: Int = 0
+    var timesUsedWhenResurfaced: Int = 0
+    var lastResurfacedAt: Date?
+
     var hasPendingReminder: Bool {
         guard let remindAt else { return false }
         return remindAt > Date()

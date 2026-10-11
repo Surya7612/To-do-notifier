@@ -38,6 +38,7 @@ const {
   watchCompanionProjects,
 } = require("./lib/companionProjects.cjs");
 const { importCompanionTasks } = require("./lib/companionTasks.cjs");
+const { SCHEME: LINK_SCHEME, parseDeepLink } = require("./lib/deepLink.cjs");
 
 // Some shells set this and break Electron GUI launches
 delete process.env.ELECTRON_RUN_AS_NODE;
@@ -176,6 +177,48 @@ if (!gotLock) {
   // Exit non-zero so concurrently does not look like a successful silent quit
   app.exit(1);
 } else {
+  /**
+   * Where a `todonotifier://` link asked to go, held until a renderer takes
+   * it. A link that launches the app arrives before any window exists, and
+   * one sent to a freshly created window arrives before React is listening,
+   * so a broadcast alone would be lost in exactly the cases that matter.
+   */
+  ctx.pendingFocus = null;
+
+  const handleDeepLink = (url) => {
+    const target = parseDeepLink(url);
+    if (!target) return;
+    ctx.pendingFocus = { ...target, nonce: Date.now() };
+    if (!app.isReady()) return;
+    windows.createMainWindow({ show: true });
+    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+      if (ctx.mainWindow.isMinimized()) ctx.mainWindow.restore();
+      ctx.mainWindow.show();
+      ctx.mainWindow.focus();
+    }
+    if (process.platform === "darwin" && app.dock) app.dock.show();
+    windows.broadcast("nav:focus", ctx.pendingFocus);
+  };
+
+  // Registered before `ready`: macOS delivers the link that launched the app
+  // as early as it can, and a handler attached later never sees it.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
+  });
+
+  ipcMain.handle("nav:take-pending", () => {
+    const pending = ctx.pendingFocus;
+    ctx.pendingFocus = null;
+    return pending;
+  });
+
+  if (app.isPackaged) {
+    app.setAsDefaultProtocolClient(LINK_SCHEME);
+  } else if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(LINK_SCHEME, process.execPath, [path.resolve(process.argv[1])]);
+  }
+
   app.on("second-instance", () => {
     windows.createMainWindow({ show: true });
     if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
@@ -291,7 +334,9 @@ if (!gotLock) {
     windows.createPetWindow();
     voiceHotkeys.registerTalkHotkey();
 
-    const startedHidden = process.argv.includes("--hidden");
+    // A link that launched the app is a request to see it, whatever the
+    // login item asked for.
+    const startedHidden = process.argv.includes("--hidden") && !ctx.pendingFocus;
 
     windows.createMainWindow({ show: !startedHidden });
     if (!startedHidden) {

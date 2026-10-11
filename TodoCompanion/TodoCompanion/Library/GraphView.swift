@@ -12,7 +12,7 @@ struct GraphView: View {
     /// Selecting a node in the graph selects it in the library beside it.
     var onSelectSave: (String) -> Void = { _ in }
 
-    @State private var kinds: Set<ContextGraph.NodeKind> = [.project, .topic, .app]
+    @State private var kinds: Set<ContextGraph.NodeKind> = [.project, .topic, .word, .app]
     @State private var positions: [String: CGPoint] = [:]
     @State private var laidOutFor: CGSize = .zero
     @State private var hovered: String?
@@ -93,6 +93,17 @@ struct GraphView: View {
                     )
                 }
             }
+            .overlay(alignment: .bottomLeading) {
+                let loose = Self.looseSaves(in: current)
+                if loose > 0, !current.isEmpty {
+                    Text(loose == 1
+                         ? "1 keep shares nothing with the others yet. A #tag or a project when you save connects it."
+                         : "\(loose) keeps share nothing with the others yet. A #tag or a project when you save connects them.")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.6))
+                        .padding(DS.Spacing.card)
+                }
+            }
         }
     }
 
@@ -134,17 +145,41 @@ struct GraphView: View {
 
             // Labels only where they can be read: everything at once is an
             // unreadable mat of text, so small nodes stay silent until hovered.
-            let showsLabel = node.id == hovered || (hovered == nil && radius >= 9)
+            // A small library has room for every label, and there unlabelled
+            // dots were the whole problem — nothing said what anything was.
+            let roomForAll = graph.nodes.count <= Self.labelEverythingBelow
+            let showsLabel = node.id == hovered
+                || (hovered == nil && (radius >= 9 || roomForAll))
+                || (hovered != nil && roomForAll && neighbours.contains(node.id))
             guard showsLabel else { continue }
 
+            let label = node.id == hovered || node.kind != .save
+                ? node.label
+                : Self.shortened(node.label)
             drawing.draw(
-                Text(node.label)
+                Text(label)
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.9)),
                 at: CGPoint(x: point.x, y: point.y + radius + 8),
                 anchor: .top
             )
         }
+    }
+
+    private static let labelEverythingBelow = 40
+
+    private static func shortened(_ label: String) -> String {
+        label.count <= 26 ? label : String(label.prefix(24)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// Saves joined to nothing but the app they came from — which every save
+    /// from that app shares, so it says nothing about how they relate.
+    static func looseSaves(in graph: ContextGraph.Graph) -> Int {
+        var meaningful: [String: Int] = [:]
+        for edge in graph.edges where !edge.target.hasPrefix("app:") {
+            meaningful[edge.source, default: 0] += 1
+        }
+        return graph.nodes.count { $0.kind == .save && meaningful[$0.id] == nil }
     }
 
     /// The hovered node and everything joined to it, so hovering explains a
@@ -184,6 +219,7 @@ struct GraphView: View {
         case .save: DS.Status.saved
         case .project: DS.Status.ready
         case .topic: DS.Status.listening
+        case .word: Color.teal
         case .app: DS.Status.busy
         }
     }

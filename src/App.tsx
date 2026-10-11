@@ -11,6 +11,7 @@ import { WakeListener } from "./components/WakeListener";
 import { VoiceStatusBadge } from "./components/VoiceStatusBadge";
 import { voiceController } from "./lib/voiceController";
 import packageJson from "../package.json";
+import type { FocusTarget } from "./vite-env";
 import "./styles.css";
 
 type Tab =
@@ -35,7 +36,24 @@ const TABS: { id: Tab; label: string }[] = [
 export default function App() {
   const { data, ready, save, saveMerge } = useAppData();
   const [tab, setTab] = useState<Tab>("todos");
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const autoListen = Boolean(ready && data.settings.wakeWordEnabled);
+
+  // The companion links here to show a task or project. A link that launched
+  // or created this window arrived before this listener existed, so the main
+  // process holds it until it is taken.
+  useEffect(() => {
+    const show = (target: FocusTarget | null) => {
+      if (!target) return;
+      setTab("todos");
+      setFocusTarget(target);
+    };
+    void window.todoApi.takePendingFocus?.().then(show);
+    return window.todoApi.onFocusRequest?.((target) => {
+      show(target);
+      void window.todoApi.takePendingFocus();
+    });
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -107,7 +125,9 @@ export default function App() {
             </nav>
           </header>
           <main className="content">
-            {tab === "todos" && <TodosPanel data={data} save={save} />}
+            {tab === "todos" && (
+              <TodosPanel data={data} save={save} focusTarget={focusTarget} />
+            )}
             {tab === "pomodoro" && <PomodoroPanel data={data} save={save} />}
             {tab === "notes" && <NotesPanel data={data} save={save} />}
             {tab === "tutor" && (

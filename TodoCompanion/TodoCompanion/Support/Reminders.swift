@@ -10,8 +10,29 @@ import UserNotifications
 /// something `UNUserNotificationCenter` already does.
 enum Reminders {
     /// Carried on the notification so opening it can find the context again.
-    static let contextIDKey = "savedContextID"
+    nonisolated static let contextIDKey = "savedContextID"
     private static let categoryID = "savedContextReminder"
+
+    static let snoozeActionID = "snooze"
+    static let acknowledgeActionID = "acknowledge"
+    static let snoozeInterval: TimeInterval = 10 * 60
+
+    /// Snooze and "Got it" on the banner, plus a callback when it is
+    /// dismissed. Those three are the only evidence a local notification can
+    /// give that it reached anyone, which is what the library reports back.
+    ///
+    /// "Got it" rather than "Done": the task the reminder became lives in the
+    /// to-do app, and a button here claiming it was finished would not finish
+    /// it there.
+    static func registerActions() {
+        let snooze = UNNotificationAction(identifier: snoozeActionID, title: "Snooze 10 minutes")
+        let acknowledge = UNNotificationAction(identifier: acknowledgeActionID, title: "Got it")
+        let category = UNNotificationCategory(identifier: categoryID,
+                                              actions: [snooze, acknowledge],
+                                              intentIdentifiers: [],
+                                              options: [.customDismissAction])
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+    }
 
     /// Asks once, the first time the user actually arms a reminder rather than
     /// at launch — a permission prompt makes more sense next to the thing that

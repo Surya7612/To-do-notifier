@@ -25,6 +25,10 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.accessibilityExtrasEnabled) private var accessibilityExtrasEnabled = false
     @AppStorage(AppSettings.Key.mcpEnabled) private var mcpEnabled = false
     @AppStorage(AppSettings.Key.mcpLaunch) private var mcpLaunch = ""
+    /// Advanced sections are hidden until asked for, but anything already
+    /// switched on there stays reachable: hiding a setting that is doing
+    /// something is how a feature ends up running with no visible cause.
+    @AppStorage("settingsShowsAdvanced") private var showsAdvanced = false
 
     /// Mirrors the Keychain rather than being stored by SwiftUI, so the secret
     /// never lands in a preferences plist.
@@ -64,6 +68,11 @@ struct SettingsView: View {
         }
     }
 
+    private var advancedInUse: Bool {
+        accessibilityExtrasEnabled || mcpEnabled || semanticEnabled || inboxFolder != nil
+            || dictationEngine != AppSettings.DictationEngine.apple.rawValue
+    }
+
     private var accessibilityStatusText: String {
         if !accessibilityExtrasEnabled {
             return "Off. Carbon shortcuts and OCR pointing work without Accessibility."
@@ -76,6 +85,64 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            shortcutSection
+            whoAnswersSection
+            todoAppSection
+            mirrorSection
+            voiceSection
+
+            Section {
+                Toggle("Show advanced settings", isOn: $showsAdvanced)
+                    .disabled(advancedInUse)
+                Text(advancedInUse
+                     ? "Shown because something in them is switched on."
+                     : "Dictation engine, Accessibility extras, meaning search, phone capture and local MCP tools. None of them is needed to ask, keep, or be reminded.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if showsAdvanced || advancedInUse {
+                dictationSection
+                accessibilitySection
+                meaningSection
+                phoneCaptureSection
+#if !APP_STORE
+                mcpSection
+#endif
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 480)
+        .onAppear {
+            // An accessory app is never a normal foreground application, so
+            // macOS hands this window no key focus: it draws, and it takes
+            // mouse clicks on toggles and buttons, but every text field silently
+            // swallows typing. The library window activates for the same reason.
+            NSApp.activate(ignoringOtherApps: true)
+
+            openAIModelSelection = OpenAIModelChoice.selection(for: openAIModel)
+            anthropicModelSelection = AnthropicModelChoice.selection(for: anthropicModel)
+            geminiModelSelection = GeminiModelChoice.selection(for: geminiModel)
+            openAIKeyStored = AppSettings.openAIKey != nil
+            anthropicKeyStored = AppSettings.anthropicKey != nil
+            geminiKeyStored = AppSettings.geminiKey != nil
+            refreshLinkedSummary()
+            refreshInbox()
+            refreshAccessibilityStatus()
+            canImportKey = !openAIKeyStored && TodoBridge.importableOpenAIKey() != nil
+            if mirrorsToAppleReminders, AppleReminders.isAuthorized {
+                mirrorDestination = AppleReminders.destination()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshAccessibilityStatus()
+            if accessibilityExtrasEnabled {
+                EventTapHotkey.shared.refresh()
+            }
+        }
+    }
+
+    private var shortcutSection: some View {
             Section("Shortcut") {
                 Picker("Summon companion", selection: $hotkeyID) {
                     ForEach(HotkeyChoice.all) { choice in
@@ -110,9 +177,8 @@ struct SettingsView: View {
                         .foregroundStyle(DS.Status.problem)
                 }
 
-                Text("These combos avoid the ones macOS reserves for itself, such as ⌘Space and ⌥⌘Space. "
-                     + "Tab+Q needs the Accessibility extras below. Until those are on, pressing the "
-                     + "talk combo twice is how you open the mic directly.")
+                Text("These combos avoid the ones macOS reserves for itself, such as ⌘Space. "
+                     + "Tab+Q is an advanced option under Accessibility extras.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -123,7 +189,9 @@ struct SettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
+    }
 
+    private var accessibilitySection: some View {
             Section("Accessibility extras") {
                 Toggle("Enable advanced shortcuts and pointer actions",
                        isOn: $accessibilityExtrasEnabled)
@@ -149,8 +217,10 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+    }
 
 #if !APP_STORE
+    private var mcpSection: some View {
             Section("MCP tools") {
                 Toggle("Call a local MCP server before answering", isOn: $mcpEnabled)
 
@@ -165,8 +235,10 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+    }
 #endif
 
+    private var whoAnswersSection: some View {
             Section("Who answers") {
                 // Menu rather than a segmented control: four providers do not
                 // fit on a segment strip, and a strip that only shows Local /
@@ -241,8 +313,20 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-            }
 
+                // Here rather than in a section of its own: it decides whether
+                // a visual question can be answered at all, which is a property
+                // of who answers rather than a separate preference.
+                Toggle("Send the screenshot instead of on-device text", isOn: $sendsImage)
+                Text(sendsImage
+                     ? "Needed for a cloud model to see the screen, and for a local vision model such as qwen3-vl."
+                     : "Screenshots stay on this Mac; only recognized text reaches the model.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+    }
+
+    private var dictationSection: some View {
             Section("Dictation") {
                 Picker("Recognizer", selection: $dictationEngine) {
                     ForEach(AppSettings.DictationEngine.allCases) { engine in
@@ -258,7 +342,9 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+    }
 
+    private var voiceSection: some View {
             Section("Reading answers aloud") {
                 Toggle("Have \(Prompt.assistantName) read answers out loud", isOn: $speaksAnswers)
 
@@ -307,7 +393,9 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+    }
 
+    private var meaningSection: some View {
             Section("Finding things by meaning") {
                 Toggle("Match saved context by meaning, not just words", isOn: $semanticEnabled)
 
@@ -328,7 +416,9 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+    }
 
+    private var todoAppSection: some View {
             Section("Your to-do app") {
                 HStack {
                     Text(isLinked ? linkedSummary : "Not linked")
@@ -351,7 +441,9 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+    }
 
+    private var mirrorSection: some View {
             Section("Reminders on your iPhone") {
                 Toggle("Mirror dated tasks to Apple Reminders", isOn: $mirrorsToAppleReminders)
                     .disabled(!isLinked)
@@ -407,7 +499,9 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+    }
 
+    private var phoneCaptureSection: some View {
             Section("Capture from your phone") {
                 HStack {
                     Text(inboxFolder ?? "Not linked")
@@ -451,45 +545,6 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
-            Section("Screen context") {
-                Toggle("Send the screenshot instead of on-device text", isOn: $sendsImage)
-                Text(sendsImage
-                     ? "Needed for a cloud model to see the screen, and for a local vision model such as qwen3-vl."
-                     : "Screenshots stay on this Mac; only recognized text reaches the model.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .onAppear {
-            // An accessory app is never a normal foreground application, so
-            // macOS hands this window no key focus: it draws, and it takes
-            // mouse clicks on toggles and buttons, but every text field silently
-            // swallows typing. The library window activates for the same reason.
-            NSApp.activate(ignoringOtherApps: true)
-
-            openAIModelSelection = OpenAIModelChoice.selection(for: openAIModel)
-            anthropicModelSelection = AnthropicModelChoice.selection(for: anthropicModel)
-            geminiModelSelection = GeminiModelChoice.selection(for: geminiModel)
-            openAIKeyStored = AppSettings.openAIKey != nil
-            anthropicKeyStored = AppSettings.anthropicKey != nil
-            geminiKeyStored = AppSettings.geminiKey != nil
-            refreshLinkedSummary()
-            refreshInbox()
-            refreshAccessibilityStatus()
-            canImportKey = !openAIKeyStored && TodoBridge.importableOpenAIKey() != nil
-            if mirrorsToAppleReminders, AppleReminders.isAuthorized {
-                mirrorDestination = AppleReminders.destination()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshAccessibilityStatus()
-            if accessibilityExtrasEnabled {
-                EventTapHotkey.shared.refresh()
-            }
-        }
     }
 
     private var whoAnswersCaption: String {
