@@ -15,6 +15,12 @@ nonisolated enum AXPageReader {
     /// Soft cap so a huge DOM cannot inflate the prompt past usefulness.
     static let characterLimit = 6000
     static let maxNodes = 400
+    /// Each AX read otherwise waits about six seconds on an app that is not
+    /// answering, and the walk makes hundreds of them, all before "Reading
+    /// your screen…" may clear — so a beachballing frontmost app held the
+    /// panel there indefinitely. Cancelling the task does not interrupt it.
+    static let perCallTimeout: Float = 0.25
+    static let walkBudget: TimeInterval = 1.5
 
     /// Text under the app the capture is about, or nil when AX is off / empty.
     ///
@@ -34,8 +40,9 @@ nonisolated enum AXPageReader {
         var lines: [String] = []
         var seen = Set<String>()
         var nodes = 0
+        let deadline = Date().addingTimeInterval(walkBudget)
 
-        walk(app, depth: 0, into: &lines, seen: &seen, nodes: &nodes)
+        walk(app, depth: 0, deadline: deadline, into: &lines, seen: &seen, nodes: &nodes)
 
         let joined = lines.joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -46,11 +53,13 @@ nonisolated enum AXPageReader {
 
     private static func walk(_ element: AXUIElement,
                              depth: Int,
+                             deadline: Date,
                              into lines: inout [String],
                              seen: inout Set<String>,
                              nodes: inout Int) {
-        guard depth < 12, nodes < maxNodes else { return }
+        guard depth < 12, nodes < maxNodes, Date() < deadline else { return }
         nodes += 1
+        AXUIElementSetMessagingTimeout(element, perCallTimeout)
 
         for attribute in [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute,
                           kAXHelpAttribute] as [CFString] {
@@ -73,7 +82,7 @@ nonisolated enum AXPageReader {
         else { return }
 
         for child in array.prefix(80) {
-            walk(child, depth: depth + 1, into: &lines, seen: &seen, nodes: &nodes)
+            walk(child, depth: depth + 1, deadline: deadline, into: &lines, seen: &seen, nodes: &nodes)
         }
     }
 }

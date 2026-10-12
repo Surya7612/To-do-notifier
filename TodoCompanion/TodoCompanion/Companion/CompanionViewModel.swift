@@ -475,7 +475,26 @@ final class CompanionViewModel {
         onCaptureBegan?()
         refreshCloudKey()
 
-        defer { onCaptureEnded?() }
+        // A grab the watchdog has abandoned must not hide the ring of the
+        // capture that replaced it when it finally returns.
+        defer { if captureGeneration == myGeneration { onCaptureEnded?() } }
+
+        // ScreenCaptureKit has no timeout of its own and ignores cancellation,
+        // so when its daemon wedges — typically after sleep or a display
+        // change — the await never returns and the panel says "Reading your
+        // screen…" until relaunch. The capture cannot be stopped; it can only
+        // be disowned, so its late result is dropped by `stillCurrentCapture`.
+        let watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.captureDeadline)
+            guard let self, !Task.isCancelled, self.captureGeneration == myGeneration else { return }
+            self.captureGeneration = UUID()
+            self.releasePanelOcclusion()
+            self.onCaptureEnded?()
+            if self.phase == .reading {
+                self.phase = .failed("Screen capture stopped responding. Summon again to retry — if it keeps happening, quit and reopen Max.")
+            }
+        }
+        defer { watchdog.cancel() }
 
         // Started alongside the grab rather than after OCR, so the tree walk
         // costs nothing beyond the capture it runs in parallel with.
@@ -617,6 +636,18 @@ final class CompanionViewModel {
         panelOcclusionOwner = nil
         onPanelOcclusion?(false)
     }
+
+    /// Brings the panel back whoever hid it, for a grab that will never return
+    /// to do so itself — otherwise a hung Teach capture reads as Max vanishing.
+    private func releasePanelOcclusion() {
+        guard panelOcclusionOwner != nil else { return }
+        panelOcclusionOwner = nil
+        onPanelOcclusion?(false)
+    }
+
+    /// Well past a real grab plus OCR — under a second, a few on several
+    /// accurate displays — so only a capture that is not coming back trips it.
+    private static let captureDeadline: Duration = .seconds(15)
 
     /// Re-scores the related strip once the screen itself has a vector.
     ///
