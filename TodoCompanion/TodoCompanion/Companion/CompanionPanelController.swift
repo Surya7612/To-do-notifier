@@ -27,10 +27,18 @@ final class CompanionPanelController {
     init(modelContext: ModelContext) {
         self.viewModel = CompanionViewModel(modelContext: modelContext)
         viewModel.onCaptureBegan = { [weak self] in self?.indicator.show(.capturing) }
-        viewModel.onCaptureEnded = { [weak self] in self?.indicator.hide() }
-        viewModel.onListeningBegan = { [weak self] in
-            self?.indicator.show(.listening, level: { [weak self] in self?.viewModel.currentInputLevel ?? 0 })
+        // The talk shortcut opens the microphone and captures at once, so a
+        // capture can end mid-sentence; hiding the ring then would make a live
+        // microphone look closed.
+        viewModel.onCaptureEnded = { [weak self] in
+            guard let self else { return }
+            if self.viewModel.isListening || self.viewModel.dictationStartInFlight {
+                self.showListeningIndicator()
+            } else {
+                self.indicator.hide()
+            }
         }
+        viewModel.onListeningBegan = { [weak self] in self?.showListeningIndicator() }
         viewModel.onListeningEnded = { [weak self] in self?.indicator.hide() }
         viewModel.onHighlight = { [weak self] rect, untilHidden in
             self?.highlight.show(rect, untilHidden: untilHidden)
@@ -71,6 +79,10 @@ final class CompanionPanelController {
 
     var isVisible: Bool { isPresented }
 
+    private func showListeningIndicator() {
+        indicator.show(.listening, level: { [weak self] in self?.viewModel.currentInputLevel ?? 0 })
+    }
+
     func toggle() {
         isVisible ? hide() : summon()
     }
@@ -105,14 +117,16 @@ final class CompanionPanelController {
     ///
     /// Pressing it again stops, so one key both starts and ends the sentence.
     func summonAndListen() {
-        if !viewModel.isListening, !isVisible { summon() }
-        NSApp.activate(ignoringOtherApps: true)
-
+        let wasListening = viewModel.isListening
         // Started without waiting for the capture to finish, which costs the
         // recognizer the on-screen vocabulary it would otherwise be given. That
         // is the right trade: the user pressed a key in order to talk, and a
         // microphone that opens a second later has missed the first few words.
+        // Started *before* the summon, too: both are main-actor work, and
+        // queued behind the capture the microphone waited for the screenshot.
         viewModel.toggleDictation()
+        if !wasListening, !isVisible { summon() }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// Dismisses when the user clicks away, which is what every other floating

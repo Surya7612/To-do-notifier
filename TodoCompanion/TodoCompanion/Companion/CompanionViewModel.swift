@@ -304,7 +304,7 @@ final class CompanionViewModel {
     /// `.reading` or re-show the panel while a newer capture still owns them.
     private var captureGeneration = UUID()
     private var panelOcclusionOwner: UUID?
-    private var dictationStartInFlight = false
+    private(set) var dictationStartInFlight = false
     /// The answer currently allowed to write panel state; see `submit`.
     private var answerGeneration = UUID()
 
@@ -479,8 +479,11 @@ final class CompanionViewModel {
 
         // Started alongside the grab rather than after OCR, so the tree walk
         // costs nothing beyond the capture it runs in parallel with.
+        let pageOwner = contextApp?.processIdentifier
         let pageStructureRead: Task<String?, Never>? = TrustAccessibility.extrasAreActive
-            ? Task.detached(priority: .userInitiated) { AXPageReader.snapshot() }
+            ? Task.detached(priority: .userInitiated) {
+                AXPageReader.snapshot(processIdentifier: pageOwner)
+            }
             : nil
         defer { pageStructureRead?.cancel() }
 
@@ -1159,6 +1162,8 @@ final class CompanionViewModel {
             lesson = nil
             lessonStep = 0
             lessonMarks = []
+            lessonMarkLabels = []
+            lessonFocus = []
             lastGuidedWarpStep = nil
             onHighlightEnded?()
         } else {
@@ -1205,6 +1210,9 @@ final class CompanionViewModel {
         }
 
         let historySnapshot = Array(turns.dropLast())
+        // Typed into a conversation that is already teaching, rather than a
+        // fresh press of Teach me: answer it, do not re-teach from the top.
+        let lessonFollowUp = teach && !isTeaching && !isFromPreset && !historySnapshot.isEmpty
         var recallNote: String?
         if !isFromPreset, !teach, LibraryRecall.isRecallQuestion(prompt) {
             let recalled = LibraryRecall.matches(for: prompt,
@@ -1272,6 +1280,7 @@ final class CompanionViewModel {
                 isGuidedTeaching: guide,
                 wantsBoard: boardWanted,
                 teachingFocus: focus,
+                isLessonFollowUp: lessonFollowUp,
                 sessionMode: mode,
                 pageStructure: pageSnapshot,
                 problemTutor: problem,
@@ -1630,6 +1639,8 @@ final class CompanionViewModel {
     /// code being taught. Keeping the geometry is what lets the boxes stay up
     /// while they work underneath them.
     private var lessonMarks: [[CGRect]] = []
+    /// Which label each of `lessonMarks` is, lowercased, index for index.
+    private var lessonMarkLabels: [[String]] = []
     private var lessonFrame: CGRect = .zero
     /// Last step Guided already warped to. beginLesson runs on every streamed
     /// chunk; without this the cursor thrashes to the same box dozens of times
@@ -1644,9 +1655,55 @@ final class CompanionViewModel {
     /// One-beat-at-a-time voice walk for Teach. Cancelled on Done, arrows, or quit.
     private var teachingPlayback: Task<Void, Never>?
 
-    /// Brief hold after a spoken beat so the eye can land on the mark before
-    /// the next step — the classroom "point and pause" cue.
-    private static let teachingBeatPause: Duration = .milliseconds(180)
+    /// The labels of the current step being said right now, lowercased.
+    ///
+    /// A teacher points at the word as they say it, not at everything the
+    /// sentence will mention. Empty means the whole step is shown — the state
+    /// at the start of a step, and whenever a step's sentence names nothing,
+    /// in which case the last thing pointed at stays pointed at.
+    private var lessonFocus: Set<String> = []
+    private var lastGuidedWarpTarget: CGRect?
+
+    /// A piece of the lesson, or a word within it, has started being heard.
+    ///
+    /// The step changes when its first piece begins. The box then moves on the
+    /// word: when the voice reaches a quoted label, that label is pointed at
+    /// and it stays pointed at until the next one is said, as a teacher's
+    /// finger does.
+    ///
+    /// A new step opens on the first thing it will name, not on nothing. Waiting
+    /// for that word to be heard left the screen blank and the Guided cursor
+    /// still whenever word timing did not arrive, which is the failure that
+    /// matters — a box a second early reads as a teacher pointing at what they
+    /// are about to say, a missing one reads as the feature being broken.
+    private func lessonHeard(step: Int, piece: String, wordOffset: Int?) {
+        guard let lesson, lesson.steps.indices.contains(step) else { return }
+        let labels = lessonMarkLabels.indices.contains(step) ? lessonMarkLabels[step] : []
+
+        // The first step is drawn before the voice starts, so its first piece
+        // arriving is a step opening even though the index has not changed.
+        if step != lessonStep || (wordOffset == nil && lessonFocus.isEmpty) {
+            lessonStep = step
+            let opening = Lesson.label(heardAt: wordOffset ?? 0, in: piece, among: labels)
+                ?? labels.min { Self.position(of: $0, in: piece) < Self.position(of: $1, in: piece) }
+            lessonFocus = opening.map { [$0] } ?? []
+        } else if let offset = wordOffset,
+                  let heard = Lesson.label(heardAt: offset, in: piece, among: labels),
+                  lessonFocus != [heard] {
+            lessonFocus = [heard]
+        } else {
+            return
+        }
+        showLessonStep()
+    }
+
+    /// Where a label first appears in a spoken piece; labels it never mentions
+    /// sort last, keeping the order they were resolved in.
+    private static func position(of label: String, in piece: String) -> Int {
+        let lower = piece.lowercased()
+        guard let range = lower.range(of: label) else { return .max }
+        return lower.distance(from: lower.startIndex, to: range.lowerBound)
+    }
 
     // MARK: - Teaching board
 
@@ -1839,7 +1896,10 @@ final class CompanionViewModel {
         lesson = nil
         lessonStep = 0
         lessonMarks = []
+        lessonMarkLabels = []
+        lessonFocus = []
         lastGuidedWarpStep = nil
+        lastGuidedWarpTarget = nil
         anchorRetrySteps = []
         pinnedForLesson = false
         clearTeachingSpeechOverride()
@@ -1859,26 +1919,26 @@ final class CompanionViewModel {
             guard let self else { return }
             guard let steps = self.lesson?.steps, !steps.isEmpty else { return }
 
-            for index in steps.indices {
-                guard !Task.isCancelled, self.lesson != nil else { return }
-                self.lessonStep = index
-                self.lastGuidedWarpStep = nil
-                // Later steps often miss on the first grab (editor empty, pane
-                // scrolled). One re-read before the tip-only fallback is what
-                // made step 1 box and step 3 only show a floating chip.
-                if self.lessonMarks.indices.contains(index),
-                   self.lessonMarks[index].isEmpty,
-                   !steps[index].anchors.isEmpty {
-                    await self.refreshLessonAnchors()
-                }
-                self.showLessonStep()
-                // Pen finishes the cut before the voice — otherwise Max narrates
-                // over a blank board and the "video" feel collapses.
-                await self.waitForSketchReveal()
-                guard !Task.isCancelled, self.lesson != nil else { return }
-                await self.speech.speakAndAwait(steps[index].text)
-                guard !Task.isCancelled, self.lesson != nil else { return }
-                try? await Task.sleep(for: Self.teachingBeatPause)
+            // One re-read, before a word is spoken, when any step quoted
+            // something the first grab missed. Re-reading per step put a whole
+            // capture and OCR pass of silence between two sentences, and a
+            // box that arrived seconds late for a step already being spoken.
+            let missed = steps.indices.contains { index in
+                !steps[index].anchors.isEmpty
+                    && (!self.lessonMarks.indices.contains(index) || self.lessonMarks[index].isEmpty)
+            }
+            if missed { await self.refreshLessonAnchors() }
+            guard !Task.isCancelled, self.lesson != nil else { return }
+
+            self.lessonStep = 0
+            self.lessonFocus = []
+            self.lastGuidedWarpStep = nil
+            self.showLessonStep()
+            await self.waitForSketchReveal()
+            guard !Task.isCancelled, self.lesson != nil else { return }
+
+            await self.speech.speakBeats(steps.map(\.text)) { [weak self] beat, piece, offset in
+                self?.lessonHeard(step: beat, piece: piece, wordOffset: offset)
             }
         }
     }
@@ -1982,6 +2042,7 @@ final class CompanionViewModel {
         speech.stop()
 
         lessonStep = target
+        lessonFocus = []
         lastGuidedWarpStep = nil
         showLessonStep()
 
@@ -1995,7 +2056,9 @@ final class CompanionViewModel {
             self.showLessonStep()
             // Speak only this beat so arrows stay in sync with the voice.
             if self.lessonAdvancesByVoice {
-                await self.speech.speakAndAwait(beat)
+                await self.speech.speakBeats([beat]) { [weak self] _, piece, offset in
+                    self?.lessonHeard(step: target, piece: piece, wordOffset: offset)
+                }
             }
         }
     }
@@ -2091,19 +2154,35 @@ final class CompanionViewModel {
     private func resolveLessonMarks(across surfaces: [(regions: [TextRegion], frame: CGRect)]) {
         guard let lesson, let first = surfaces.first else { return }
 
-        lessonMarks = lesson.steps.map { step in
-            let fromOCR: [CGRect] = step.anchors.compactMap { anchor in
-                for surface in surfaces {
-                    if let hit = ScreenTextLocator.locate(label: anchor, in: surface.regions) {
-                        return ScreenTextLocator.screenRect(for: hit.boundingBox, in: surface.frame)
+        // A label printed several times resolves to the copy nearest the last
+        // box drawn, because a lesson walks one part of the page — the example,
+        // the code — and jumping between copies of the same words is the box
+        // pointing somewhere the voice is not.
+        var lastMark: CGPoint?
+        let resolved: [[(label: String, rect: CGRect)]] = lesson.steps.map { step in
+            let fromOCR: [(label: String, rect: CGRect)] = step.anchors.compactMap { anchor in
+                let everywhere = surfaces.flatMap { surface in
+                    ScreenTextLocator.candidates(label: anchor, in: surface.regions).map {
+                        ScreenTextLocator.screenRect(for: $0.boundingBox, in: surface.frame)
                     }
                 }
-                return nil
+                guard let chosen = ScreenTextLocator.nearest(everywhere, to: lastMark) else { return nil }
+                lastMark = CGPoint(x: chosen.midX, y: chosen.midY)
+                return (anchor.lowercased(), chosen)
             }
             if !fromOCR.isEmpty { return fromOCR }
             guard TrustAccessibility.extrasAreActive else { return [] }
-            return step.anchors.compactMap { AXControlLocator.locate(label: $0)?.frame }
+            let owner = contextApp?.processIdentifier
+            return step.anchors.compactMap { anchor in
+                AXControlLocator.locate(label: anchor, inProcess: owner).map { (anchor.lowercased(), $0.frame) }
+            }
         }
+        lessonMarks = resolved.map { $0.map(\.rect) }
+        lessonMarkLabels = resolved.map { $0.map(\.label) }
+        // Counts only, never the labels: they are words off the user's screen.
+        let quoted = lesson.steps.map(\.anchors.count)
+        let found = resolved.map(\.count)
+        NSLog("[Lesson] \(lesson.steps.count) steps, quoted \(quoted), found \(found)")
 
         let allMarks = lessonMarks.flatMap { $0 }
         if allMarks.isEmpty {
@@ -2133,15 +2212,23 @@ final class CompanionViewModel {
         guard let lesson, lessonMarks.indices.contains(lessonStep) else { return }
 
         let step = lesson.steps[lessonStep]
-        let current = lessonMarks[lessonStep]
+        let all = lessonMarks[lessonStep]
+        let labels = lessonMarkLabels.indices.contains(lessonStep) ? lessonMarkLabels[lessonStep] : []
+        // The words being said get the box; the step's other marks stay faint
+        // so the eye knows where the sentence is going. An arrow keeps both
+        // ends, since it is one claim about two places.
+        let focusIndices = labels.indices.filter { lessonFocus.contains(labels[$0]) }
+        let focusing = !step.isConnected && !focusIndices.isEmpty && focusIndices.count < all.count
+        let current = focusing ? focusIndices.map { all[$0] } : all
+        let covered = focusing ? all.indices.filter { !focusIndices.contains($0) }.map { all[$0] } : []
         // Clicky points at OCR; Golpo keeps concept tips on the whiteboard.
         // Suppress floating chips whenever a board owns (or will own) the beat —
         // waiting for the fence to parse used to drop a black pill on Max.
-        let boardOwnsBeat = current.isEmpty && (boardScene != nil || wantsBoardThisAnswer)
-        let caption = (current.isEmpty && !boardOwnsBeat) ? step.cue : ""
+        let boardOwnsBeat = all.isEmpty && (boardScene != nil || wantsBoardThisAnswer)
+        let caption = (all.isEmpty && !boardOwnsBeat) ? step.cue : ""
         onLessonMarks?(LessonMarks(
             current: current,
-            covered: [],
+            covered: covered,
             number: lessonStep + 1,
             caption: caption,
             // An arrow needs somewhere to go: a step whose second label Vision
@@ -2154,7 +2241,11 @@ final class CompanionViewModel {
 
         // One silent re-read when a quoted step drew nothing — arrows already
         // do this; voice advance used to skip it and strand later beats on tips.
-        if current.isEmpty,
+        // Never during a walk: the walk re-reads once before speaking, and a
+        // retry landing seconds later redrew a box for whatever step the voice
+        // had reached by then.
+        if all.isEmpty,
+           teachingPlayback == nil,
            !step.anchors.isEmpty,
            !anchorRetrySteps.contains(lessonStep),
            observation?.isCropped != true {
@@ -2174,19 +2265,23 @@ final class CompanionViewModel {
         // manual arrow) owns the step — warping while the answer is still
         // streaming yanked the cursor before the voice had anything to say.
         guard guidedTeachThisAnswer else { return }
-        guard lastGuidedWarpStep != lessonStep else { return }
         guard TrustAccessibility.extrasAreActive else { return }
         guard teachingPlayback != nil
                 || phase == .idle
                 || phase == .reading
         else { return }
 
-        if let rect = current.first {
-            lastGuidedWarpStep = lessonStep
-            // Also draw the amber Show-me box so the pointer and the mark agree.
-            onHighlight?(rect, true)
-            warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
-        }
+        // Follows the words being said, as the box does — once per new target,
+        // so a re-draw of the same step does not yank the pointer back. No
+        // second box: the lesson's own mark is already there, and a separate
+        // highlight held `untilHidden` was what stayed stuck on old words.
+        guard let rect = current.first,
+              lastGuidedWarpStep != lessonStep || lastGuidedWarpTarget != rect
+        else { return }
+        lastGuidedWarpStep = lessonStep
+        lastGuidedWarpTarget = rect
+        onHighlightEnded?()
+        warpPointer(to: CGPoint(x: rect.midX, y: rect.midY))
     }
 
     /// Whether the current step named something printable (vs a pure concept beat).

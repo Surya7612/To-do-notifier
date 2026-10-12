@@ -69,7 +69,7 @@ final class ScreenHighlight {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .screenSaver
+        panel.level = DS.Layer.screenMarks
         // The point is to indicate a control the user is about to use, so the
         // overlay must not be the thing that receives the click.
         panel.ignoresMouseEvents = true

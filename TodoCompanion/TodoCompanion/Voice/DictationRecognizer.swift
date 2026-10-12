@@ -127,7 +127,11 @@ final class AppleDictationRecognizer: DictationRecognizer {
     func prepare() async throws {
         guard await Self.authorizeSpeech() else { throw DictationFailure.speechDenied }
 
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) ?? SFSpeechRecognizer()
+        // Kept between presses: building one is part of the wait between the
+        // talk shortcut and the microphone actually listening.
+        let recognizer = self.recognizer
+            ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+            ?? SFSpeechRecognizer()
         guard let recognizer, recognizer.isAvailable else { throw DictationFailure.recognizerUnavailable }
 
         self.recognizer = recognizer

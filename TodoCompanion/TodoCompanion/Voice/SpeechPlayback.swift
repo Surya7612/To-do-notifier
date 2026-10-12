@@ -37,7 +37,7 @@ final class SpeechPlayback {
     /// The one in-flight model load, so clauses do not each start their own.
     private var preparation: Task<Void, Never>?
 
-    /// Completes an in-flight `speakAndAwait` when the beat ends or is stopped.
+    /// Completes an in-flight `speakBeats` when the lesson ends or is stopped.
     /// Kokoro's `stop` does not fire `onFinishedSpeaking`, so Teach cancellation
     /// would otherwise hang the playback task forever.
     private var beatFinished: (@MainActor () -> Void)?
@@ -54,7 +54,10 @@ final class SpeechPlayback {
                 self?.onSpeakingClause?(nil)
             }
             synthesizer?.onStartedSpeaking = { [weak self] clause in
-                self?.onSpeakingClause?(clause)
+                self?.clauseStarted(clause)
+            }
+            synthesizer?.onWordStarted = { [weak self] clause, offset in
+                self?.wordStarted(in: clause, at: offset)
             }
         }
         // Safe: `makeSynthesizer` always returns one.
@@ -107,25 +110,93 @@ final class SpeechPlayback {
         consume(Self.speakable(from: text), toTheEnd: true)
     }
 
-    /// Speaks one teaching beat and waits until it has been heard.
+    /// Pieces of a lesson still waiting to be heard, with the step each belongs
+    /// to, in the order they were queued.
+    private var queuedBeats: [(beat: Int, piece: String)] = []
+    private var hearing: (beat: Int, piece: String)?
+    /// The step, the piece, and the character offset of the word now being
+    /// heard — nil when the piece has only just begun.
+    private var onBeatHeard: (@MainActor (Int, String, Int?) -> Void)?
+
+    /// Speaks a whole lesson as one queue and reports each piece as it starts
+    /// being heard, with the step it belongs to.
     ///
-    /// Teach walks one step at a time — point, say the beat, pause — so the
-    /// box, the panel highlight, and the voice stay on the same step. Streaming
-    /// the whole answer as one continuous monologue is what made the cursor
-    /// jump while the panel was still on an earlier line.
-    ///
-    /// Chunked with the same `maximumChunk` limit as ordinary speech: handing
-    /// Kokoro a long beat in one enqueue hit its 510-phoneme cap and it
-    /// truncated mid-word — heard as mumbling or dropped words between clauses.
-    func speakAndAwait(_ text: String) async {
+    /// One queue rather than speak a beat, await it, pause, speak the next:
+    /// that shape put a full synthesis in front of every step — the box for
+    /// the next step appeared and then sat in silence for a second or more
+    /// while the voice was generated, which read as the pointing having lost
+    /// track of the speech. Queued together, the next piece is synthesized
+    /// while the current one plays, and the step changes at the moment its
+    /// first words are heard rather than when the previous ones were queued.
+    func speakBeats(_ beats: [String], onBeatHeard: @escaping @MainActor (Int, String, Int?) -> Void) async {
         guard AppSettings.speaksAnswers || speaksRegardlessOfSetting else { return }
-        let pieces = Self.chunksForBeat(text)
+        let pieces = beats.enumerated().flatMap { index, beat in
+            Self.chunksForBeat(beat).map { (beat: index, piece: $0) }
+        }
         guard !pieces.isEmpty else { return }
 
-        for piece in pieces {
-            guard !Task.isCancelled else { return }
-            await speakOneChunkAndAwait(piece)
+        stop()
+        let voice = voice()
+        if !voice.isPrepared {
+            do {
+                try await voice.prepare()
+                failure = nil
+            } catch {
+                failure = error.localizedDescription
+                return
+            }
         }
+        guard !Task.isCancelled else { return }
+
+        queuedBeats = pieces
+        self.onBeatHeard = onBeatHeard
+
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                var resumed = false
+                let finish: @MainActor () -> Void = { [weak self] in
+                    guard !resumed else { return }
+                    resumed = true
+                    self?.beatFinished = nil
+                    self?.queuedBeats = []
+                    self?.hearing = nil
+                    self?.onBeatHeard = nil
+                    continuation.resume()
+                }
+                beatFinished = finish
+
+                let previous = voice.onFinishedSpeaking
+                voice.onFinishedSpeaking = { [weak self] in
+                    self?.isSpeaking = false
+                    self?.onSpeakingClause?(nil)
+                    previous?()
+                    finish()
+                    voice.onFinishedSpeaking = previous
+                }
+
+                for entry in pieces { voice.enqueue(entry.piece) }
+                isSpeaking = true
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in
+                self?.stop()
+            }
+        }
+    }
+
+    private func clauseStarted(_ clause: String) {
+        if let position = queuedBeats.firstIndex(where: { $0.piece == clause }) {
+            let heard = queuedBeats[position]
+            queuedBeats.removeFirst(position + 1)
+            hearing = heard
+            onBeatHeard?(heard.beat, heard.piece, nil)
+        }
+        onSpeakingClause?(clause)
+    }
+
+    private func wordStarted(in clause: String, at offset: Int) {
+        guard let hearing, hearing.piece == clause else { return }
+        onBeatHeard?(hearing.beat, hearing.piece, offset)
     }
 
     /// Breaks a teaching beat into synthesis-sized pieces. Pure / testable.
@@ -142,59 +213,6 @@ final class SpeechPlayback {
         }
         if !pending.isEmpty { pieces.append(pending) }
         return pieces
-    }
-
-    private func speakOneChunkAndAwait(_ chunk: String) async {
-        let trimmed = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        spokenPrefixLength = 0
-        heldClauses = []
-        beatFinished?()
-        beatFinished = nil
-        synthesizer?.stop()
-        isSpeaking = false
-
-        let voice = voice()
-        if !voice.isPrepared {
-            do {
-                try await voice.prepare()
-                failure = nil
-            } catch {
-                failure = error.localizedDescription
-                return
-            }
-        }
-
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                var resumed = false
-                let finish: @MainActor () -> Void = { [weak self] in
-                    guard !resumed else { return }
-                    resumed = true
-                    self?.beatFinished = nil
-                    continuation.resume()
-                }
-                beatFinished = finish
-
-                let previous = voice.onFinishedSpeaking
-                voice.onFinishedSpeaking = { [weak self] in
-                    self?.isSpeaking = false
-                    self?.onSpeakingClause?(nil)
-                    previous?()
-                    finish()
-                    voice.onFinishedSpeaking = previous
-                }
-
-                voice.enqueue(trimmed)
-                isSpeaking = true
-                onSpeakingClause?(trimmed)
-            }
-        } onCancel: { [weak self] in
-            Task { @MainActor in
-                self?.stop()
-            }
-        }
     }
 
     /// Sends on whatever of the speakable text has not been sent yet.
@@ -321,6 +339,9 @@ final class SpeechPlayback {
         // part, it is what the next answer needs, and cancelling it halfway
         // through a download buys nothing.
         heldClauses = []
+        queuedBeats = []
+        hearing = nil
+        onBeatHeard = nil
         synthesizer?.stop()
         // Always complete a waiting Teach beat — Kokoro's stop is silent.
         let finish = beatFinished

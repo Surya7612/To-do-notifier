@@ -41,7 +41,9 @@ struct AnthropicBrain: Brain {
 
                     let body: [String: Any] = [
                         "model": model,
-                        "max_tokens": 4096,
+                        // A full lesson carries a board frame per step, and a
+                        // reply cut off inside the fence loses the whole board.
+                        "max_tokens": 8192,
                         "stream": true,
                         "system": Prompt.system(for: context),
                         "messages": [

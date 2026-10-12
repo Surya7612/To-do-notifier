@@ -375,14 +375,33 @@ struct PersonaPromptTests {
     }
 
     @Test("teaching instructions appear only when teaching")
-    func teachingRulesAreConditional() {
+    func teachingRulesAreConditional() throws {
         let plain = AskContext()
-        #expect(!Prompt.system(for: plain).contains("15–30 second"))
+        #expect(!Prompt.system(for: plain).contains("teaching order"))
 
         let teaching = AskContext(isTeaching: true)
-        #expect(Prompt.system(for: teaching).contains("15–30 second") || Prompt.system(for: teaching).contains("15-30 second"))
-        #expect(Prompt.system(for: teaching).contains("patient tutor"))
-        #expect(Prompt.system(for: teaching).contains("Story order only") || Prompt.system(for: teaching).contains("camera cut"))
+        let lesson = Prompt.system(for: teaching)
+        #expect(lesson.contains("patient tutor"))
+        #expect(lesson.contains("Story order only"))
+        // The order a teacher would take: the question, the goal, the idea, an
+        // example worked through, a pitfall, a recap.
+        for part in ["The question", "The goal", "The idea it builds on", "worked example",
+                     "common mistake", "recap"] {
+            #expect(lesson.contains(part), "missing \(part)")
+        }
+        #expect(lesson.contains("ONE numbered list"))
+        // The concept comes before the question: "what an LRU cache is" before
+        // "implement get and put".
+        let concept = try #require(lesson.range(of: "The concept"))
+        let question = try #require(lesson.range(of: "The question"))
+        #expect(concept.lowerBound < question.lowerBound)
+
+        // A question asked mid-lesson is answered, not re-taught from the top.
+        let followUp = Prompt.system(for: AskContext(isTeaching: true, isLessonFollowUp: true,
+                                                     problemTutor: .codingProblem))
+        #expect(followUp.contains("Do NOT restart the lesson"))
+        #expect(!followUp.contains("The concept —"))
+        #expect(!followUp.contains("interview coach"))
         #expect(Prompt.system(for: teaching).contains("Do not put fenced code inside the numbered"))
         #expect(Prompt.system(for: teaching).contains("solution fence")
                 || Prompt.system(for: teaching).contains("explicitly asked for code"))

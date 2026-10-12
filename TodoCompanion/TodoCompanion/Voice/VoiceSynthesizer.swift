@@ -21,6 +21,11 @@ protocol VoiceSynthesizer: AnyObject {
     /// keep something on screen in step with what the user is hearing.
     var onStartedSpeaking: (@MainActor (String) -> Void)? { get set }
 
+    /// Called as each word of a piece starts being heard, with the piece and
+    /// the character offset of the word within it — what lets a box land on
+    /// a label as it is said rather than when its sentence begins.
+    var onWordStarted: (@MainActor (String, Int) -> Void)? { get set }
+
     /// Model loading, where there is any. Throws so a voice that cannot be used
     /// says why instead of producing silence.
     func prepare() async throws
@@ -69,6 +74,7 @@ final class SystemVoiceSynthesizer: VoiceSynthesizer {
     private(set) var isSpeaking = false
     var onFinishedSpeaking: (@MainActor () -> Void)?
     var onStartedSpeaking: (@MainActor (String) -> Void)?
+    var onWordStarted: (@MainActor (String, Int) -> Void)?
 
     /// Nothing to load.
     let isPrepared = true
@@ -83,6 +89,9 @@ final class SystemVoiceSynthesizer: VoiceSynthesizer {
         }
         monitor.onUtteranceStarted = { [weak self] spoken in
             self?.onStartedSpeaking?(spoken)
+        }
+        monitor.onWordStarted = { [weak self] spoken, offset in
+            self?.onWordStarted?(spoken, offset)
         }
         synthesizer.delegate = monitor
     }
@@ -125,12 +134,25 @@ final class SystemVoiceSynthesizer: VoiceSynthesizer {
     private final class UtteranceMonitor: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         var onQueueDrained: (@MainActor () -> Void)?
         var onUtteranceStarted: (@MainActor (String) -> Void)?
+        var onWordStarted: (@MainActor (String, Int) -> Void)?
 
         func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                didStart utterance: AVSpeechUtterance) {
             let callback = onUtteranceStarted
             let spoken = utterance.speechString
             Task { @MainActor in callback?(spoken) }
+        }
+
+        /// The system voice reports each word as it is about to say it, in
+        /// UTF-16 units; callers count characters, so it is converted here.
+        func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                               willSpeakRangeOfSpeechString characterRange: NSRange,
+                               utterance: AVSpeechUtterance) {
+            let callback = onWordStarted
+            let spoken = utterance.speechString
+            guard let range = Range(characterRange, in: spoken) else { return }
+            let offset = spoken.distance(from: spoken.startIndex, to: range.lowerBound)
+            Task { @MainActor in callback?(spoken, offset) }
         }
 
         func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,

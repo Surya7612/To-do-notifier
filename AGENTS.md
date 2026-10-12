@@ -894,6 +894,15 @@ so a capture would otherwise be completely invisible — the wrong property for 
 screen. `CaptureIndicator` draws a ring at the cursor; it belongs to this app and is therefore excluded
 from the screenshot along with the panel. `ScreenHighlight` is a second such window.
 
+**Accessibility lookups target the captured app's pid, never the focused app.** Pressing a panel
+button gives Max the focus, so "the focused application" is Max itself. `AXControlLocator` searched
+it, found the lesson's quoted label in Max's own step text, and boxed a line of the panel at fixed
+screen coordinates; `AXPageReader` walked it from a background task, which is a direct call into
+this process's SwiftUI off the main thread and crashed. Both now take `contextApp`'s pid and refuse
+their own. Marks also sit at `DS.Layer.screenMarks`, beneath Max's floating panels, so a target
+that lies behind the panel is covered rather than drawn over it; the cursor ring stays at
+`.screenSaver`.
+
 **Pointing at a control reads pixels first; the accessibility tree is an opt-in extra.** OCR boxes
 are the default because Max is shown a screenshot — the words it names are words Vision already has —
 and AX is thin or absent in exactly the apps pointing is most useful for (Qt, Electron, games).
@@ -970,6 +979,43 @@ and sat still — which read as follow-along being broken. The Settings toggle i
 session override flips. The lesson is also started as soon as the streamed reply parses, *before*
 speech consumes the next chunk, so clauses are not spoken against a nil lesson.
 
+**The voice drives the pointing, as a teacher's does.** The walk hands every step to
+`SpeechPlayback.speakBeats` as one queue, so the next sentence is synthesized while the current one
+plays, and the step changes when its first words are *heard*. The earlier walk spoke a step, awaited
+it, paused and re-read the screen before the next, which put a synthesis and sometimes a capture of
+silence between two sentences — the box changed, then nothing was said for seconds. Within a step,
+the box sits on the labels quoted in the sentence being spoken and the step's other marks stay
+faint; a sentence naming nothing leaves the last box where it is. The screen is re-read at most once,
+before the first word, and a late retry never redraws during a walk. Guided moves the pointer with
+that focus and draws no second box of its own — a separate `untilHidden` highlight was what stayed
+stuck on old words.
+
+The box moves at the **word**, not the sentence. A sentence quoting two labels used to box both the
+moment it began, so the pointing ran ahead of the voice. Both voices now report when each word is
+heard: the system voice through `willSpeakRangeOfSpeechString`, and Kokoro through
+`WordTiming.cues`, which turns the model's per-phoneme `predictedDurations` into a start time for
+each written word and falls back to spacing by length when the phoneme count does not match (Kokoro
+silently drops characters missing from its vocabulary). The cues are shifted by the leading silence
+that `trimmedWithTail` removes, or every box would land early by that amount.
+`Lesson.label(heardAt:in:among:)` gives the resolved label the voice has most recently reached,
+found by where its words sit in the spoken piece rather than by quote marks — `speakable` drops
+backticks, so a quote-mark search found nothing and no box moved. A step **opens on its first
+label** rather than on nothing: holding every box faint until a word cue arrived left the screen
+blank and the Guided cursor still whenever the cues did not come, and a box a beat early reads as a
+teacher pointing at what they are about to say, where a missing one reads as the feature broken.
+
+**Kokoro is handed a spoken form, not the text as written.** Its phonemizer reads any run of
+letters as a word, so "LRU" came out as "Leku" — on the very terms a lesson is about. `SpokenForm`
+spells acronyms in letter names, splits identifiers at their capitals (`LRUCache` → "el ar you
+Cache"), reads `O(n)` as "big O of n", and leaves shouted words ("NOT") and word-acronyms ("JSON")
+as words. It runs inside the synthesizer rather than in `speakable`, because label matching and
+clause reporting compare against the written text; `originalOffset` maps each word cue back to it.
+
+**A question asked mid-lesson is answered, not re-taught.** The lesson order opens on the concept,
+so treating "why is that O(1)?" as a fresh Teach re-explained what an LRU cache is from the top.
+`AskContext.isLessonFollowUp` swaps `teachingSystem` for `lessonFollowUpSystem` — answer first, then
+at most a short walk of that one point with the same example — and drops the problem-tutor order.
+
 **Guided** is a second teach preset that keeps all of the above and also warps the cursor to each
 step's first OCR box as Max speaks (Accessibility extras required for the warp; boxes still work
 without it). Plain Teach me stays the default and never moves the pointer. Neither mode types into
@@ -1045,7 +1091,7 @@ the edge is the only part of this that fails invisibly.
 | `Companion/CompanionPanelController.swift` | ~318 | Panel lifecycle, cursor-relative placement, pinning, summoning straight into dictation, and wiring the view model to the capture indicator, the lesson overlay, and the teaching grid board. Remembers the previously frontmost app so context is not attributed to us. |
 | `Companion/CompanionPanel.swift` | ~43 | Borderless non-activating `NSPanel`. Pins top-left across content-driven resizes. |
 | `Companion/CompanionView.swift` | ~1265 | Panel UI: status header with the who-answers, session-mode, and open-file menus and the pin, ask field, dictation and save buttons, save options, related-context strip (screen matches or library recall, each openable in the library), the what-to-work-on briefs, conversation transcript, the offer to point at a named control alongside the follow-along switch, and the diff of a proposed edit. |
-| `Companion/CompanionViewModel.swift` | ~2890 | Orchestrates capture → OCR → retrieval → model → save, plus recall and planning from the question. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, session modes, MCP enrichment, AX page text, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, the lesson being walked, the teaching-grid board, and the local count of what resurfacing brought back and what was used. |
+| `Companion/CompanionViewModel.swift` | ~2970 | Orchestrates capture → OCR → retrieval → model → save, plus recall and planning from the question. Owns phase state, the conversation transcript, dictation, speech playback, region selection, presets, session modes, MCP enrichment, AX page text, the current project, reminders, proposed file edits, the control an answer named, the box that follows the voice, the lesson being walked, the teaching-grid board, and the local count of what resurfacing brought back and what was used. |
 | `Companion/AnswerContent.swift` | ~226 | Splits a reply into paragraphs, headings, lists and fenced code, and styles inline Markdown. Streaming-safe. Pure. |
 | `Companion/CodeHighlighter.swift` | ~246 | Lexical token colouring for a fenced block, with no dependency. Pure. |
 | `Capture/ScreenCapture.swift` | ~340 | ScreenCaptureKit capture of every display, permission preflight, and region cropping. Excludes own windows. Records the captured area in screen coordinates so a text box can be placed. |
@@ -1077,7 +1123,9 @@ the edge is the only part of this that fails invisibly.
 | `Brain/CloudModelChoice.swift` | ~70 | Vetted Claude and Gemini model lists (same pattern as OpenAI). Pure. |
 | `Voice/SpeechPlayback.swift` | ~519 | Decides what of a streaming answer gets read aloud, and when. Strips markup from the whole answer, sizes clauses, and reports which clause is being heard. |
 | `Voice/VoiceSynthesizer.swift` | ~152 | The `VoiceSynthesizer` protocol, the shared `VoiceFailure`, and the `AVSpeechSynthesizer` backend. |
-| `Voice/KokoroVoiceSynthesizer.swift` | ~234 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. |
+| `Voice/KokoroVoiceSynthesizer.swift` | ~330 | Kokoro-82M on the Neural Engine through FluidAudio, queued through an audio player node. Recovers when the audio route changes, and reports each word as it is heard. |
+| `Voice/WordTiming.swift` | ~85 | When each written word begins in Kokoro's audio, from its phoneme durations. Pure. |
+| `Voice/SpokenForm.swift` | ~165 | What Kokoro is actually asked to say — acronyms spelled, identifiers split, big O read aloud — with a map back to the written text. Pure. |
 | `Voice/SpeechDictation.swift` | ~190 | Owns the microphone for push-to-talk dictation: the engine, the level meter, the named input device, and the silent-input watchdog. Delegates recognition, and keeps the recognizer between sessions. |
 | `Voice/DictationRecognizer.swift` | ~241 | The `DictationRecognizer` protocol, the shared `DictationFailure`, and the Apple `SFSpeechRecognizer` backend. |
 | `Voice/DictationHints.swift` | ~96 | Picks the words on screen worth telling the recognizer to expect. Pure. |
@@ -1199,6 +1247,7 @@ untested. `TestSupport.swift` is fixtures, not a suite.
 | `CloudModelChoiceTests` / `ReminderMirrorMessagingTests` | Claude/Gemini model lists, and Reminders Settings copy | Same no-price rule for the other vendors; destination messaging must distinguish iCloud sync from this-Mac-only and point at System Settings on denial. |
 | `AnswerDestinationTests` | What the who-answers badge says, per provider and key state | Pins that the three states stay distinguishable per vendor, since collapsing "cloud selected, no key" into "local" is what made a provider switch look broken. Also pins the badge against `Brain.leavesTheMachine`, which is computed separately in another file. |
 | `VoiceEngineTests` | Which systems the Kokoro voice will run on, how an answer is cut into things to say, and the join between them | The version check guards an *intermittent* libBNNS crash on macOS 26.4–26.5, so getting it wrong reads as the app vanishing occasionally rather than as a broken voice. The chunking decides whether the delivery sounds like a person or a station announcement, which is inaudible from the code, and an over-long chunk is *dropped* rather than spoken — so it pins the upper bound as well as the lower. `SpeakableTextTests` covers what is said at all, where every failure is heard rather than seen: it pins that a fence is skipped entirely (never announced as "code block", never read aloud), that a fence still *open* mid-stream leaves its code unspoken, and that the quotes the follow-along box is found by survive the stripping. Also pins that neither offered voice is a hosted service. |
+| `WordTimingTests` | When each word starts in synthesized speech, and which quoted label the voice has reached | Decides when a box lands while Max talks; early reads as the box running ahead and late as it trailing. Pins phoneme-aligned starts, that cues only move forwards, the fallback when phonemes were dropped, that nothing is pointed at before the first quote, and that a label is still found once the voice has dropped its backticks. `SpokenFormTests` pins what Kokoro is handed: acronyms spelled, identifiers split, ordinary and shouted words left alone, and offsets that map back in order. |
 | `EmbeddingPreparationTests` | Task prefixes, and the identity of a stored vector | Both failure modes are invisible at runtime: a prefix sent to a model that never saw one silently degrades every vector, and a scheme change without an identity change leaves prefixed queries scoring against unprefixed documents. Pins that the backfill is triggered rather than skipped. |
 | `EmbeddingTests` | Vector normalization, cosine similarity, blob round trip | The only exactly checkable part of meaning matching. Pins that a degenerate or wrong-length vector compares as *nil* rather than as zero, since zero would still attach a "close in meaning" reason to something that is not. |
 | `SemanticRetrievalTests` | How meaning feeds into scoring | Enforces the condition on using embeddings at all: additive, explained, and outranked by stated facts. Uses hand-built vectors, so it tests the integration rather than anyone's model quality. |

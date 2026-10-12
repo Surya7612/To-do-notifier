@@ -22,6 +22,15 @@ nonisolated enum DS {
         static let roomy: CGFloat = 16
     }
 
+    enum Layer {
+        /// Where marks on the user's screen sit: above ordinary windows, and
+        /// beneath Max's own floating panels. Capture excludes those panels, so
+        /// a label Max names can lie on the page *behind* one, and a mark drawn
+        /// above the panel then sits over the panel's text as though pointing
+        /// at it, staying put while the panel moves.
+        static let screenMarks = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue - 1)
+    }
+
     enum Radius {
         static let panel: CGFloat = 18
         static let card: CGFloat = 10

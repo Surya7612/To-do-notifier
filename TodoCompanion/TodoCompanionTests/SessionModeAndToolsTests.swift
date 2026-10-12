@@ -74,7 +74,9 @@ struct ProblemTutorTests {
         let tutor = Prompt.system(for: AskContext(problemTutor: .codingProblem))
         #expect(tutor.contains("coding problem"))
         #expect(tutor.contains("No full editorial") || tutor.contains("editorial"))
-        #expect(tutor.contains("sketch explainer") || tutor.contains("15–30"))
+        #expect(tutor.contains("receives and returns"))
+        #expect(tutor.contains("topics it tests"))
+        #expect(tutor.contains("complexity"))
         #expect(tutor.contains("Example") || tutor.contains("example"))
         #expect(tutor.contains("true and false") || tutor.contains("contrast"))
     }

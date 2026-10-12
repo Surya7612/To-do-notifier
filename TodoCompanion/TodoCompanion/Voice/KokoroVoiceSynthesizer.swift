@@ -32,6 +32,12 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
     private(set) var isSpeaking = false
     var onFinishedSpeaking: (@MainActor () -> Void)?
     var onStartedSpeaking: (@MainActor (String) -> Void)?
+    var onWordStarted: (@MainActor (String, Int) -> Void)?
+
+    /// When each word of each scheduled clause is heard, index for index with
+    /// `scheduledClauses`, and the timer firing the cues of the one playing.
+    private var scheduledCues: [[WordTiming.Cue]] = []
+    private var cueTimer: Task<Void, Never>?
 
     /// Clauses waiting to be synthesized, and the worker draining them.
     ///
@@ -88,6 +94,9 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         worker = nil
         pending = []
         scheduledClauses = []
+        scheduledCues = []
+        cueTimer?.cancel()
+        cueTimer = nil
         isSpeaking = false
 
         guard engineIsRunning else { return }
@@ -98,23 +107,59 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         player.play()
     }
 
+    private var playerAttached = false
+    private var configurationObserver: NSObjectProtocol?
+
+    /// Checks the engine itself rather than trusting `engineIsRunning`, because
+    /// macOS stops an `AVAudioEngine` on its own whenever the audio hardware
+    /// changes — headphones plugged in, AirPods switching to their headset
+    /// profile because the microphone opened. A stopped engine accepts
+    /// `scheduleBuffer` without complaint, never plays it and never calls its
+    /// completion, so the voice went silent with the stop button stuck lit.
     private func startEngineIfNeeded() throws {
-        guard !engineIsRunning else { return }
+        if engineIsRunning, engine.isRunning { return }
         guard let format = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate,
                                          channels: 1) else {
             throw VoiceFailure.playbackFailed("unsupported output format")
         }
 
-        engine.attach(player)
+        if !playerAttached {
+            engine.attach(player)
+            playerAttached = true
+            configurationObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.recoverFromConfigurationChange() }
+            }
+        }
         engine.connect(player, to: engine.mainMixerNode, format: format)
 
         do {
             try engine.start()
         } catch {
+            engineIsRunning = false
             throw VoiceFailure.playbackFailed(error.localizedDescription)
         }
         player.play()
         engineIsRunning = true
+    }
+
+    /// The change has already dropped whatever was scheduled, so those clauses
+    /// will never report finishing; forgetting them is what lets `isSpeaking`
+    /// clear instead of waiting forever. Synthesis still queued plays on the
+    /// restarted engine.
+    private func recoverFromConfigurationChange() {
+        engineIsRunning = false
+        scheduledClauses = []
+        scheduledCues = []
+        cueTimer?.cancel()
+        cueTimer = nil
+        do {
+            try startEngineIfNeeded()
+        } catch {
+            NSLog("[Voice] Kokoro could not restart audio: \(error.localizedDescription)")
+        }
+        settleIfDrained()
     }
 
     private func startWorkerIfIdle() {
@@ -136,9 +181,20 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
             // are fetched individually and nothing here can see which ones the
             // bundle actually carries, so a list would be offering choices that
             // may not resolve — and a voice that fails drops the clause.
-            let result = try await manager.synthesizeDetailed(text: text)
+            // Phonemized here rather than inside the synthesis call so the
+            // phoneme string is in hand alongside the durations it produced,
+            // which is what places each word in time.
+            let spoken = SpokenForm.of(text)
+            let phonemes = try await manager.phonemes(for: spoken.text)
+            let result = try await manager.synthesizeFromPhonemesDetailed(phonemes)
             guard !Task.isCancelled else { return }
-            try schedule(result.samples, sampleRate: Double(result.sampleRate), saying: text)
+            let sampleRate = Double(result.sampleRate)
+            let cues = WordTiming.cues(text: spoken.text,
+                                       phonemes: phonemes,
+                                       durations: result.predictedDurations,
+                                       totalSeconds: result.durationSeconds)
+                .map { WordTiming.Cue(characterOffset: spoken.writtenOffset($0.characterOffset), seconds: $0.seconds) }
+            try schedule(result.samples, sampleRate: sampleRate, saying: text, cues: cues)
         } catch is CancellationError {
             return
         } catch {
@@ -173,7 +229,7 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
     /// tail put back, so the gap between sentences is one this app chose rather
     /// than one that accumulated.
     static func trimmedWithTail(_ samples: [Float], sampleRate: Double) -> [Float] {
-        guard let first = samples.firstIndex(where: { abs($0) > silenceFloor }),
+        guard let first = leadingSilence(in: samples),
               let last = samples.lastIndex(where: { abs($0) > silenceFloor })
         else { return [] }
 
@@ -185,14 +241,28 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         return trimmed
     }
 
-    private func schedule(_ rawSamples: [Float], sampleRate: Double, saying text: String) throws {
+    /// Samples cut from the front by `trimmedWithTail`, which every word cue
+    /// has to be moved earlier by.
+    static func leadingSilence(in samples: [Float]) -> Int? {
+        samples.firstIndex(where: { abs($0) > silenceFloor })
+    }
+
+    private func schedule(_ rawSamples: [Float],
+                          sampleRate: Double,
+                          saying text: String,
+                          cues rawCues: [WordTiming.Cue]) throws {
         let samples = Self.trimmedWithTail(rawSamples, sampleRate: sampleRate)
+        let trimmedSeconds = Double(Self.leadingSilence(in: rawSamples) ?? 0) / sampleRate
+        let cues = rawCues.map {
+            WordTiming.Cue(characterOffset: $0.characterOffset, seconds: max(0, $0.seconds - trimmedSeconds))
+        }
         guard !samples.isEmpty,
               let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format,
                                             frameCapacity: AVAudioFrameCount(samples.count)),
               let destination = buffer.floatChannelData?[0]
         else { return }
+        try startEngineIfNeeded()
 
         buffer.frameLength = AVAudioFrameCount(samples.count)
         samples.withUnsafeBufferPointer { source in
@@ -203,6 +273,7 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
         // soon as it is scheduled.
         let startsImmediately = scheduledClauses.isEmpty
         scheduledClauses.append(text)
+        scheduledCues.append(cues)
 
         // The audio thread calls this, so the hop to the main actor is the
         // point. `self` is captured by the `Task` rather than read out of the
@@ -212,16 +283,43 @@ final class KokoroVoiceSynthesizer: VoiceSynthesizer {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if !self.scheduledClauses.isEmpty { self.scheduledClauses.removeFirst() }
+                if !self.scheduledCues.isEmpty { self.scheduledCues.removeFirst() }
                 // One finishing is what tells us the next has begun; the player
                 // reports completion only.
                 if let nowPlaying = self.scheduledClauses.first {
-                    self.onStartedSpeaking?(nowPlaying)
+                    self.startedHearing(nowPlaying, cues: self.scheduledCues.first ?? [])
+                } else {
+                    self.cueTimer?.cancel()
+                    self.cueTimer = nil
                 }
                 self.settleIfDrained()
             }
         }
 
-        if startsImmediately { onStartedSpeaking?(text) }
+        if startsImmediately { startedHearing(text, cues: cues) }
+    }
+
+    /// Reports the clause, then each of its words at the moment it is heard.
+    ///
+    /// Timed from here rather than read off the audio clock: the player only
+    /// reports a buffer *finishing*, and the start of the next is the closest
+    /// thing to "now playing" it offers.
+    private func startedHearing(_ clause: String, cues: [WordTiming.Cue]) {
+        onStartedSpeaking?(clause)
+        cueTimer?.cancel()
+        guard !cues.isEmpty else {
+            cueTimer = nil
+            return
+        }
+        let began = ContinuousClock.now
+        cueTimer = Task { [weak self] in
+            for cue in cues {
+                try? await Task.sleep(until: began + .milliseconds(Int(cue.seconds * 1_000)),
+                                      clock: .continuous)
+                guard !Task.isCancelled, let self else { return }
+                self.onWordStarted?(clause, cue.characterOffset)
+            }
+        }
     }
 
     /// Silence is only real once nothing is queued *and* nothing is still

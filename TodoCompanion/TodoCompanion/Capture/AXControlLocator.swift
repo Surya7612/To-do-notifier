@@ -51,21 +51,22 @@ enum AXControlLocator {
         attributes.map { rank(candidate: $0, against: target) }.max() ?? .none
     }
 
-    /// Looks up `label` in the frontmost app. Returns nil when Accessibility is
-    /// off, the app exposes no tree, or nothing matches.
-    static func locate(label: String) -> Match? {
-        guard TrustAccessibility.isTrusted else { return nil }
+    /// Looks up `label` in the app being asked about. Returns nil when
+    /// Accessibility is off, the app exposes no tree, or nothing matches.
+    ///
+    /// Takes the captured app's pid rather than asking AX for the focused app,
+    /// because pressing Teach gives Max the focus — and Max's own panel prints
+    /// the very labels the lesson quotes, so the lookup boxed a line of the
+    /// panel at fixed screen coordinates that stayed put when it was dragged.
+    static func locate(label: String, inProcess processIdentifier: pid_t?) -> Match? {
+        guard TrustAccessibility.isTrusted,
+              let processIdentifier,
+              processIdentifier != ProcessInfo.processInfo.processIdentifier
+        else { return nil }
         let needle = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return nil }
 
-        let system = AXUIElementCreateSystemWide()
-        var focusedApp: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute as CFString,
-                                            &focusedApp) == .success,
-              let focusedApp
-        else { return nil }
-
-        let app = focusedApp as! AXUIElement
+        let app = AXUIElementCreateApplication(processIdentifier)
         var best: (rank: Rank, frame: CGRect, label: String)?
         walk(app, depth: 0, against: needle) { rank, frame, matched in
             guard rank > (best?.rank ?? .none) else { return }

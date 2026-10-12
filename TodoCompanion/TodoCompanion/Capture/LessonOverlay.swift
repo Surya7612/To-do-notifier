@@ -91,7 +91,7 @@ final class LessonOverlay {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .screenSaver
+        panel.level = DS.Layer.screenMarks
         // The user is meant to keep working underneath this, which is the whole
         // reason the layer is transparent rather than a board.
         panel.ignoresMouseEvents = true

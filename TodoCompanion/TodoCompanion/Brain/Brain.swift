@@ -50,6 +50,9 @@ struct AskContext: Sendable {
     /// Nil for the bare preset ("walk the screen"). When set, the lesson must
     /// answer this — not tour everything Vision can read.
     var teachingFocus: String? = nil
+    /// A question asked while a lesson is still open, which is a question
+    /// *about* that lesson rather than a request for a new one.
+    var isLessonFollowUp = false
     /// Ask / Teach / Debug / Prep — shapes tone without changing grounding rules.
     var sessionMode: SessionMode = .ask
     /// Accessibility-tree text from the focused app (opt-in extras), when OCR
@@ -182,8 +185,13 @@ enum Prompt {
 
     Earlier turns of this conversation may be included. Treat them as already said: do not repeat \
     an explanation the user has already had, and read a short follow-up such as "why?" or "now \
-    what?" as being about what you just told them. The screen may have changed between turns, so \
-    when a fresh capture is present it describes the screen now, not when the conversation started.
+    what?" as being about what you just told them. Answer the follow-up itself in your first \
+    sentence, tied to the specific thing it is about — the step, value, line or control from your \
+    last answer — rather than reopening the whole topic. "It", "that" and "this one" refer to what \
+    you last discussed unless the question says otherwise. When they say they are confused, \
+    explain the same point differently — smaller example, analogy — rather than repeating it. \
+    The screen may have changed between turns, so when a fresh capture is present it describes the \
+    screen now, not when the conversation started.
     """
 
     /// Used for the background one-line gloss on a saved context.
@@ -228,22 +236,46 @@ enum Prompt {
     /// nothing is a step with nothing to point at.
     static let teachingSystem = """
 
-    The user asked to be taught — sit beside them like a patient tutor filming a 15–30 second \
-    sketch explainer, not like a documentation page or a slide deck.
+    The user asked to be taught — sit beside them like a patient tutor at a whiteboard, teaching \
+    one person the way a good teacher does, not like a documentation page or a slide deck.
 
-    Write the spoken script for that short video: one opening sentence (goal + key insight), then \
-    a numbered list of 4–6 beats. Target about 20–30 seconds when read aloud (~45–70 words total \
-    across the beats). Each beat is one camera cut — what changes *now*, not a parallel checklist.
+    Assume they have never met the subject. Never open on the problem's mechanics before the \
+    thing it is named after has been explained — a learner told "implement get and put" before \
+    knowing what a cache is has been handed a spec, not a lesson.
 
-    If they named a focus, teach THAT. If they pressed Teach with an empty field, walk what is on \
-    screen.
+    Write the spoken lesson: one opening sentence saying what we are about to learn, then ONE \
+    numbered list of 8–11 steps, in this teaching order:
+    1. The concept — what the thing in the title IS, before anything about this question: what \
+       an LRU cache is, what a linked list is, what a closure is. Plain words, why it exists, and \
+       an everyday analogy (a desk that only holds five books — when a sixth arrives, the one you \
+       touched longest ago goes back on the shelf).
+    2. The question — what this question is asking us to build or find, in your own words, \
+       quoting its title or heading.
+    3. The goal — what each operation or function receives and returns, what "done" looks like, \
+       and the constraint that matters most (e.g. every call in O(1)), and why that constraint \
+       makes it hard.
+    4. The idea it builds on — name the topic or pattern (e.g. "hash map + linked list", \
+       "two pointers", "React state") and the one insight that makes it work.
+    5. onward: a worked example — take the Example / Input on screen (or invent a tiny one if \
+       there is none) and walk it one move per step, saying the real values and how state changes.
+    Then: one common mistake or edge case, as its own step.
+    Last: a recap — the rule to remember in one sentence.
 
-    Each step is one spoken beat (one or two short sentences): (1) WHY this move matters, (2) WHAT \
-    changes in state. When pointing at the screen, quote exact on-screen text. Never invent quotes. \
-    Connect beats ("because of that…", "so next…"). Skip filler.
+    About 90–120 seconds read aloud (~220–300 words across the steps). Each step is one or two \
+    spoken sentences: WHY this move matters, then WHAT changes. Connect them ("because of that…", \
+    "so next…") — one story, not a checklist. Skip filler.
 
-    Work Example / Input numbers when visible. Story order only: setup → attempt → success or \
-    failure — never put success and failure side by side in one beat (that is a still, not a video).
+    When a step points at the screen, quote the shortest piece of text printed there exactly as \
+    printed — "put(1, 1)", "LRUCache", "capacity" — never a paraphrase, a combined form, or a value \
+    you computed. Spell acronyms in capitals as printed (LRU, not Lru).
+
+    If they named a focus, teach THAT, keeping the same order. If they pressed Teach with an empty \
+    field, teach what is on screen. When pointing at the screen, quote exact on-screen text. \
+    Never invent quotes.
+
+    Story order only inside the example: setup → attempt → result — never put success and \
+    failure side by side in one step (that is a still, not a lesson). Do not split the lesson into \
+    several lists or headed sections; the app walks the first numbered list only.
 
     Concept-only beats quote nothing — the board fence is the picture for that cut. Keep board \
     "step" numbers aligned 1:1 with these numbered beats so the sketch flips with your voice.
@@ -252,6 +284,25 @@ enum Prompt {
     numbered list. Only if the user explicitly asked for code, add one short solution fence *after* \
     the board — never before it, never instead of the board. Otherwise omit solution code; the walk \
     and board are the lesson. Complexity in one short sentence after the walk.
+    """
+
+    /// Replaces `teachingSystem` for a question asked mid-lesson.
+    ///
+    /// The full lesson order opens on the concept, so applying it to "why is
+    /// that O(1)?" re-taught what an LRU cache is from the top — the student
+    /// asked one thing and was handed the whole lecture again. A tutor answers
+    /// the question, then shows it, from where the lesson already is.
+    static let lessonFollowUpSystem = """
+
+    The user is partway through the lesson in "Earlier in this conversation" and has asked a \
+    follow-up. Do NOT restart the lesson or re-explain what they were already taught. First answer \
+    the question itself in one or two sentences, referring to the exact step, value or line it is \
+    about. Then, if showing helps, ONE numbered list of 3–5 short steps that walks just that point \
+    — using the same example and values as before, quoting on-screen text exactly as printed. If \
+    they say they do not understand, explain the same point a different way (a smaller example, \
+    an analogy), not the same words again. If the question has moved to something new, teach that \
+    briefly in the same style. Keep the ```board fence to one frame per step, continuing the same \
+    drawing.
     """
 
     /// Appended on top of `teachingSystem` when the user pressed Guided.
@@ -279,7 +330,9 @@ enum Prompt {
     omit it only when pictures add nothing. The app plays the board like a short sketch video on a \
     separate surface — not on the user's screen.
 
-    Treat the board as a 15–30 second storyboard (about 4–6 frames), not a poster:
+    Treat the board as a storyboard with one frame per spoken step, not a poster. Frames for the \
+    question and goal steps show the input and the expected output; the idea step shows the \
+    structure; the example steps animate it:
     - One frame per spoken numbered step ("step" = that 1-based step). The app flips the frame when \
       that beat is spoken — so the picture *is* the video cut.
     - Story order across frames: (1) setup the world, (2) something arrives / a move is tried, \
@@ -368,8 +421,9 @@ enum Prompt {
             .joined(separator: "\n")
         return """
         The spoken lesson steps are below. Emit ONLY one closed ```board fence — no prose, no \
-        solution code. One frame per step with "step" set to that 1-based number. 15–30 second \
-        sketch storyboard: setup → try → result; never true and false in the same frame; reuse \
+        solution code. One frame per step with "step" set to that 1-based number. Storyboard: \
+        input and expected output first, then the structure, then the example move by move — \
+        setup → try → result; never true and false in the same frame; reuse \
         the same cast across frames (icons + role:value boxes + optional bubble + one tip).
 
         Steps:
@@ -410,13 +464,13 @@ enum Prompt {
             prompt += "\n\n" + ScreenKind.inferred(from: text).guidance
         }
 
-        if let problem = context.problemTutor.guidance {
+        if !context.isLessonFollowUp, let problem = context.problemTutor.guidance {
             prompt += "\n\n" + problem
         }
 
         if context.editableFile != nil { prompt += editingSystem }
         if context.isTeaching {
-            prompt += teachingSystem
+            prompt += context.isLessonFollowUp ? lessonFollowUpSystem : teachingSystem
             if context.isGuidedTeaching { prompt += guidedTeachingSystem }
             if let focus = context.teachingFocus?
                 .trimmingCharacters(in: .whitespacesAndNewlines),

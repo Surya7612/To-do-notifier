@@ -57,9 +57,7 @@ nonisolated enum ScreenTextLocator {
 
         var best: (score: Int, match: Match)?
 
-        for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
-            let words = unordered.sorted { $0.position < $1.position }
-
+        for words in readingOrder(regions) {
             for start in words.indices {
                 for length in 1...maximumWords where start + length <= words.count {
                     let run = Array(words[start..<(start + length)])
@@ -100,61 +98,128 @@ nonisolated enum ScreenTextLocator {
     /// the exact quote misses — OCR often drops backticks or trailing colons
     /// Max copied from the answer, which left Teach pointing at nothing.
     static func locate(label: String, in regions: [TextRegion]) -> Match? {
+        candidates(label: label, in: regions).first
+    }
+
+    /// Every place on screen that reads equally well as this label, in reading
+    /// order — top to bottom, then left to right.
+    ///
+    /// A lesson quotes `"get(1)"` on a page that prints it five times, so there
+    /// is no single right answer here, only the copy the caller can justify.
+    /// Picking one used to fall to `Dictionary` iteration order, which Swift
+    /// randomises per launch, so the box landed on an arbitrary copy and a
+    /// different one each run. The lesson chooses among these by nearness to
+    /// the box it drew before; everything else takes the first.
+    static func candidates(label: String, in regions: [TextRegion]) -> [Match] {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let hit = locateExact(needle: trimmed, in: regions) { return hit }
+        let exact = matchingRuns(in: regions, needle: trimmed) { $0.map(\.string).joined(separator: " ") }
+        if !exact.isEmpty { return exact }
 
         let stripped = trimmed.filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if stripped != trimmed, let hit = locateExact(needle: stripped, in: regions) {
-            return hit
+        if stripped != trimmed {
+            let loose = matchingRuns(in: regions, needle: stripped) { $0.map(\.string).joined(separator: " ") }
+            if !loose.isEmpty { return loose }
         }
 
         // Identifiers OCR splits: "fooBar" on screen vs "foo Bar" in the quote.
         let collapsed = stripped.replacingOccurrences(of: " ", with: "")
         if collapsed.count >= minimumLength, collapsed != stripped {
-            return locateCollapsed(needle: collapsed, in: regions)
+            let joined = matchingRuns(in: regions, needle: collapsed) { $0.map(\.string).joined() }
+            if !joined.isEmpty { return joined }
         }
-        return nil
+
+        return withinCodeTokens(needle: trimmed, in: regions)
     }
 
-    private static func locateExact(needle raw: String, in regions: [TextRegion]) -> Match? {
+    /// The candidate closest to `point`, or the first when there is no point.
+    static func nearest(_ rects: [CGRect], to point: CGPoint?) -> CGRect? {
+        guard let point else { return rects.first }
+        return rects.min { distance($0, point) < distance($1, point) }
+    }
+
+    private static func distance(_ rect: CGRect, _ point: CGPoint) -> CGFloat {
+        hypot(rect.midX - point.x, rect.midY - point.y)
+    }
+
+    /// Runs of words whose text, formed by `render`, equals the needle; only the
+    /// longest such runs, since a box around "Run" inside "Run All Tests" is a
+    /// box around a third of the control.
+    private static func matchingRuns(in regions: [TextRegion],
+                                     needle raw: String,
+                                     render: ([TextRegion]) -> String) -> [Match] {
         let needle = raw.lowercased()
-        guard needle.count >= minimumLength, needle.contains(where: \.isLetter) else { return nil }
+        guard needle.count >= minimumLength, needle.contains(where: \.isLetter) else { return [] }
 
-        var best: Match?
-        for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
-            let words = unordered.sorted { $0.position < $1.position }
+        var found: [Match] = []
+        for words in readingOrder(regions) {
             for start in words.indices {
                 for length in 1...maximumWords where start + length <= words.count {
                     let run = Array(words[start..<(start + length)])
-                    let phrase = run.map(\.string).joined(separator: " ")
-                    guard phrase.lowercased() == needle else { continue }
-                    guard phrase.count > (best?.text.count ?? 0) else { continue }
-                    best = Match(boundingBox: union(of: run), text: phrase)
+                    guard render(run).lowercased() == needle else { continue }
+                    found.append(Match(boundingBox: union(of: run),
+                                       text: run.map(\.string).joined(separator: " ")))
                 }
             }
         }
-        return best
+        let longest = found.map(\.text.count).max() ?? 0
+        return found.filter { $0.text.count == longest }
     }
 
-    /// Matches a quote with spaces removed against on-screen words joined.
-    private static func locateCollapsed(needle: String, in regions: [TextRegion]) -> Match? {
-        let target = needle.lowercased()
-        var best: Match?
-        for (_, unordered) in Dictionary(grouping: regions, by: \.line) {
-            let words = unordered.sorted { $0.position < $1.position }
+    /// A code-shaped quote printed inside longer text, as `"get(1)"` is in
+    /// `lRUCache.get(1);` and `"put(1, 1)"` is across `lRUCache.put(1,` `1);`.
+    /// Only for quotes that look like code — punctuation, or an identifier's
+    /// interior capital or digit — and only where the quote is bounded by
+    /// something that is not a letter or digit, so `"get"` never matches
+    /// inside `target`. The box is the shortest run of words holding it, which
+    /// is a little wide and still the right line. Spacing is compared loosely
+    /// because OCR reads `put(1, 1)` and `put(1,1)` interchangeably.
+    private static func withinCodeTokens(needle raw: String, in regions: [TextRegion]) -> [Match] {
+        let needle = raw.lowercased()
+        let compactNeedle = needle.filter { !$0.isWhitespace }
+        let looksLikeCode = raw.contains(where: { !$0.isLetter && !$0.isNumber && !$0.isWhitespace })
+            || raw.dropFirst().contains(where: \.isUppercase)
+            || (raw.contains(where: \.isLetter) && raw.contains(where: \.isNumber))
+        guard compactNeedle.count >= 4, needle.contains(where: \.isLetter), looksLikeCode
+        else { return [] }
+
+        var found: [Match] = []
+        for words in readingOrder(regions) {
+            // The shortest run from each start that holds the quote…
+            var runs: [ClosedRange<Int>] = []
             for start in words.indices {
                 for length in 1...maximumWords where start + length <= words.count {
-                    let run = Array(words[start..<(start + length)])
-                    let collapsed = run.map(\.string).joined().lowercased()
-                    guard collapsed == target else { continue }
-                    let phrase = run.map(\.string).joined(separator: " ")
-                    guard phrase.count > (best?.text.count ?? 0) else { continue }
-                    best = Match(boundingBox: union(of: run), text: phrase)
+                    let rendered = words[start..<(start + length)]
+                        .map(\.string).joined(separator: " ").lowercased()
+                    guard rendered != needle,
+                          rendered.containsWholeWord(needle)
+                            || rendered.filter({ !$0.isWhitespace }).containsWholeWord(compactNeedle)
+                    else { continue }
+                    runs.append(start...(start + length - 1))
+                    break
                 }
             }
+            // …keeping only those with no tighter run inside them, so one
+            // printed copy yields one box rather than one per starting word.
+            for run in runs where !runs.contains(where: { $0 != run && run.contains($0.lowerBound) && run.contains($0.upperBound) }) {
+                let words = Array(words[run])
+                found.append(Match(boundingBox: union(of: words),
+                                   text: words.map(\.string).joined(separator: " ")))
+            }
         }
-        return best
+        return found
+    }
+
+    /// Lines top to bottom, words left to right. Vision's origin is the bottom
+    /// left, so a higher `maxY` is higher on the screen.
+    private static func readingOrder(_ regions: [TextRegion]) -> [[TextRegion]] {
+        Dictionary(grouping: regions, by: \.line).values
+            .map { $0.sorted { $0.position < $1.position } }
+            .sorted { lhs, rhs in
+                let left = lhs[0].boundingBox, right = rhs[0].boundingBox
+                if abs(left.maxY - right.maxY) > 0.002 { return left.maxY > right.maxY }
+                return left.minX < right.minX
+            }
     }
 
     /// The labels an answer put in double quotes, in the order they appear.

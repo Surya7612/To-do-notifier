@@ -320,3 +320,72 @@ struct ScreenRectTests {
         #expect(rect == selection)
     }
 }
+
+/// A lesson quotes labels that a page prints more than once, so which copy gets
+/// the box has to be decided rather than left to whatever order a dictionary
+/// happens to iterate in.
+@Suite("Repeated labels")
+struct RepeatedLabelTests {
+    private func word(_ string: String, x: Double, y: Double, line: Int, position: Int = 0) -> TextRegion {
+        TextRegion(string: string,
+                   boundingBox: CGRect(x: x, y: y, width: 0.08, height: 0.02),
+                   line: line, position: position)
+    }
+
+    @Test("every copy is offered, top of the screen first")
+    func readingOrder() {
+        // Line numbers deliberately disagree with position on screen.
+        let regions = [
+            word("get(1)", x: 0.1, y: 0.2, line: 0),
+            word("get(1)", x: 0.1, y: 0.8, line: 5),
+            word("get(1)", x: 0.6, y: 0.5, line: 2),
+        ]
+        let found = ScreenTextLocator.candidates(label: "get(1)", in: regions)
+        #expect(found.map(\.boundingBox.minY) == [0.8, 0.5, 0.2])
+        #expect(ScreenTextLocator.locate(label: "get(1)", in: regions)?.boundingBox.minY == 0.8)
+    }
+
+    @Test("the copy nearest the previous box wins")
+    func nearestToPrevious() {
+        let rects = [CGRect(x: 0, y: 700, width: 50, height: 10),
+                     CGRect(x: 400, y: 200, width: 50, height: 10)]
+        #expect(ScreenTextLocator.nearest(rects, to: CGPoint(x: 420, y: 210)) == rects[1])
+        #expect(ScreenTextLocator.nearest(rects, to: nil) == rects[0])
+    }
+
+    @Test("a code quote is found inside the token that prints it")
+    func insideCodeToken() throws {
+        let regions = [word("lRUCache.get(1);", x: 0.1, y: 0.3, line: 0)]
+        let match = try #require(ScreenTextLocator.locate(label: "get(1)", in: regions))
+        #expect(match.text == "lRUCache.get(1);")
+    }
+
+    @Test("a plain word is never found inside a longer one")
+    func notInsideAWord() {
+        let regions = [word("target", x: 0.1, y: 0.3, line: 0),
+                       word("forget(1)", x: 0.3, y: 0.3, line: 1)]
+        #expect(ScreenTextLocator.locate(label: "get", in: regions) == nil)
+        #expect(ScreenTextLocator.locate(label: "get(1)", in: regions) == nil)
+    }
+
+    @Test("a quote with a space is found across the words that print it")
+    func acrossCodeWords() throws {
+        // How LeetCode's LRU example reads to Vision: the call is split at its
+        // space and glued to the receiver on the left.
+        let regions = [word("lRUCache.put(1,", x: 0.1, y: 0.3, line: 0, position: 0),
+                       word("1);", x: 0.2, y: 0.3, line: 0, position: 1),
+                       word("//", x: 0.3, y: 0.3, line: 0, position: 2),
+                       word("cache", x: 0.4, y: 0.3, line: 0, position: 3)]
+        let found = ScreenTextLocator.candidates(label: "put(1, 1)", in: regions)
+        #expect(found.map(\.text) == ["lRUCache.put(1, 1);"])
+        #expect(ScreenTextLocator.locate(label: "put(1,1)", in: regions)?.text == "lRUCache.put(1, 1);")
+    }
+
+    @Test("an identifier is found inside the code that uses it")
+    func identifierInsideCode() {
+        let regions = [word("lRUCache.put(1,", x: 0.1, y: 0.3, line: 0)]
+        #expect(ScreenTextLocator.locate(label: "LRUCache", in: regions) != nil)
+        // An ordinary word still is not, however code-like its surroundings.
+        #expect(ScreenTextLocator.locate(label: "cache", in: regions) == nil)
+    }
+}

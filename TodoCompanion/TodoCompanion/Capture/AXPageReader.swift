@@ -16,18 +16,21 @@ nonisolated enum AXPageReader {
     static let characterLimit = 6000
     static let maxNodes = 400
 
-    /// Text under the focused application, or nil when AX is off / empty.
-    static func snapshot() -> String? {
-        guard AXIsProcessTrusted() else { return nil }
-
-        let system = AXUIElementCreateSystemWide()
-        var focusedApp: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute as CFString,
-                                            &focusedApp) == .success,
-              let focusedApp
+    /// Text under the app the capture is about, or nil when AX is off / empty.
+    ///
+    /// Never this process: an AX query against our own pid is not a message to
+    /// another app but a direct call into our own SwiftUI accessibility tree, on
+    /// whatever thread asked — and from this background walk that trips the
+    /// main-actor assertion and kills the app. The system-wide focused app is
+    /// Max whenever the library or Settings window has focus, so the target is
+    /// the captured app's pid rather than whatever AX calls focused.
+    static func snapshot(processIdentifier: pid_t?) -> String? {
+        guard AXIsProcessTrusted(),
+              let processIdentifier,
+              processIdentifier != ProcessInfo.processInfo.processIdentifier
         else { return nil }
 
-        let app = focusedApp as! AXUIElement
+        let app = AXUIElementCreateApplication(processIdentifier)
         var lines: [String] = []
         var seen = Set<String>()
         var nodes = 0

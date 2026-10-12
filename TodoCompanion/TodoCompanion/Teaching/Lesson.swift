@@ -133,6 +133,37 @@ nonisolated struct Lesson: Equatable {
             }
     }
 
+    /// The quoted label the voice has most recently reached in this piece, given
+    /// the character offset of the word now being heard — nil before the first
+    /// quote.
+    static func label(heardAt offset: Int, in piece: String) -> String? {
+        label(heardAt: offset, in: piece, among: ScreenTextLocator.quotedLabels(in: piece))
+    }
+
+    /// Which of `labels` the voice has most recently reached, found by where
+    /// each one's words sit in the piece rather than by its quote marks.
+    ///
+    /// The quotes cannot be relied on: `SpeechPlayback.speakable` drops
+    /// backticks, so a step quoting `` `get(1)` `` reaches the voice as plain
+    /// words, and a search for quote marks there found nothing — no box ever
+    /// moved. A label counts from the word it starts in, one character of
+    /// slack allowing for a quote mark the word opens with.
+    static func label(heardAt offset: Int, in piece: String, among labels: [String]) -> String? {
+        let haystack = piece.lowercased()
+        var reached: (start: Int, label: String)?
+        for label in labels {
+            let needle = label.lowercased()
+            guard !needle.isEmpty, let range = haystack.range(of: needle) else { continue }
+            let start = haystack.distance(from: haystack.startIndex, to: range.lowerBound)
+            guard start <= offset + 1 else { continue }
+            if reached == nil || start > reached!.start
+                || (start == reached!.start && label.count > reached!.label.count) {
+                reached = (start, label)
+            }
+        }
+        return reached?.label
+    }
+
     /// Markdown a user can paste into notes — the durable form of a Teach walk.
     ///
     /// Quotes stay in the step text so the same anchors that drove the boxes

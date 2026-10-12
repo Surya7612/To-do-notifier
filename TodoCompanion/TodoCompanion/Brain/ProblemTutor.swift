@@ -46,13 +46,20 @@ nonisolated enum ProblemTutor: Equatable, Sendable {
             return nil
         case .codingProblem:
             return """
-            The screen looks like a coding problem. Teach it as a 15–30s sketch explainer, not a \
-            solution dump: (1) one sentence goal + pattern, (2) 4–6 numbered beats that walk one \
-            story on the Example numbers — setup → try → result → optional contrast case in a \
-            later beat (never true and false in the same breath), (3) quote only literal on-screen \
-            text when pointing; concept beats use the board as sequential video frames (same cast \
-            each cut: counters, cars, map cells, or client→API→DB), (4) complexity after the walk. \
-            No full editorial. If the editor shows their attempt, teach from that.
+            The screen looks like a coding problem. Teach it like an interview coach, not a \
+            solution dump. In the numbered steps: first explain the concept the problem is named \
+            after as if they have never heard of it — what an LRU cache is and why caches evict, \
+            what a trie is — with an everyday analogy; then what the problem is actually asking, \
+            in plain words; say exactly \
+            what the function receives and returns, and which constraint rules out the brute force; \
+            name the topics it tests (e.g. "hash map", "doubly linked list", "sliding window") and \
+            why those fit; then walk Example 1 with its real numbers, one operation per step, saying \
+            the state after each — setup → try → result, with any contrast case in a later step \
+            (never true and false in the same breath); then one edge case; then the approach in \
+            one sentence. After the list: time and space complexity, and one question for them to \
+            check themselves with. Quote only literal on-screen text when pointing; the board \
+            draws the real data structure each step. No full editorial — code only if they asked \
+            for it. If the editor shows their attempt, teach from that.
             """
         }
     }
