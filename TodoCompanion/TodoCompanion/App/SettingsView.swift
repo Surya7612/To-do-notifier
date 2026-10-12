@@ -1,5 +1,6 @@
 import AppKit
 import AVFAudio
+import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
@@ -39,6 +40,8 @@ struct SettingsView: View {
     @State private var geminiKeyDraft = ""
     @State private var geminiKeyStored = false
     @State private var isLinked = TodoBridge.isLinked
+    @State private var needsFolderLink = TodoBridge.needsFolderLink
+    @State private var linkProblem: String?
     @State private var linkedSummary = ""
     @State private var canImportKey = false
     @State private var inboxFolder: String?
@@ -429,18 +432,50 @@ struct SettingsView: View {
                             TodoBridge.unlink()
                             isLinked = false
                             linkedSummary = ""
-                        } else if TodoBridge.link() {
-                            isLinked = true
-                            refreshLinkedSummary()
+                        } else {
+                            chooseTodoFolder()
                         }
+                        needsFolderLink = TodoBridge.needsFolderLink
                         canImportKey = !openAIKeyStored && TodoBridge.importableOpenAIKey() != nil
                     }
                 }
 
-                Text("Point this at the To-Do Notifier's app-data.json so the companion can answer using your open tasks and notes. It is only ever read, never written.")
+                if needsFolderLink {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Linked to the file only, so reminders set here cannot reach the to-do app. Choose its folder instead.")
+                            .font(.caption)
+                            .foregroundStyle(DS.Status.problem)
+                        Spacer()
+                        Button("Choose folder…") {
+                            chooseTodoFolder()
+                            needsFolderLink = TodoBridge.needsFolderLink
+                        }
+                    }
+                }
+
+                if let linkProblem {
+                    Text(linkProblem)
+                        .font(.caption)
+                        .foregroundStyle(DS.Status.problem)
+                }
+
+                Text("Choose the To-Do Notifier's todo-notifier folder so Max can see your open tasks and notes. app-data.json in it is only ever read. A reminder you set here is published beside it as companion-projects.json so the to-do app can make a task of it — Max never writes app-data.json.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+    }
+
+    private func chooseTodoFolder() {
+        if TodoBridge.link() {
+            isLinked = true
+            linkProblem = nil
+            refreshLinkedSummary()
+            // Reminders already set have to land beside app-data.json now, or
+            // the to-do app never sees them.
+            ProjectExport.publish(from: ContextStore.shared.mainContext)
+        } else {
+            linkProblem = TodoBridge.linkProblem
+        }
     }
 
     private var mirrorSection: some View {

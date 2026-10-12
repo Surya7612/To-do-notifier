@@ -219,6 +219,14 @@ enum ProjectExport {
             let directory = location.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let data = try encode(payload)
+            // The to-do app used to read this container file directly. On
+            // current macOS that open returns EPERM, so Apple Reminders still
+            // got the reminder (this process writes EventKit) and the task
+            // list did not. A second copy lands next to app-data.json, which
+            // that app can watch. Before the unchanged-container check, since
+            // a folder linked a moment ago has no copy yet. It skips an
+            // identical rewrite on its own.
+            TodoBridge.publishCompanionProjects(data)
             // The store saves for reasons the other app cannot see — a keep
             // being brought back is counted on every summon — and the reader
             // watches this folder, so an identical rewrite would wake it for

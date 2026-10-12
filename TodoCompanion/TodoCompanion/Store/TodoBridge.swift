@@ -108,39 +108,144 @@ enum TodoBridge {
         return home.appending(path: "Library/Application Support/todo-notifier/app-data.json")
     }
 
+    /// The folder holding `app-data.json`, which is what the link now grants.
+    ///
+    /// A folder rather than the file because reminders have to reach the
+    /// to-do app, and the only route left is a file beside its store: macOS
+    /// refuses that app reading this one's container (`EPERM`, logged by the
+    /// kernel as a sandbox deny), and a bookmark to `app-data.json` grants that
+    /// one file — writing a sibling with it fails with Cocoa error 513. The
+    /// folder grant covers both. This app still never writes `app-data.json`.
+    private static let folderBookmarkKey = "electronDataFolderBookmark"
+    private static let dataFileName = "app-data.json"
+
     static var isLinked: Bool {
-        UserDefaults.standard.data(forKey: bookmarkKey) != nil
+        UserDefaults.standard.data(forKey: folderBookmarkKey) != nil
+            || UserDefaults.standard.data(forKey: bookmarkKey) != nil
     }
 
-    /// Asks the user to point at the file once. Their choice is what grants the
-    /// sandbox access, so this cannot be done silently.
+    /// Linked the old way, to the file alone: tasks are readable, but nothing
+    /// set here can become a task over there until the folder is chosen.
+    static var needsFolderLink: Bool {
+        UserDefaults.standard.data(forKey: folderBookmarkKey) == nil
+            && UserDefaults.standard.data(forKey: bookmarkKey) != nil
+    }
+
+    /// Why the last link attempt was refused, for Settings to say.
+    private(set) static var linkProblem: String?
+
+    /// Asks the user to choose the folder once. Their choice is what grants
+    /// the sandbox access, so this cannot be done silently.
     static func link() -> Bool {
+        linkProblem = nil
         let chosen = FilePicker.choose { panel in
-            panel.title = "Choose your To-Do Notifier data"
-            panel.message = "Pick app-data.json so the companion can see your tasks and notes."
-            panel.allowedContentTypes = [.json]
-            panel.canChooseDirectories = false
+            panel.title = "Choose your To-Do Notifier folder"
+            panel.message = "This is the todo-notifier folder that holds app-data.json — click Open. Max reads your tasks from it and leaves reminders beside it; it never edits app-data.json."
+            panel.prompt = "Open"
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
             panel.allowsMultipleSelection = false
             panel.directoryURL = suggestedLocation.deletingLastPathComponent()
-            // ~/Library is hidden in Finder, and this file lives inside it.
+            // ~/Library is hidden in Finder, and this folder lives inside it.
             panel.showsHiddenFiles = true
         }
-        guard let url = chosen else { return false }
+        guard let folder = chosen else { return false }
+
+        guard folder.startAccessingSecurityScopedResource() else {
+            linkProblem = "macOS did not grant access to that folder."
+            return false
+        }
+        defer { folder.stopAccessingSecurityScopedResource() }
+
+        guard FileManager.default.fileExists(atPath: folder.appending(path: dataFileName).path) else {
+            linkProblem = "That folder has no app-data.json. Choose the todo-notifier folder."
+            return false
+        }
 
         do {
-            let bookmark = try url.bookmarkData(options: .withSecurityScope,
-                                                includingResourceValuesForKeys: nil,
-                                                relativeTo: nil)
-            UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
+            let bookmark = try folder.bookmarkData(options: .withSecurityScope,
+                                                   includingResourceValuesForKeys: nil,
+                                                   relativeTo: nil)
+            UserDefaults.standard.set(bookmark, forKey: folderBookmarkKey)
+            UserDefaults.standard.removeObject(forKey: bookmarkKey)
+            cached = nil
+            resolvedGrant = nil
             return true
         } catch {
-            NSLog("[TodoBridge] couldn't bookmark \(url.path): \(error)")
+            linkProblem = "Could not remember that folder: \(error.localizedDescription)"
+            NSLog("[TodoBridge] couldn't bookmark \(folder.path): \(error)")
             return false
         }
     }
 
     static func unlink() {
         UserDefaults.standard.removeObject(forKey: bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: folderBookmarkKey)
+        cached = nil
+        resolvedGrant = nil
+    }
+
+    /// What the link resolves to: the URL whose access has to be started, and
+    /// the store inside it.
+    private struct Grant {
+        let bookmark: Data
+        let scope: URL
+        let dataFile: URL
+        let isFolder: Bool
+    }
+
+    private static var resolvedGrant: Grant?
+
+    private static func grant() -> Grant? {
+        let key: String
+        let isFolder: Bool
+        if UserDefaults.standard.data(forKey: folderBookmarkKey) != nil {
+            key = folderBookmarkKey
+            isFolder = true
+        } else {
+            key = bookmarkKey
+            isFolder = false
+        }
+        guard let bookmark = UserDefaults.standard.data(forKey: key) else {
+            resolvedGrant = nil
+            return nil
+        }
+        if let resolvedGrant, resolvedGrant.bookmark == bookmark { return resolvedGrant }
+
+        guard let url = SecurityScopedBookmark.resolve(bookmark, persist: { fresh in
+            UserDefaults.standard.set(fresh, forKey: key)
+        }) else { return nil }
+
+        // Keyed on the blob as read, so a stale-refresh rewrite resolves once
+        // more and is then cached under the new blob.
+        let resolved = Grant(bookmark: bookmark,
+                             scope: url,
+                             dataFile: isFolder ? url.appending(path: dataFileName) : url,
+                             isFolder: isFolder)
+        resolvedGrant = resolved
+        return resolved
+    }
+
+    /// Drops `companion-projects.json` beside the linked `app-data.json`.
+    ///
+    /// Returns false when there is no folder grant, which is the state a
+    /// file-only link from an older build is in.
+    @discardableResult
+    static func publishCompanionProjects(_ data: Data) -> Bool {
+        guard let grant = grant(), grant.isFolder,
+              grant.scope.startAccessingSecurityScopedResource()
+        else { return false }
+        defer { grant.scope.stopAccessingSecurityScopedResource() }
+
+        let destination = grant.scope.appending(path: ProjectExport.fileName)
+        if let existing = try? Data(contentsOf: destination), existing == data { return true }
+        do {
+            try data.write(to: destination, options: .atomic)
+            return true
+        } catch {
+            NSLog("[TodoBridge] couldn't publish \(destination.path): \(error)")
+            return false
+        }
     }
 
     /// The last parse, keyed on the bookmark and the file's modification date
@@ -148,7 +253,6 @@ enum TodoBridge {
     /// "Reading your screen…" clears — re-reading and re-parsing a file the
     /// other app had not touched was pure delay on every summon.
     private static var cached: (bookmark: Data, stamp: FileStamp, work: LinkedWork)?
-    private static var resolvedURL: (bookmark: Data, url: URL)?
 
     private struct FileStamp: Equatable {
         var modified: Date?
@@ -156,37 +260,24 @@ enum TodoBridge {
     }
 
     static func load() -> LinkedWork {
-        guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else {
+        guard let grant = grant() else {
             cached = nil
-            resolvedURL = nil
             return LinkedWork()
         }
 
-        let url: URL
-        if let resolvedURL, resolvedURL.bookmark == bookmark {
-            url = resolvedURL.url
-        } else {
-            guard let fresh = SecurityScopedBookmark.resolve(bookmark, persist: { fresh in
-                UserDefaults.standard.set(fresh, forKey: bookmarkKey)
-            }) else { return LinkedWork() }
-            url = fresh
-            // Keyed on the blob as read, so a stale-refresh rewrite resolves
-            // once more and is then cached under the new blob.
-            resolvedURL = (bookmark, fresh)
-        }
+        guard grant.scope.startAccessingSecurityScopedResource() else { return LinkedWork() }
+        defer { grant.scope.stopAccessingSecurityScopedResource() }
 
-        guard url.startAccessingSecurityScopedResource() else { return LinkedWork() }
-        defer { url.stopAccessingSecurityScopedResource() }
-
+        let url = grant.dataFile
         let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         let stamp = FileStamp(modified: values?.contentModificationDate, size: values?.fileSize)
-        if let cached, cached.bookmark == bookmark, cached.stamp == stamp, stamp.modified != nil {
+        if let cached, cached.bookmark == grant.bookmark, cached.stamp == stamp, stamp.modified != nil {
             return cached.work
         }
 
         guard let data = try? Data(contentsOf: url) else { return LinkedWork() }
         let work = parse(data)
-        cached = (bookmark, stamp, work)
+        cached = (grant.bookmark, stamp, work)
         return work
     }
 
@@ -198,16 +289,12 @@ enum TodoBridge {
     /// explicit import, because the user handed that key to another app for
     /// transcription and reusing it here is their call, not ours.
     static func importableOpenAIKey() -> String? {
-        guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
-
-        guard let url = SecurityScopedBookmark.resolve(bookmark, persist: { fresh in
-            UserDefaults.standard.set(fresh, forKey: bookmarkKey)
-        }),
-              url.startAccessingSecurityScopedResource()
+        guard let grant = grant(),
+              grant.scope.startAccessingSecurityScopedResource()
         else { return nil }
-        defer { url.stopAccessingSecurityScopedResource() }
+        defer { grant.scope.stopAccessingSecurityScopedResource() }
 
-        guard let data = try? Data(contentsOf: url),
+        guard let data = try? Data(contentsOf: grant.dataFile),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let settings = root["settings"] as? [String: Any],
               let key = (settings["openaiApiKey"] as? String)?

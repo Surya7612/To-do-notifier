@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const {
   companionProjectsPath,
+  localCompanionProjectsPath,
   parseCompanionProjects,
   loadCompanionProjects,
+  loadNewestCompanionProjects,
 } = require("../../electron/lib/companionProjects.cjs");
 
 /**
@@ -180,5 +182,39 @@ describe("companionProjects", () => {
     expect(location).toBe(
       "/Users/example/Library/Containers/surya.TodoCompanion/Data/Library/Application Support/companion-projects.json"
     );
+  });
+
+  it("also looks beside this app's own store", () => {
+    expect(localCompanionProjectsPath("/Users/example/Library/Application Support/todo-notifier"))
+      .toBe("/Users/example/Library/Application Support/todo-notifier/companion-projects.json");
+  });
+
+  it("prefers the newer of two published files", () => {
+    const older = parseCompanionProjects(
+      JSON.stringify({
+        projects: [],
+        requestedTasks: [{ id: "old", title: "Old", dueAt: "2026-09-01T00:00:00Z" }],
+        updatedAt: "2026-09-01T00:00:00Z",
+      })
+    );
+    const newer = parseCompanionProjects(
+      JSON.stringify({
+        projects: [],
+        requestedTasks: [{ id: "new", title: "Stretch", dueAt: "2026-10-11T22:05:00Z" }],
+        updatedAt: "2026-10-11T22:07:00Z",
+      })
+    );
+    // Drive through files so the helper stays the one main.cjs calls.
+    const dir = "/tmp/companion-projects-newest-test";
+    const fs = require("fs");
+    const path = require("path");
+    fs.mkdirSync(dir, { recursive: true });
+    const a = path.join(dir, "a.json");
+    const b = path.join(dir, "b.json");
+    fs.writeFileSync(a, JSON.stringify(older));
+    fs.writeFileSync(b, JSON.stringify(newer));
+    expect(loadNewestCompanionProjects([a, b]).requestedTasks.map((t) => t.title)).toEqual(["Stretch"]);
+    expect(loadNewestCompanionProjects([b, a]).requestedTasks.map((t) => t.title)).toEqual(["Stretch"]);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

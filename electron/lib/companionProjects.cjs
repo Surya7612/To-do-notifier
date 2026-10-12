@@ -130,6 +130,48 @@ function loadCompanionProjects(filePath = companionProjectsPath()) {
 }
 
 /**
+ * The copy next to this app's own store, plus the companion's container file.
+ *
+ * The container used to be enough. Current macOS returns EPERM when this
+ * process opens another app's container, which is why a reminder reached
+ * Apple Reminders (the companion writes EventKit itself) and never became a
+ * row here. Max now also writes beside `app-data.json`. Prefer the newer of
+ * the two so an older leftover cannot hide a fresh request.
+ *
+ * @param {string[]} filePaths
+ */
+function loadNewestCompanionProjects(filePaths) {
+  const empty = { projects: [], requestedTasks: [], updatedAt: null };
+  let best = empty;
+  let bestTime = Number.NEGATIVE_INFINITY;
+
+  for (const filePath of filePaths || []) {
+    const parsed = loadCompanionProjects(filePath);
+    const stamp = parsed.updatedAt ? Date.parse(parsed.updatedAt) : Number.NaN;
+    const time = Number.isNaN(stamp) ? Number.NEGATIVE_INFINITY : stamp;
+    if (time < bestTime) continue;
+    if (time === bestTime
+        && parsed.requestedTasks.length === 0
+        && parsed.projects.length === 0) {
+      continue;
+    }
+    best = parsed;
+    bestTime = time;
+  }
+
+  return best;
+}
+
+/**
+ * Where Max also publishes, once the to-do app has been linked.
+ *
+ * @param {string} userDataDir `app.getPath("userData")`
+ */
+function localCompanionProjectsPath(userDataDir) {
+  return path.join(userDataDir, "companion-projects.json");
+}
+
+/**
  * Calls `onChange` shortly after the companion republishes.
  *
  * The 30-second tick alone meant a reminder set in the companion took up to
@@ -177,7 +219,9 @@ function watchCompanionProjects(onChange, options = {}) {
 
 module.exports = {
   companionProjectsPath,
+  localCompanionProjectsPath,
   parseCompanionProjects,
   loadCompanionProjects,
+  loadNewestCompanionProjects,
   watchCompanionProjects,
 };

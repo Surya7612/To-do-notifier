@@ -34,7 +34,9 @@ const { createTrayRuntime } = require("./trayRuntime.cjs");
 const { registerIpc } = require("./registerIpc.cjs");
 const { createVoiceHotkeys } = require("./lib/voiceHotkeys.cjs");
 const {
-  loadCompanionProjects,
+  companionProjectsPath,
+  localCompanionProjectsPath,
+  loadNewestCompanionProjects,
   watchCompanionProjects,
 } = require("./lib/companionProjects.cjs");
 const { importCompanionTasks } = require("./lib/companionTasks.cjs");
@@ -284,9 +286,14 @@ if (!gotLock) {
      * Writes nothing when nothing is new, which is the ordinary case on a
      * 30-second tick.
      */
+    const companionProjectFiles = () => [
+      localCompanionProjectsPath(app.getPath("userData")),
+      companionProjectsPath(),
+    ];
+
     const syncCompanionTasks = () => {
       try {
-        const { requestedTasks } = loadCompanionProjects();
+        const { requestedTasks } = loadNewestCompanionProjects(companionProjectFiles());
         if (requestedTasks.length === 0) return { created: 0 };
 
         const prev = loadData();
@@ -366,7 +373,12 @@ if (!gotLock) {
 
     ctx.reminderTimer = setInterval(tick, 30_000);
     setTimeout(tick, 1500);
-    ctx.stopWatchingCompanion = watchCompanionProjects(tick);
+    const stops = companionProjectFiles().map((filePath) =>
+      watchCompanionProjects(tick, { filePath })
+    );
+    ctx.stopWatchingCompanion = () => {
+      for (const stop of stops) stop();
+    };
 
     app.on("activate", () => {
       windows.createMainWindow({ show: true });

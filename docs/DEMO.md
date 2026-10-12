@@ -1,106 +1,67 @@
 # Demo rehearsal (Max + To-Do Notifier)
 
-Ten-minute live run for interviews. Do a cold rehearsal the day before with
-the Mac freshly logged in so TCC prompts do not surprise you on stage.
+About eight minutes. Rehearse once cold the night before so TCC prompts
+happen at home, not on stage.
 
-## Pick the model before you pick the screen
+## Your setup (not the defaults in older notes)
 
-Measured on an 8 GB M1 MacBook Air with `llama3.2`:
+You answer with **OpenAI** and speak with **Kokoro**. Teach needs that cloud
+model — on an 8 GB M1, local `llama3.2` took ~95 s and came back as prose
+with no lesson. Switch from the badge if it ever reads Local. Leave
+"Send the screenshot" on.
 
-| | Local `llama3.2` | Why it matters |
-| --- | --- | --- |
-| Cold load | ~17–23 s | Max now warms the model when the panel opens, and keeps it 30 min |
-| Plain question | a few seconds once loaded | Fine for Explain |
-| Teach me | **~95 s, and no lesson** | The reply came back as prose — no numbered steps, no board |
-
-So: **ask locally, teach on a cloud model.** Switch from the who-answers badge
-in the panel header just before the Teach beat. That is inside the app's rules
-— a question you asked, in the foreground, with the badge saying who answers —
-and it is a better story than hiding it: local by default, cloud only when you
-choose.
+Use the **MacBook mic** as input. AirPods are fine for output. Opening the
+mic on AirPods can switch them to headset mode and silence Kokoro.
 
 ## Preflight (5 minutes before)
 
 | Check | How |
 | --- | --- |
-| Ollama | `ollama serve`; `ollama list` shows `llama3.2` |
-| Warm it | Summon Max once. Status says "Loading llama3.2 on this Mac…" the first time |
-| Cloud key | Claude or Gemini key in Settings, for Teach. Badge must not read "— no key" |
-| Send the screenshot | On, if you will Teach over a diagram or UI rather than text |
-| Screen Recording | System Settings → Privacy → Screen Recording → **TodoCompanion** on |
-| Accessibility | Granted *before* the demo if you want the cursor to follow Teach. Otherwise Teach opens System Settings once, on stage |
-| Notifications | Allow for TodoCompanion when prompted |
-| Reminders + Calendars | Needed only for the phone mirror beat |
-| iCloud Reminders | System Settings → Apple Account → iCloud → Reminders **on** (or Settings copy stays orange "this Mac only") |
-| Quiet hours | Off in the to-do app, or a "remind me" lands at the end of the window instead of when you said |
-| To-do link | Max → Settings → choose the Electron app's `app-data.json` **before** flipping the mirror toggle |
-| To-do app running | It imports Max's reminders as tasks within about a second of the save |
-| Summon hotkey | Menu bar Max → label shows the combo (default `⌃⌥Space`) |
-| Voice | Leave Parakeet and Kokoro **off** on 8 GB unless rehearsed with them |
+| Badge | OpenAI, not "— no key". Send the screenshot **on** |
+| Screen Recording | System Settings → Privacy → **TodoCompanion** on |
+| Accessibility | Granted **before** you sit down, or Guided opens Settings on stage |
+| Notifications | Allow for TodoCompanion |
+| Quiet hours | Off in the to-do app, or a reminder lands at the end of the window |
+| To-do link | Max → Settings → linked to the **`todo-notifier` folder** (not the file). Check `~/Library/Application Support/todo-notifier/companion-projects.json` exists |
+| Both apps running | Max in the menu bar; To-Do Notifier 1.6+ open (hidden to tray is fine) |
+| iCloud Reminders | On, only if you will show the phone. Settings must not stay orange "this Mac only" |
+| Summon | Menu bar label shows the combo (default `⌃⌥Space`) |
+| Screens | LeetCode LRU Cache, one Xcode file or terminal error, to-do window ready |
 
-If the panel status line names a blocker — Screen Recording, Ollama not
-running, a model that is not pulled — fix that *before* talking. That line is
-the cold-start contract ([USABILITY.md](USABILITY.md) §4).
+If the panel status line names a blocker, fix that before you talk.
 
-## Demo spine (~10 minutes)
+## Spine (~8 minutes)
 
-1. **Summon** with the hotkey. Point at the status line: it names a blocker
-   or invites a question — never sits silently empty.
-2. **Explain** a real screen (Xcode, a tutorial page, a terminal error) on the
-   local model. The answer appears as it is written. Show quoted control names
-   and the amber "Show me" box.
-3. **Switch the badge to the cloud model, then Teach me** on the same screen.
-   Expect a progress bar while the lesson is prepared (Teach holds the reply
-   until it is complete), then the step strip, numbered boxes, spoken steps,
-   and the board panel. Teach always asks for a board; if none comes back the
-   status line says so and the steps still play.
-4. **"Remind me in two minutes to …"** — the panel arms it and shows the time.
-   Within about a second the to-do app shows the task with a **From Max** badge,
-   titled without the "Remind me in two minutes" part. With the mirror on and
-   iCloud Reminders, the phone gets Apple's alert and the Mac does not alert
-   twice. Without the mirror, Max's own notification fires.
-5. **Snooze it from the banner** when it fires. The library then reads
-   "seen …" for that reminder rather than "no response yet", and opening the
-   banner jumps straight to the keep.
-6. **"What did I save yesterday?"** (or "…about <topic> this week"). The strip
-   reads *Found in your library* with the reason each one matched — "kept
-   yesterday · mentions retrieval" — and Max answers from those alone. With
-   nothing in that window, it says so instead of inventing.
-7. **"I have 45 minutes. What should I work on?"** — Max picks from the to-do
-   app's open tasks, overdue first, quoting titles exactly and saying its time
-   estimate is its own. Prep mode → Briefs offers the same at 30 min / 1 h / 2 h.
-8. **Library** → open the save: *Why I kept this* is your words; *What the
-   model thinks it shows* is the model's. In a project, the arrow beside a task
-   opens the To-Do Notifier at that row. The Connections graph links keeps
-   through words their reasons share, so it is worth showing even without
-   tags. The footer says how often Max brought keeps back and how often you
-   used them.
-9. **Architecture one-liner** (see [INTERVIEW.md](INTERVIEW.md)): two apps,
-   one task list, neither writes the other's file; off-Mac alerts via Apple
-   Reminders, not a custom push server.
+1. **Summon** (20 s). Status line names a blocker or invites a question — never empty.
+2. **Ask** (1 min) on a real screen. Quoted control names, then **Show me** for the amber box. *Line:* "The model names. Vision decides where it is."
+3. **Teach** (2–3 min) on LeetCode LRU, OpenAI, Guided if Accessibility is granted. Concept first, then the question, then the example. Box moves on the word; LRU is spelled out. Board panel flips with the voice.
+4. **Follow-up** (45 s). "Why is get O(1)?" Short answer from where the lesson is — not a new lecture.
+5. **Save** (45 s). ⌘S with your own reason. Library: *Why I kept this* is you; *What the model thinks it shows* is labelled as the model's.
+6. **Remind** (1 min). "Remind me in two minutes to stretch." Panel shows the time. To-do app gets a **From Max** row, title stripped of the cue. Phone gets Apple's alert if the mirror is on; Max does not alert twice.
+7. **Recall** (30 s). "What did I save today?" Strip reads *Found in your library* with a reason. Empty window → it says so.
+8. **Close** (20 s). Two apps, one task list, neither writes the other's file. Off-Mac alerts via Apple Reminders, not a push server.
+
+Cut the graph, "what should I work on", and the phone inbox unless you have spare time.
 
 ## If something breaks live
 
-| Symptom | Fix |
+| Symptom | What you do |
 | --- | --- |
-| Hotkey does nothing | Reserved combo — pick another in Settings |
-| Empty panel / no capture | Status line → Screen Recording; rebuild with stable `DEVELOPMENT_TEAM` |
-| "Ollama isn't running" | Start Ollama; or switch the badge to a cloud model |
-| "Ollama has no llama3.2" | `ollama pull llama3.2` |
-| Bar sits still with "Loading … on this Mac" | Cold model; it is loading, not hung. Warm it before going on |
-| Teach answers as plain prose, no step strip | The model ignored the lesson format — expected on the local model. Switch the badge |
-| Teach sits on step 1 | Use the strip arrows; speech is not required to advance |
-| Task not in the to-do app | Is it running? It also imports on a 30 s tick and when its window is focused |
-| Mirror toggle flips off | Reminders + Calendars entitlement/TCC; Open System Settings from the caption |
-| Mirror on, phone silent | Orange "this Mac only" copy — enable iCloud Reminders, toggle off/on |
-| Dictation silent on first Parakeet press | Wait for "Loading the Parakeet model…" |
-| Recall answers about the screen instead | Ask in the past tense — "what did I save", "what was I working on". Present tense is a screen question by design |
-| Arrow to the to-do app opens it but not at the row | The installed To-Do Notifier predates the link; install the new build |
+| No box / cursor still | Step arrows re-read the screen. "It refuses to point when the quote is not on screen." |
+| Silent voice | MacBook mic. Arrows still advance the lesson. |
+| Teach is plain prose | Badge is Local — switch to OpenAI. |
+| First answer hangs | Cold model. Narrate; you should have summoned once already. |
+| Hotkey dead | Menu bar icon. Reserved combo → pick another in Settings. |
+| No **From Max** row | Is the to-do app running? Unlink and choose the `todo-notifier` folder in Max Settings, set the reminder again. It also imports on focus and a 30 s tick. |
+| Mirror toggle flips off | Reminders + Calendars in System Settings. |
+| Phone silent, Mac fine | Orange "this Mac only" — enable iCloud Reminders, toggle the mirror off/on. |
+| Recall talks about the screen | Past tense. "What did I save" searches the library; "how do I save" is a screen question. |
 
-## Sample screens that photograph well
+A refusal narrated calmly ("it would not invent a box") is worth more than a perfect run.
 
-- A Swift file with a clear bug and named buttons/labels
-- A shell error with a stack trace
-- A web tutorial with numbered steps (Teach me)
+## Architecture one-liner
 
-Screenshots for slides live in [screenshots/](screenshots/).
+Max captures only when you press a key, answers only when you ask, and stores
+your words separately from the model's. Tasks stay in the to-do app. A reminder
+is published beside that app's file; Apple Reminders is the away-from-Mac
+scheduler. See [INTERVIEW.md](INTERVIEW.md).

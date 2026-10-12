@@ -39,12 +39,19 @@ grouping is this app's idea. A task deleted over there simply stops resolving. C
 the app that owns tasks, and the library says so rather than offering a checkbox that would not work.
 
 That grouping is nonetheless **visible in both**, through a second file going the other way.
-`ProjectExport` publishes the project list into the companion's own container; the Electron app reads it
-through `electron/lib/companionProjects.cjs` and uses it to label and filter its task list. So each app
-owns one file and reads the other's, and **neither ever writes the other's**. Making projects a field on
-the to-do app's own tasks was the alternative and is the thing to avoid: it would put the companion in
-the position of writing `app-data.json`, a file another process holds in memory and rewrites wholesale,
-with no locking between them.
+`ProjectExport` publishes the project list and offered reminders into the companion's own container
+*and*, once the to-do app is linked, a copy beside that app's `app-data.json`. The Electron app
+reads whichever is newer through `electron/lib/companionProjects.cjs`. The container copy alone
+stopped working: current macOS returns `EPERM` when a second app opens another app's container, so
+Apple Reminders still received a reminder (this process writes EventKit) and the to-do list did not.
+**The link is therefore to the `todo-notifier` folder, not to `app-data.json`.** A bookmark to the
+file grants that one file, and writing a sibling with it fails with Cocoa error 513; a folder
+bookmark cannot be minted from a file grant either. An older file-only link still reads tasks, and
+Settings asks for the folder rather than letting reminders silently go nowhere.
+The sibling file is not `app-data.json` — **neither app writes the other's store**. Making projects
+a field on the to-do app's own tasks was the alternative and is the thing to avoid: it would put
+the companion in the position of writing `app-data.json`, a file another process holds in memory
+and rewrites wholesale, with no locking between them.
 
 The governing design document is `docs/PLAN.md`. Read it before proposing
 architecture; it records what was deliberately rejected and why. Current-version
@@ -1148,8 +1155,8 @@ the edge is the only part of this that fails invisibly.
 | `Store/AnswerGrounding.swift` | ~30 | Whether the next answer sees the screenshot or only OCR — badge copy for the panel. Pure. |
 | `Store/Embedding.swift` | ~110 | Normalized vector, cosine similarity, blob storage, and the task prefixes a model is fed. Pure. |
 | `Store/InboxImporter.swift` | ~320 | Brings in captures from a phone through a user-chosen folder, arming a reminder when the capture asked for one. Posts when something arrives so an open library can remount. |
-| `Store/TodoBridge.swift` | ~240 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark. |
-| `Store/ProjectExport.swift` | ~235 | Publishes the project list and the reminders offered as tasks, for the Electron app to read. Write-only half of the bridge; skips an identical rewrite. |
+| `Store/TodoBridge.swift` | ~280 | Read-only bridge to the Electron app’s `app-data.json`: tasks, notes, and quiet hours, via a security-scoped bookmark to its folder (a legacy file bookmark still reads). Also drops `companion-projects.json` beside that file so the other app can import reminders. |
+| `Store/ProjectExport.swift` | ~240 | Publishes the project list and the reminders offered as tasks, into this app's container and beside the linked to-do store. Write-only half of the bridge; skips an identical rewrite. |
 | `Support/Reminders.swift` | ~130 | Schedules and cancels the local notification behind a reminder, with Snooze and Got it actions. |
 | `Support/ToDoApp.swift` | ~45 | `todonotifier://` links that open the To-Do Notifier at a task or project, falling back to opening the app. |
 | `Support/AppleReminders.swift` | ~200 | Writes the mirrored list through EventKit, into a syncing account so it reaches the phone. |
